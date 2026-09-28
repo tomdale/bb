@@ -64,6 +64,34 @@ generation with code 1012. The supporting public types are
 5. Confirm the callback error policy should keep the socket open after an
    isolated message-handler failure.
 
+## `bb.agents.experimental_setSkillRoots`
+
+**What it does.** Replaces a standalone plugin's runtime skill roots with
+absolute workspace-host directories (`ExperimentalPluginSkillRoot`, at most 64,
+distinct). The server scans each plugin's roots on the target host through
+`host.list_skills` resolved roots whenever it lists skills or resolves a thread
+runtime config. Surviving skills are listed with scope `plugin` and sent to the
+daemon as `linked-root` injected sources. The daemon validates each source as
+`<root>/<dir>/SKILL.md` and passes the original root to providers as its own
+skill root instead of copying it. User, project, and manifest plugin skills
+take precedence by name. Skills whose `SKILL.md` path a listed provider, or
+the thread's provider, discovers natively are omitted. The catalog hash covers
+linked skill paths and `SKILL.md` bytes, so an edited skill relaunches an idle
+runtime like a staged skill.
+
+**Audit before stabilizing.**
+
+1. Decide whether roots should be host-scoped instead of applying to every
+   host.
+2. Native deduplication compares exact `SKILL.md` paths. Decide whether it
+   should compare real paths across symlinked installs.
+3. Providers receive the whole root, so Pi also loads skills BB omitted there
+   (it deduplicates identical files itself). Decide whether per-skill
+   directories or provider-side filtering is required.
+4. Decide whether `configure` skill selection should cover runtime skills.
+5. Confirm thread start may add one uncached native scan when runtime roots
+   exist.
+
 ## `bb.providers.experimental_contributeEnvHealth`
 
 **What it does.** Registers one host-scoped readiness resolver beside a

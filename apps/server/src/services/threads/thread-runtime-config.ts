@@ -30,6 +30,7 @@ import { resolveSkillCatalog } from "../skills/skill-catalog.js";
 import { discoverPluginSkillIds } from "../skills/injected-skills.js";
 import { resolveWorkspaceProjectSkills } from "../skills/workspace-skills.js";
 import { resolveSharedSkills } from "../skills/shared-skills.js";
+import { resolveThreadPluginLinkedSkills } from "../skills/plugin-linked-skills.js";
 import { UPDATE_ENVIRONMENT_DIRECTORY_TOOL } from "./thread-environment-directory.js";
 import {
   DATA_DIR_AGENT_INSTRUCTIONS_RELATIVE_PATH,
@@ -134,21 +135,30 @@ export async function resolveThreadRuntimeCommandConfig(
     throw new ApiError(404, "host_not_found", "Host not found");
   }
 
-  const [projectSkillSources, sharedSkills, workspaceAgentInstructions] =
-    await Promise.all([
-      resolveWorkspaceProjectSkills(deps, {
-        hostId: args.environment.hostId,
-        workspacePath,
-      }),
-      resolveSharedSkills(deps, {
-        hostId: args.environment.hostId,
-        cwd: workspacePath,
-      }),
-      readWorkspaceAgentInstructions(deps, {
-        hostId: args.environment.hostId,
-        workspacePath,
-      }),
-    ]);
+  const [
+    projectSkillSources,
+    sharedSkills,
+    workspaceAgentInstructions,
+    pluginLinkedSkillSources,
+  ] = await Promise.all([
+    resolveWorkspaceProjectSkills(deps, {
+      hostId: args.environment.hostId,
+      workspacePath,
+    }),
+    resolveSharedSkills(deps, {
+      hostId: args.environment.hostId,
+      cwd: workspacePath,
+    }),
+    readWorkspaceAgentInstructions(deps, {
+      hostId: args.environment.hostId,
+      workspacePath,
+    }),
+    resolveThreadPluginLinkedSkills(deps, {
+      hostId: args.environment.hostId,
+      providerId: args.thread.providerId,
+      cwd: workspacePath,
+    }),
+  ]);
   const pluginSkillRoots = getPluginSkillRootContributions();
   const skillIdsByPlugin = discoverPluginSkillIds(deps.logger, {
     pluginSkillRoots,
@@ -212,6 +222,7 @@ export async function resolveThreadRuntimeCommandConfig(
     projectSkillSources,
     sharedSkillSources: sharedSkills.runtimeSources,
     pluginSkillSelections: conditionalConfiguration.selectedSkillIdsByPlugin,
+    pluginLinkedSkillSources,
   }).map((entry) => entry.runtimeSource);
   const dataDirAgentInstructions = readDataDirAgentInstructions(
     deps.logger,

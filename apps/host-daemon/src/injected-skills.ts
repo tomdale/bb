@@ -67,15 +67,29 @@ interface CollectedSkillDirectory {
   relativePath: string;
 }
 
+type CopiedInjectedSkillSource = Exclude<
+  HostDaemonInjectedSkillSource,
+  { kind: "linked-root" }
+>;
+type LinkedInjectedSkillSource = Extract<
+  HostDaemonInjectedSkillSource,
+  { kind: "linked-root" }
+>;
+
 interface CollectedSkillTree {
   directories: CollectedSkillDirectory[];
   files: CollectedSkillFile[];
-  source: HostDaemonInjectedSkillSource;
+  source: CopiedInjectedSkillSource;
   totalBytes: number;
 }
 
+interface LinkedSkill {
+  source: LinkedInjectedSkillSource;
+  fingerprint: string;
+}
+
 interface CollectSkillTreeArgs {
-  source: HostDaemonInjectedSkillSource;
+  source: CopiedInjectedSkillSource;
   sourceRootPath: string;
   skillFilePath: string;
 }
@@ -349,9 +363,24 @@ async function collectSkillTree(
   };
 }
 
-function hashCollectedTrees(trees: readonly CollectedSkillTree[]): string {
+function hashCatalog(
+  trees: readonly CollectedSkillTree[],
+  linkedSkills: readonly LinkedSkill[],
+): string {
   const hash = createHash("sha256");
   hash.update("bb-global-skills-v1");
+  for (const linked of linkedSkills) {
+    hash.update("\0linked\0");
+    hash.update(linked.source.name);
+    hash.update("\0");
+    hash.update(linked.source.description);
+    hash.update("\0");
+    hash.update(linked.source.skillsRootPath);
+    hash.update("\0");
+    hash.update(linked.source.skillFilePath);
+    hash.update("\0");
+    hash.update(linked.fingerprint);
+  }
   for (const tree of trees) {
     hash.update("\0skill\0");
     hash.update(tree.source.name);
@@ -509,6 +538,91 @@ function buildSkillRoots(args: BuildSkillRootsArgs): AgentRuntimeSkillRoot[] {
       })),
     },
   ];
+}
+
+function buildLinkedSkillRoots(
+  linkedSkills: readonly LinkedSkill[],
+): AgentRuntimeSkillRoot[] {
+  const byRoot = new Map<string, LinkedInjectedSkillSource[]>();
+  for (const { source } of linkedSkills) {
+    const group = byRoot.get(source.skillsRootPath) ?? [];
+    group.push(source);
+    byRoot.set(source.skillsRootPath, group);
+  }
+  return [...byRoot]
+    .sort(([left], [right]) => compareStringsByCodePoint(left, right))
+    .map(([rootPath, sources]) => ({
+      id: `linked-skills:${createHash("sha256").update(rootPath).digest("hex")}`,
+      path: rootPath,
+      skills: sources.map((source) => ({
+        name: source.name,
+        description: source.description,
+      })),
+    }));
+}
+
+async function collectLinkedSkill(
+  source: LinkedInjectedSkillSource,
+): Promise<LinkedSkill> {
+  const { skillsRootPath, skillFilePath } = source;
+  if (!SKILL_NAME_PATTERN.test(source.name)) {
+    throw new Error(`Invalid injected skill name: ${source.name}`);
+  }
+  if (!path.isAbsolute(skillsRootPath) || !path.isAbsolute(skillFilePath)) {
+    throw new Error(
+      `Linked skill paths must be absolute: ${skillsRootPath}, ${skillFilePath}`,
+    );
+  }
+  if (
+    path.basename(skillFilePath) !== SKILL_FILE_NAME ||
+    path.dirname(path.dirname(skillFilePath)) !== path.normalize(skillsRootPath)
+  ) {
+    throw new Error(
+      `Linked skill file must be <root>/<skill>/${SKILL_FILE_NAME}: ${skillFilePath}`,
+    );
+  }
+  const rootStat = await fs.stat(skillsRootPath);
+  if (!rootStat.isDirectory()) {
+    throw new Error(`Linked skill root is not a directory: ${skillsRootPath}`);
+  }
+  const fileStat = await fs.stat(skillFilePath);
+  if (!fileStat.isFile()) {
+    throw new Error(
+      `Linked skill file is not a regular file: ${skillFilePath}`,
+    );
+  }
+  return {
+    source,
+    fingerprint: createHash("sha256")
+      .update(await fs.readFile(skillFilePath))
+      .digest("hex"),
+  };
+}
+
+async function collectLinkedSkills(
+  sources: readonly LinkedInjectedSkillSource[],
+  logger: InjectedSkillsLogger,
+): Promise<LinkedSkill[]> {
+  const linkedSkills: LinkedSkill[] = [];
+  for (const source of sources) {
+    try {
+      linkedSkills.push(await collectLinkedSkill(source));
+    } catch (error) {
+      logger.warn(
+        {
+          name: source.name,
+          skillsRootPath: source.skillsRootPath,
+          sourceType: source.sourceType,
+          reason:
+            error instanceof Error && error.message.trim().length > 0
+              ? error.message
+              : "Unable to link injected skill",
+        },
+        "Skipping linked injected skill",
+      );
+    }
+  }
+  return linkedSkills;
 }
 
 function resolveSkillStoreRootPath(dataDir: string): string {
@@ -769,12 +883,23 @@ export async function stageInjectedSkillSources(
   const sortedSources = [...args.injectedSkillSources].sort((left, right) =>
     compareStringsByCodePoint(left.name, right.name),
   );
-  const stagedTreeHashes = sortedSources.flatMap((source) =>
+  const linkedSkills = await collectLinkedSkills(
+    sortedSources.filter(
+      (source): source is LinkedInjectedSkillSource =>
+        source.kind === "linked-root",
+    ),
+    logger,
+  );
+  const copiedSources = sortedSources.filter(
+    (source): source is CopiedInjectedSkillSource =>
+      source.kind !== "linked-root",
+  );
+  const stagedTreeHashes = copiedSources.flatMap((source) =>
     source.kind === "tree" ? [source.treeHash] : [],
   );
   markActiveSkillTreeStages(args.dataDir, stagedTreeHashes);
   try {
-    for (const source of sortedSources) {
+    for (const source of copiedSources) {
       if (source.kind === "tree") {
         try {
           if (args.fetchSkillTree === undefined) {
@@ -842,26 +967,29 @@ export async function stageInjectedSkillSources(
   }
 
   const sortedTrees = trees.sort(sortTreesByName);
-  if (sortedTrees.length === 0) {
+  if (sortedTrees.length === 0 && linkedSkills.length === 0) {
     return {
       catalogHash: EMPTY_SKILL_CATALOG_HASH,
       skillRoots: [],
     };
   }
 
-  const catalogHash = hashCollectedTrees(sortedTrees);
-  const stageRootPath = await writeStageRootOnce({
-    catalogHash,
-    dataDir: args.dataDir,
-    trees: sortedTrees,
-  });
+  const catalogHash = hashCatalog(sortedTrees, linkedSkills);
+  const stagedRoots =
+    sortedTrees.length === 0
+      ? []
+      : buildSkillRoots({
+          catalogHash,
+          stageRootPath: await writeStageRootOnce({
+            catalogHash,
+            dataDir: args.dataDir,
+            trees: sortedTrees,
+          }),
+          trees: sortedTrees,
+        });
   return {
     catalogHash,
-    skillRoots: buildSkillRoots({
-      catalogHash,
-      stageRootPath,
-      trees: sortedTrees,
-    }),
+    skillRoots: [...stagedRoots, ...buildLinkedSkillRoots(linkedSkills)],
   };
 }
 

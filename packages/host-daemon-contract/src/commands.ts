@@ -154,6 +154,14 @@ export const hostDaemonInjectedSkillSourceSchema = z.discriminatedUnion(
         skillFilePath: z.string().min(1),
       })
       .strict(),
+    hostDaemonInjectedSkillSourceBaseSchema
+      .extend({
+        kind: z.literal("linked-root"),
+        sourceType: z.literal("plugin"),
+        skillsRootPath: z.string().min(1),
+        skillFilePath: z.string().min(1),
+      })
+      .strict(),
   ],
 );
 export type HostDaemonInjectedSkillSource = z.infer<

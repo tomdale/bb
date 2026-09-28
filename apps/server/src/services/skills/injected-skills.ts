@@ -37,6 +37,7 @@ export interface ResolveInjectedSkillSourcesArgs {
   dataDir: string;
   pluginSkillRoots?: readonly PluginSkillRoot[];
   pluginSkillSelections?: ReadonlyMap<string, ReadonlySet<string>>;
+  pluginLinkedSkillSources?: readonly PluginLinkedInjectedSkillSource[];
   projectSkillSources?: readonly ProjectInjectedSkillSource[];
   sharedSkillSources?: readonly SharedInjectedSkillSource[];
   skillTreeRegistry: SkillTreeRegistry;
@@ -101,6 +102,14 @@ export type SharedInjectedSkillSource = Extract<
   HostDaemonInjectedSkillSource,
   { kind: "host-path" }
 >;
+export type LinkedInjectedSkillSource = Extract<
+  HostDaemonInjectedSkillSource,
+  { kind: "linked-root" }
+>;
+export interface PluginLinkedInjectedSkillSource {
+  pluginId: string;
+  runtimeSource: LinkedInjectedSkillSource;
+}
 
 export interface SkillTreeEntry {
   bytes: Buffer;
@@ -275,9 +284,15 @@ export function readSkillTreeManifest(rootPath: string): SkillTreeManifest {
 }
 
 function sourceRootPath(source: HostDaemonInjectedSkillSource): string {
-  return source.kind === "tree"
-    ? `skill-tree:${source.treeHash}`
-    : source.sourceRootPath;
+  switch (source.kind) {
+    case "tree":
+      return `skill-tree:${source.treeHash}`;
+    case "linked-root":
+      return source.skillsRootPath;
+    case "workspace-path":
+    case "host-path":
+      return source.sourceRootPath;
+  }
 }
 
 function toSkillFilePath(candidatePath: string): string {
@@ -667,7 +682,10 @@ export function resolveSkillCatalogEntries(
       ),
     }),
   );
-  const pluginSources = pluginSourceGroups.reduce<
+  const linkedSourceGroups = (args.pluginLinkedSkillSources ?? []).map(
+    ({ pluginId, runtimeSource }) => ({ pluginId, sources: [runtimeSource] }),
+  );
+  const pluginSources = [...pluginSourceGroups, ...linkedSourceGroups].reduce<
     HostDaemonInjectedSkillSource[]
   >(
     (higherPrioritySources, { sources: lowerPrioritySources }) => [
@@ -720,7 +738,7 @@ export function resolveSkillCatalogEntries(
   for (const source of [...dataDirSources, ...inheritedSourceGroups.flat()]) {
     provenanceBySource.set(source, { kind: "user" });
   }
-  for (const group of pluginSourceGroups) {
+  for (const group of [...pluginSourceGroups, ...linkedSourceGroups]) {
     for (const source of group.sources) {
       provenanceBySource.set(source, {
         kind: "plugin",

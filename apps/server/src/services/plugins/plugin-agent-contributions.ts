@@ -25,6 +25,7 @@ type PluginAgentContributions = Pick<
   Partial<
     Pick<
       PluginService,
+      | "listHostSkillRootContributions"
       | "resolveAgentConfiguration"
       | "resolveProviderEnv"
       | "resolveProviderEnvHealth"
@@ -41,6 +42,10 @@ export function setPluginAgentContributions(
 
 export function getPluginSkillRootContributions(): PluginSkillRootContribution[] {
   return contributions?.listSkillRootContributions() ?? [];
+}
+
+export function getPluginHostSkillRootContributions(): PluginSkillRootContribution[] {
+  return contributions?.listHostSkillRootContributions?.() ?? [];
 }
 
 export function listPluginAgentTools(): PluginAgentToolContribution[] {

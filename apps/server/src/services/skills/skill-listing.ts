@@ -20,6 +20,11 @@ import {
 import type { ProjectCommandWorkspace as CommandWorkspace } from "../projects/project-workspace.js";
 import { resolveServerOwnedSkillCatalogEntries } from "./injected-skills.js";
 import { resolveSkillCatalog } from "./skill-catalog.js";
+import {
+  resolvePluginLinkedSkills,
+  type ResolvedPluginLinkedSkills,
+} from "./plugin-linked-skills.js";
+import { getPluginSkillRootContributions } from "../plugins/plugin-agent-contributions.js";
 import { readRegistrySkillProvenance } from "./registry-skill-provenance.js";
 import { hostPathDirname, resolveSharedSkills } from "./shared-skills.js";
 import {
@@ -184,9 +189,20 @@ function listServerOwnedSkills(deps: AppDeps): SkillSummary[] {
     .sort(compareSkillSummaries);
 }
 
-function listBbPluginSkills(deps: AppDeps): SkillSummary[] {
-  return resolveSkillCatalog(deps)
+function listBbPluginSkills(
+  deps: AppDeps,
+  linkedSkills: ResolvedPluginLinkedSkills,
+): SkillSummary[] {
+  const linkedSummaries = new Map(
+    linkedSkills.summaries.map((summary) => [summary.filePath, summary]),
+  );
+  return resolveSkillCatalog(deps, {
+    pluginLinkedSkillSources: linkedSkills.runtimeSources,
+  })
     .map(({ provenance, runtimeSource }): SkillSummary | null => {
+      if (runtimeSource.kind === "linked-root") {
+        return linkedSummaries.get(runtimeSource.skillFilePath) ?? null;
+      }
       if (provenance.kind !== "plugin" || runtimeSource.kind !== "tree") {
         return null;
       }
@@ -235,11 +251,19 @@ export async function listProjectSkills(
       cwd: args.workspace.cwd,
     }),
   ]);
+  const linkedSkills = await resolvePluginLinkedSkills(deps, {
+    hostId: args.workspace.hostId,
+    nativeSkillFilePaths: new Set(
+      perProvider.flatMap(({ skills }) =>
+        skills.map((skill) => skill.filePath),
+      ),
+    ),
+  });
   return [
     ...assembleSkillList(perProvider),
     ...sharedSkills.summaries,
     ...listServerOwnedSkills(deps),
-    ...listBbPluginSkills(deps),
+    ...listBbPluginSkills(deps, linkedSkills),
   ].sort(compareSkillSummaries);
 }
 
@@ -250,7 +274,11 @@ function isServerOwnedSkill(deps: AppDeps, skill: SkillSummary): boolean {
     skill.provider === null &&
     skill.pluginId !== null
   ) {
-    return true;
+    return getPluginSkillRootContributions().some(
+      ({ pluginId, rootPath }) =>
+        pluginId === skill.pluginId &&
+        path.dirname(skillDirectoryPath) === rootPath,
+    );
   }
   if (skill.scope === "bb-user") {
     return (

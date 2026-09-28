@@ -178,6 +178,80 @@ describe("plugin skills tier", () => {
     expect(sources).toHaveLength(byName.size);
   });
 
+  it("keeps a plugin's latest valid runtime skill roots and drops them when it stops", async () => {
+    const packageSkills = join(workDir, "package", "skills");
+    const rootDir = await writePlugin(workDir, {
+      name: "bb-plugin-linker",
+      serverSource: `export default function plugin(bb) {
+        bb.agents.experimental_setSkillRoots([{ path: "/first" }, { path: "/second" }]);
+        bb.agents.experimental_setSkillRoots([{ path: ${JSON.stringify(packageSkills)} }]);
+        for (const roots of [[{ path: "relative" }], [{ path: "/dup" }, { path: "/dup" }], "nope"]) {
+          try {
+            bb.agents.experimental_setSkillRoots(roots);
+            throw new Error("accepted " + JSON.stringify(roots));
+          } catch (error) {
+            if (String(error).includes("accepted")) throw error;
+          }
+        }
+      }`,
+    });
+    await service.installPath(rootDir);
+
+    expect(service.listHostSkillRootContributions()).toEqual([
+      { pluginId: "linker", rootPath: packageSkills },
+    ]);
+    expect(service.listSkillRootContributions()).toEqual([
+      { pluginId: "linker", rootPath: join(rootDir, "skills") },
+    ]);
+
+    await service.setEnabled("linker", false);
+    expect(service.listHostSkillRootContributions()).toEqual([]);
+  });
+
+  it("layers linked plugin skills below user and manifest plugin skills", async () => {
+    const rootDir = await writePlugin(workDir, {
+      name: "bb-plugin-static",
+      skillNames: ["shared-name"],
+    });
+    await service.installPath(rootDir);
+    const dataDir = join(workDir, "data");
+    await writeSkill(join(dataDir, "skills"), "user-name");
+    const linked = (name: string) => ({
+      pluginId: "linker",
+      runtimeSource: {
+        kind: "linked-root" as const,
+        sourceType: "plugin" as const,
+        name,
+        description: `Use ${name} in plugin skill tests.`,
+        skillsRootPath: "/package/skills",
+        skillFilePath: `/package/skills/${name}/SKILL.md`,
+      },
+    });
+
+    const entries = resolveSkillCatalogEntries(testLogger, {
+      dataDir,
+      pluginSkillRoots: service.listSkillRootContributions(),
+      pluginLinkedSkillSources: [
+        linked("shared-name"),
+        linked("user-name"),
+        linked("package-only"),
+      ],
+      skillTreeRegistry: new SkillTreeRegistry(),
+    });
+
+    expect(
+      entries.map((entry) => [
+        entry.runtimeSource.name,
+        entry.runtimeSource.kind,
+        entry.provenance,
+      ]),
+    ).toEqual([
+      ["package-only", "linked-root", { kind: "plugin", pluginId: "linker" }],
+      ["shared-name", "tree", { kind: "plugin", pluginId: "static" }],
+      ["user-name", "tree", { kind: "user" }],
+    ]);
+  });
+
   it("manifest bb.skills relocates the convention root and the experiment gates the tier", async () => {
     const rootDir = await writePlugin(workDir, {
       name: "bb-plugin-relocated",

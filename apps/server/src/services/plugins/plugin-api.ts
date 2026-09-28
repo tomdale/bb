@@ -103,6 +103,7 @@ import {
   validateProviderEnvContribution,
   validateScheduleRegistration,
   validateSettingsUpdate,
+  validateExperimentalPluginSkillRoots,
   validatePluginAiServiceDeclaration,
   validatePluginProviderDeclaration,
 } from "@get-bb/plugin-sdk/internal/host-policy";
@@ -281,6 +282,7 @@ export interface PluginApiHandle {
   >;
   agentConfigurationProvider: PluginAgentConfigurationProvider | null;
   instructionProvider: PluginInstructionProvider | null;
+  skillRoots: readonly string[];
   mentionProviders: PluginMentionProviderRecord[];
   activate(): void;
   closeWebSockets(): void;
@@ -873,6 +875,7 @@ export function createPluginApi(options: {
   let agentConfigurationProvider: PluginAgentConfigurationProvider | null =
     null;
   let instructionProvider: PluginInstructionProvider | null = null;
+  let skillRoots: readonly string[] = [];
 
   const agents: PluginAgents = {
     configure(provider) {
@@ -898,6 +901,10 @@ export function createPluginApi(options: {
         );
       }
       instructionProvider = provider;
+    },
+    experimental_setSkillRoots(roots) {
+      assertLive();
+      skillRoots = validateExperimentalPluginSkillRoots(roots);
     },
     registerTool(tool: {
       name: string;
@@ -1369,6 +1376,9 @@ export function createPluginApi(options: {
     },
     get instructionProvider() {
       return instructionProvider;
+    },
+    get skillRoots() {
+      return skillRoots;
     },
     mentionProviders,
     activate() {

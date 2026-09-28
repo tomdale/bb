@@ -41,6 +41,7 @@ const EXPECTED_BACKEND_ROOT_TYPE_EXPORTS = [
   "MessageDispatchHookContext",
   "MessageDispatchHookDecision",
   "PluginAgents",
+  "ExperimentalPluginSkillRoot",
   "PluginAiCompleteOptions",
   "PluginAiServiceDeclaration",
   "PluginAiServiceStatus",

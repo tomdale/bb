@@ -3,6 +3,7 @@ import { getPluginSkillRootContributions } from "../plugins/plugin-agent-contrib
 import { generatedSkillsRootPath } from "../plugins/plugin-commands-skill.js";
 import {
   resolveSkillCatalogEntries,
+  type PluginLinkedInjectedSkillSource,
   type ProjectInjectedSkillSource,
   type ResolvedSkillCatalogEntry,
   type SharedInjectedSkillSource,
@@ -10,6 +11,7 @@ import {
 
 interface ResolveSkillCatalogSourcesArgs {
   pluginSkillSelections?: ReadonlyMap<string, ReadonlySet<string>>;
+  pluginLinkedSkillSources?: readonly PluginLinkedInjectedSkillSource[];
   projectSkillSources?: readonly ProjectInjectedSkillSource[];
   sharedSkillSources?: readonly SharedInjectedSkillSource[];
 }
@@ -27,6 +29,9 @@ export function resolveSkillCatalog(
     pluginSkillRoots: getPluginSkillRootContributions(),
     ...(args.pluginSkillSelections !== undefined
       ? { pluginSkillSelections: args.pluginSkillSelections }
+      : {}),
+    ...(args.pluginLinkedSkillSources !== undefined
+      ? { pluginLinkedSkillSources: args.pluginLinkedSkillSources }
       : {}),
     ...(args.projectSkillSources !== undefined
       ? { projectSkillSources: args.projectSkillSources }

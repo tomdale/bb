@@ -96,6 +96,46 @@ export const RESERVED_AGENT_TOOL_NAMES: readonly string[] = [
   "update_environment_directory",
 ];
 
+export const PLUGIN_SKILL_ROOTS_MAX_ENTRIES = 64;
+
+function isAbsoluteHostPath(value: string): boolean {
+  return value.startsWith("/") || /^[a-zA-Z]:[\\/]/u.test(value);
+}
+
+export function validateExperimentalPluginSkillRoots(roots: unknown): string[] {
+  if (!Array.isArray(roots)) {
+    throw new Error("experimental_setSkillRoots requires an array of roots");
+  }
+  if (roots.length > PLUGIN_SKILL_ROOTS_MAX_ENTRIES) {
+    throw new Error(
+      `experimental_setSkillRoots accepts at most ${PLUGIN_SKILL_ROOTS_MAX_ENTRIES} roots`,
+    );
+  }
+  const paths: string[] = [];
+  for (const root of roots) {
+    const rootPath: unknown =
+      typeof root === "object" && root !== null && "path" in root
+        ? root.path
+        : undefined;
+    if (
+      typeof rootPath !== "string" ||
+      rootPath.includes("\0") ||
+      !isAbsoluteHostPath(rootPath)
+    ) {
+      throw new Error(
+        "experimental_setSkillRoots requires each root to be { path } with an absolute path",
+      );
+    }
+    if (paths.includes(rootPath)) {
+      throw new Error(
+        `experimental_setSkillRoots received duplicate root "${rootPath}"`,
+      );
+    }
+    paths.push(rootPath);
+  }
+  return paths;
+}
+
 /** JSON values ≤256KB; larger writes are rejected with a clear error. */
 export const KV_VALUE_MAX_BYTES = 256 * 1024;
 
@@ -2391,9 +2431,7 @@ export interface NormalizedPluginEnvironmentProvider {
     PluginEnvironmentProviderDeclaration["experimental_existingPath"]
   > | null;
   create: PluginEnvironmentProviderDeclaration["create"];
-  restore: NonNullable<
-    PluginEnvironmentProviderDeclaration["restore"]
-  > | null;
+  restore: NonNullable<PluginEnvironmentProviderDeclaration["restore"]> | null;
   remove: PluginEnvironmentProviderDeclaration["remove"];
   policy: import("../environment-provider.js").PluginEnvironmentProviderPolicy;
 }

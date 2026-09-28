@@ -110,6 +110,7 @@ Read the installed declarations for exact current signatures.
 - `PluginAgentToolResult`
 - `PluginAgentToolSelection`
 - `PluginAgents`
+- `ExperimentalPluginSkillRoot`
 - `PluginAiCompleteOptions`
 - `PluginAiServiceDeclaration`
 - `PluginAiServiceStatus`

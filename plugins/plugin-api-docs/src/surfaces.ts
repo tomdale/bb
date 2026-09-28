@@ -760,10 +760,13 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
           "Register tools an agent calls the same way it calls bb's built-in tools",
           "Call bb.ui.requestInput from a native tool to return a waiting notice immediately, then deliver the eventual result as a thread message; stopping or deleting the thread, or unloading the plugin, cancels the detached call",
           "Decide per thread which of its tools and skills are available",
+          "Register skill directories on the workspace host at runtime and replace or clear them later; skills are used in place, so files beside them resolve, and a skill the provider already discovers natively is offered once",
           "Append instructions to a session's system prompt as that session starts",
         ],
         apiSymbols: [
           "PluginAgents",
+          "PluginAgents.experimental_setSkillRoots",
+          "ExperimentalPluginSkillRoot",
           "PluginAgentToolContext",
           "PluginRowPresentation",
           "PluginRowLabels",

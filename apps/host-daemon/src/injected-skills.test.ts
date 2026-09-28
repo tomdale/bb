@@ -557,6 +557,89 @@ describe("injected skill staging", () => {
     ).resolves.toContain("name: shared-review");
   });
 
+  it("links plugin skill roots in place so package-relative files resolve", async () => {
+    const dataDir = await makeTempDir();
+    const packageRoot = await makeTempDir();
+    const skillsRoot = path.join(packageRoot, "skills");
+    const skillRootPath = await writeSkill({
+      rootPath: skillsRoot,
+      name: "commit",
+      body: "Run ../../scripts/commit.sh",
+    });
+    await mkdir(path.join(packageRoot, "scripts"), { recursive: true });
+    await writeFile(path.join(packageRoot, "scripts", "commit.sh"), "echo\n");
+    const source: HostDaemonInjectedSkillSource = {
+      kind: "linked-root",
+      sourceType: "plugin",
+      name: "commit",
+      description: "Use commit when host staging tests run.",
+      skillsRootPath: skillsRoot,
+      skillFilePath: path.join(skillRootPath, "SKILL.md"),
+    };
+    const warnings: CapturedWarning[] = [];
+
+    const staged = await stageInjectedSkillSources({
+      dataDir,
+      injectedSkillSources: [
+        source,
+        {
+          ...source,
+          name: "missing",
+          skillFilePath: path.join(skillsRoot, "missing", "SKILL.md"),
+        },
+      ],
+      logger: {
+        debug: () => {},
+        warn: (context, message) => warnings.push({ context, message }),
+      },
+    });
+
+    const root = requireSkillRoot(staged.skillRoots);
+    expect(root.path).toBe(skillsRoot);
+    expect(root.skills.map((skill) => skill.name)).toEqual(["commit"]);
+    await expect(
+      access(path.resolve(root.path, "commit", "../../scripts/commit.sh")),
+    ).resolves.toBeUndefined();
+    expect(warnings.map((warning) => warning.message)).toEqual([
+      "Skipping linked injected skill",
+    ]);
+
+    await writeFile(
+      path.join(skillRootPath, "SKILL.md"),
+      "---\nname: commit\ndescription: Use commit when host staging tests run.\n---\n\nedited\n",
+    );
+    const refreshed = await stageInjectedSkillSources({
+      dataDir,
+      injectedSkillSources: [source],
+    });
+    expect(refreshed.catalogHash).not.toBe(staged.catalogHash);
+  });
+
+  it("rejects a linked skill file outside its declared root", async () => {
+    const dataDir = await makeTempDir();
+    const outside = await makeTempDir();
+    const skillRootPath = await writeSkill({
+      rootPath: outside,
+      name: "escape",
+    });
+
+    const staged = await stageInjectedSkillSources({
+      dataDir,
+      injectedSkillSources: [
+        {
+          kind: "linked-root",
+          sourceType: "plugin",
+          name: "escape",
+          description: "Use escape when host staging tests run.",
+          skillsRootPath: await makeTempDir(),
+          skillFilePath: path.join(skillRootPath, "SKILL.md"),
+        },
+      ],
+    });
+
+    expect(staged.skillRoots).toEqual([]);
+  });
+
   it("changes the catalog hash when skill content changes", async () => {
     const dataDir = await makeTempDir();
     const sourceRootPath = path.join(dataDir, "source-skills");

@@ -1676,6 +1676,38 @@ export interface PluginAgents {
   contributeInstructions(
     provider: (ctx: { threadId: string; projectId: string }) => string | null,
   ): void;
+  /**
+   * Replace the skill roots this plugin contributes at runtime (see
+   * docs/api_to_audit.md before relying on it). Each root is an absolute
+   * directory on the workspace host whose immediate children hold
+   * `SKILL.md` files — the fixed `skills/` directory of an Agent Plugins
+   * package, say. bb scans roots on the host where they are used, so a root
+   * missing on a host contributes nothing there.
+   *
+   * Skills are never copied: providers receive the original root directory,
+   * so files a skill references relative to its package (`../../scripts`)
+   * resolve. They appear in skill listings and composer autocomplete, and
+   * reach agent context when a provider session is next constructed. A skill
+   * whose `SKILL.md` the thread's provider already discovers through its own
+   * native roots is omitted, so each skill reaches the agent once; so is a
+   * name that a user, project, or manifest skill already claims.
+   *
+   * Every call replaces the previous set; call again with the same roots to
+   * refresh after package contents change, and with `[]` to remove them.
+   * Contents are rescanned on every listing and thread start. Roots are
+   * dropped when the plugin unloads or reloads. Paths must be absolute and
+   * distinct, at most 64 per plugin; an invalid set throws and leaves the
+   * previous set in place.
+   */
+  experimental_setSkillRoots(
+    roots: readonly ExperimentalPluginSkillRoot[],
+  ): void;
+}
+
+/** A runtime skill root registered with `bb.agents.experimental_setSkillRoots`. */
+export interface ExperimentalPluginSkillRoot {
+  /** Absolute directory on the workspace host containing one directory per skill. */
+  path: string;
 }
 
 /**

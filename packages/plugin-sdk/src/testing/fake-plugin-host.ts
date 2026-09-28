@@ -50,6 +50,7 @@ import {
   validateRpcValue,
   validateScheduleRegistration,
   validateSettingsUpdate,
+  validateExperimentalPluginSkillRoots,
   type NormalizedPluginProviderDeclaration,
 } from "../internal/host-policy.js";
 import type {
@@ -276,6 +277,8 @@ export interface FakePluginRegistrations {
   instructionProvider:
     | ((ctx: { threadId: string; projectId: string }) => string | null)
     | null;
+  /** Roots from the latest bb.agents.experimental_setSkillRoots call. */
+  experimental_skillRoots: readonly string[];
   threadEventHandlers: Record<PluginThreadEventName, number>;
   /** The handler registered per hook by `bb.experimental_hooks.on`. */
   hooks: {
@@ -936,6 +939,7 @@ function createFakePluginHostInternal(
   let instructionProvider:
     | ((ctx: { threadId: string; projectId: string }) => string | null)
     | null = null;
+  let skillRoots: readonly string[] = [];
   function registerProviderDeclaration(
     declaration: PluginProviderDeclaration,
   ): { dispose(): void } {
@@ -1031,6 +1035,10 @@ function createFakePluginHostInternal(
         );
       }
       instructionProvider = provider;
+    },
+    experimental_setSkillRoots(roots) {
+      assertLive();
+      skillRoots = validateExperimentalPluginSkillRoots(roots);
     },
     registerTool(tool: {
       name: string;
@@ -1616,6 +1624,9 @@ function createFakePluginHostInternal(
       },
       get instructionProvider() {
         return instructionProvider;
+      },
+      get experimental_skillRoots() {
+        return skillRoots;
       },
       get threadEventHandlers() {
         return {

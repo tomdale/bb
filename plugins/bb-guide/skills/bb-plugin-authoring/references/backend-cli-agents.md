@@ -263,6 +263,35 @@ skills, and dynamic instructions use the same boundaries. The legacy
 only `threadId` and `projectId`. Use `configure` when the contribution must
 inspect the side-chat origin.
 
+#### Runtime skill roots
+
+A plugin that discovers skills at runtime — an Agent Plugins loader, say —
+registers the directories instead of shipping them in `skills/`:
+
+```ts
+bb.agents.experimental_setSkillRoots([
+  { path: "/Users/me/agent-plugins/tdx/skills" },
+]);
+```
+
+Each root is an absolute directory on the workspace host whose immediate
+children contain `SKILL.md`. BB scans it on the host each time it lists skills
+or starts a session. Skills appear in the Skills list and composer
+autocomplete with scope `plugin`. The next provider session receives the
+original root rather than a copy, so a skill's references to files elsewhere
+in its package, such as `../../scripts/helper.sh`, still resolve.
+
+Each call replaces the plugin's roots. To refresh changed package contents,
+call it again with the same roots. To remove them, pass `[]`. Roots are
+dropped on unload or reload, and an invalid set (non-absolute or duplicate
+paths, or more than 64 roots) throws and keeps the previous set.
+
+A user, project, or manifest skill takes precedence over a runtime skill with
+the same name. BB also omits a runtime skill when the thread's provider
+already discovers the same `SKILL.md` path through its native roots, such as
+Pi `settings.json` skill paths, so the skill reaches the agent once.
+`configure` skill selection applies only to manifest skills.
+
 ### bb.experimental_aiServices — titles, commit messages, and voice
 
 bb's helper tasks are served by plugins: thread titles (branch names follow the

@@ -389,6 +389,7 @@ export interface PluginService {
     ctx: PluginCliContext,
   ): Promise<PluginCliExecutionResult>;
   listSkillRootContributions(): PluginSkillRootContribution[];
+  listHostSkillRootContributions(): PluginSkillRootContribution[];
   listAgentTools(): PluginAgentToolContribution[];
   resolveAgentConfiguration(args: {
     context: Omit<PluginAgentConfigurationContext, "pluginMetadata">;
@@ -2061,6 +2062,14 @@ export function createPluginService(deps: PluginServiceDeps): PluginService {
             pluginId,
             rootPath,
           })),
+        );
+    },
+
+    listHostSkillRootContributions() {
+      return [...loaded.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .flatMap(([pluginId, plugin]) =>
+          plugin.handle.skillRoots.map((rootPath) => ({ pluginId, rootPath })),
         );
     },
 

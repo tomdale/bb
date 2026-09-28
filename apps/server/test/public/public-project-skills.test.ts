@@ -14,6 +14,7 @@ import {
   skillListResponseSchema,
 } from "@bb/server-contract";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { setPluginAgentContributions } from "../../src/services/plugins/plugin-agent-contributions.js";
 import { writeRegistrySkillProvenance } from "../../src/services/skills/registry-skill-provenance.js";
 import { providerHasNativeRootSurface } from "../../src/services/providers/native-roots.js";
 import { registerHostRpcResponder } from "../helpers/host-rpc.js";
@@ -1057,6 +1058,108 @@ describe("public project skills route", () => {
 
       expect(response.status).toBe(400);
       expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
+  it("lists runtime plugin skill roots in place, once beside provider-native discovery", async () => {
+    await withTestHarness(async (harness) => {
+      const { host, session } = seedHostSession(harness.deps, {
+        id: "host-linked-skills",
+      });
+      const { project } = seedProjectWithSource(harness.deps, {
+        hostId: host.id,
+        path: "/tmp/linked-skills-project",
+      });
+      const environment = seedEnvironment(harness.deps, {
+        hostId: host.id,
+        projectId: project.id,
+        path: "/tmp/linked-skills-project",
+      });
+      const nativeAlso = discovered(
+        "native-also",
+        "provider-user",
+        "/pkg/skills/native-also/SKILL.md",
+      );
+      const stub = registerSkillRpc(harness, {
+        hostId: host.id,
+        sessionId: session.id,
+        skillsByProvider: {
+          pi: [nativeAlso],
+          "bb-plugin:loader": [
+            discovered(
+              "package-only",
+              "provider-user",
+              "/pkg/skills/package-only/SKILL.md",
+            ),
+            nativeAlso,
+          ],
+        },
+      });
+      setPluginAgentContributions({
+        listSkillRootContributions: () => [],
+        listHostSkillRootContributions: () => [
+          { pluginId: "loader", rootPath: "/pkg/skills" },
+        ],
+        listAgentTools: () => [],
+        listInstructionContributions: () => [],
+        findAgentTool: () => undefined,
+        invokeAgentTool: async () => ({
+          success: false,
+          contentItems: [{ type: "inputText", text: "unused" }],
+        }),
+        resolveMention: async () => ({ ok: false, error: "unused" }),
+      });
+      try {
+        const response = await harness.app.request(
+          `/api/v1/projects/${project.id}/skills?environmentId=${environment.id}`,
+        );
+        expect(response.status).toBe(200);
+        const body = skillListResponseSchema.parse(await readJson(response));
+
+        expect(
+          body.skills.filter((skill) => skill.filePath.startsWith("/pkg/")),
+        ).toEqual([
+          expect.objectContaining({
+            name: "native-also",
+            provider: "pi",
+            scope: "provider-user",
+          }),
+          {
+            id: skillId("/pkg/skills/package-only/SKILL.md"),
+            name: "package-only",
+            description: "package-only skill",
+            provider: null,
+            scope: "plugin",
+            pluginId: "loader",
+            filePath: "/pkg/skills/package-only/SKILL.md",
+            manageable: false,
+            registrySkillId: null,
+          },
+        ]);
+        const pluginScan = stub.requests
+          .map((request) => request.command)
+          .find(
+            (command) =>
+              command.type === "host.list_skills" &&
+              command.providerId === "bb-plugin:loader",
+          );
+        expect(pluginScan).toMatchObject({
+          cwd: null,
+          nativeRoots: {
+            resolved: {
+              skills: [
+                expect.objectContaining({
+                  path: "/pkg/skills",
+                  origin: "user",
+                  shape: "skills",
+                }),
+              ],
+            },
+          },
+        });
+      } finally {
+        setPluginAgentContributions(undefined);
+      }
     });
   });
 

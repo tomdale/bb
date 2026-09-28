@@ -624,6 +624,7 @@ describe("bb.agents.experimental_registerProvider (removed in SDK 0.4.16)", () =
     expect(Object.keys(api.agents).sort()).toEqual([
       "configure",
       "contributeInstructions",
+      "experimental_setSkillRoots",
       "registerTool",
     ]);
     expect(Object.keys({ ...api.agents })).not.toContain(

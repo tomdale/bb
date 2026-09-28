@@ -1390,6 +1390,30 @@ describe("agent tools", () => {
     },
   );
 
+  it("replaces runtime skill roots and keeps the last valid set on rejection", () => {
+    const { bb, harness } = createFakePluginHost();
+    bb.agents.experimental_setSkillRoots([{ path: "/pkg/a/skills" }]);
+    bb.agents.experimental_setSkillRoots([
+      { path: "/pkg/b/skills" },
+      { path: "C:\\pkg\\skills" },
+    ]);
+    expect(() =>
+      bb.agents.experimental_setSkillRoots([{ path: "pkg/skills" }]),
+    ).toThrow("absolute path");
+    expect(() =>
+      bb.agents.experimental_setSkillRoots([
+        { path: "/pkg/c/skills" },
+        { path: "/pkg/c/skills" },
+      ]),
+    ).toThrow("duplicate root");
+    expect(harness.registrations.experimental_skillRoots).toEqual([
+      "/pkg/b/skills",
+      "C:\\pkg\\skills",
+    ]);
+    bb.agents.experimental_setSkillRoots([]);
+    expect(harness.registrations.experimental_skillRoots).toEqual([]);
+  });
+
   it("rejects recursive schemas at registration and configuration", async () => {
     const { bb, harness } = createFakePluginHost();
 

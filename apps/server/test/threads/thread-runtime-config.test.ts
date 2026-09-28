@@ -99,6 +99,7 @@ function registerRemoteRuntimeFileResponder(
     hostId: string;
     sessionId: string;
     sharedSkills?: DiscoveredSkill[];
+    skillsByProvider?: Record<string, DiscoveredSkill[]>;
   },
 ): HostRpcResponder {
   return registerHostRpcResponder(harness, {
@@ -146,7 +147,12 @@ function registerRemoteRuntimeFileResponder(
       if (command.type === "host.list_skills") {
         return {
           ok: true,
-          result: { skills: args.sharedSkills ?? [] },
+          result: {
+            skills:
+              args.skillsByProvider?.[command.providerId] ??
+              args.sharedSkills ??
+              [],
+          },
         };
       }
       throw new Error(`Unexpected remote runtime RPC ${command.type}`);
@@ -1541,6 +1547,83 @@ describe("thread runtime config", () => {
         });
       },
     );
+  });
+
+  it("links runtime plugin skill roots unless the thread's provider discovers them natively", async () => {
+    await withTestHarness(async (harness) => {
+      const { host, session } = seedHostSession(harness.deps, {
+        id: "host-runtime-linked-skills",
+      });
+      const workspacePath = "/remote/runtime-linked-skills";
+      const skill = (name: string): DiscoveredSkill => ({
+        id: `skill_${createHash("sha256").update(name).digest("hex")}`,
+        name,
+        description: `Use ${name} from a package.`,
+        filePath: `/pkg/skills/${name}/SKILL.md`,
+        rootKind: "provider-user",
+        linked: false,
+      });
+      registerRemoteRuntimeFileResponder(harness, {
+        hostId: host.id,
+        sessionId: session.id,
+        files: new Map(),
+        skillsByProvider: {
+          "claude-code": [skill("native-also")],
+          "bb-plugin:loader": [skill("package-only"), skill("native-also")],
+        },
+      });
+      const { project } = seedProjectWithSource(harness.deps, {
+        hostId: host.id,
+        path: workspacePath,
+      });
+      const environment = seedEnvironment(harness.deps, {
+        hostId: host.id,
+        projectId: project.id,
+        path: workspacePath,
+      });
+      const thread = seedThread(harness.deps, {
+        environmentId: environment.id,
+        projectId: project.id,
+        providerId: "claude-code",
+      });
+      setPluginAgentContributions({
+        listSkillRootContributions: () => [],
+        listHostSkillRootContributions: () => [
+          { pluginId: "loader", rootPath: "/pkg/skills" },
+        ],
+        listAgentTools: () => [],
+        listInstructionContributions: () => [],
+        findAgentTool: () => undefined,
+        invokeAgentTool: async () => ({
+          success: false,
+          contentItems: [{ type: "inputText", text: "unused" }],
+        }),
+        resolveMention: async () => ({ ok: false, error: "unused" }),
+      });
+      try {
+        const runtimeConfig = await resolveThreadRuntimeCommandConfig(
+          harness.deps,
+          { thread, environment, model: "test-model" },
+        );
+
+        expect(
+          runtimeConfig.injectedSkillSources.filter(
+            (source) => source.kind === "linked-root",
+          ),
+        ).toEqual([
+          {
+            kind: "linked-root",
+            sourceType: "plugin",
+            name: "package-only",
+            description: "Use package-only from a package.",
+            skillsRootPath: "/pkg/skills",
+            skillFilePath: "/pkg/skills/package-only/SKILL.md",
+          },
+        ]);
+      } finally {
+        setPluginAgentContributions(undefined);
+      }
+    });
   });
 
   it("appends data-dir AGENTS.md instructions before workspace instructions", async () => {
