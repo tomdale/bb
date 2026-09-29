@@ -2255,6 +2255,47 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
       });
     },
 
+    async runThreadProviderAction({ threadId, action, requestId }) {
+      return runThreadOperation({
+        threadId,
+        work: async () => {
+          const providerId =
+            threadIdentityRegistry.resolveProviderForThread(threadId);
+          if (providerId !== "pi") {
+            throw new Error(`Provider action ${action} requires a Pi thread`);
+          }
+          if (
+            turnState.getActiveTurnId(threadId) !== null ||
+            pendingTurnStarts.has(threadId)
+          ) {
+            throw new Error(
+              `Provider action ${action} requires an idle thread`,
+            );
+          }
+          const proc = requireProviderProcessForThread(threadId);
+          const adapterCommand: AdapterCommand = {
+            type: "thread/provider/action",
+            threadId,
+            providerThreadId: requireProviderThreadId(threadId),
+            action,
+            requestId,
+          };
+          const cmd = requireProviderRequestPlan({
+            commandType: adapterCommand.type,
+            plan: proc.adapter.buildCommandPlan(adapterCommand),
+            providerId,
+          });
+          return sendCommand({
+            proc,
+            message: cmd,
+            resultSchema: z
+              .object({ nextId: z.number().int().positive() })
+              .strict(),
+          });
+        },
+      });
+    },
+
     async clearThreadGoal({ threadId }) {
       return runThreadOperation({
         threadId,

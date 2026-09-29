@@ -26,6 +26,7 @@ import {
 import type { Hono } from "hono";
 import {
   createStandaloneBuiltinCompactCommandInput,
+  threadScope,
   type Thread,
   type ThreadQueuedMessage,
 } from "@bb/domain";
@@ -61,7 +62,12 @@ import {
   dispatchThreadUnarchiveCommand,
   prepareTurnSubmitCommandPayload,
 } from "../../services/threads/thread-commands.js";
-import { getLastProviderThreadId } from "../../services/threads/thread-events.js";
+import {
+  appendThreadEventInTransaction,
+  getLastProviderThreadId,
+} from "../../services/threads/thread-events.js";
+import { getPiTodoResetState } from "../../services/threads/pi-todo-reset.js";
+import { requestQueuedMessageDispatch } from "../../services/threads/queued-message-dispatch.js";
 import { stopThreadForCurrentState } from "../../services/threads/thread-lifecycle.js";
 import {
   buildThreadStatusChangeMetadata,
@@ -435,6 +441,95 @@ export function registerThreadActionRoutes(app: Hono, deps: AppDeps): void {
       );
     }
     return context.json({ ok: true });
+  });
+
+  post(routes.experimental_providerAction, async (context, payload) => {
+    const thread = requirePublicThread(deps.db, context.req.param("id"));
+    if (thread.providerId !== "pi" || payload.action !== "pi-todo.reset") {
+      throw new ApiError(
+        400,
+        "invalid_request",
+        "Pi Todo reset requires a Pi thread",
+      );
+    }
+    const requestId = payload.requestId;
+    const existing = getPiTodoResetState(deps.db, thread.id).completed.get(
+      requestId,
+    );
+    if (existing) return context.json(existing);
+    const environment = requireThreadHostCommandEnvironment({
+      db: deps.db,
+      thread,
+    });
+    requireConnectedHostSession(deps, environment.hostId);
+    const completed = deps.db.transaction(
+      (tx) => {
+        const previous = getPiTodoResetState(tx, thread.id);
+        const done = previous.completed.get(requestId);
+        if (done) return done;
+        if (
+          previous.pendingRequestId !== null &&
+          previous.pendingRequestId !== requestId
+        ) {
+          throw new ApiError(
+            409,
+            "invalid_request",
+            "A Pi Todo reset is pending; retry with its requestId",
+          );
+        }
+        if (previous.pendingRequestId === null) {
+          appendThreadEventInTransaction(tx, {
+            threadId: thread.id,
+            environmentId: thread.environmentId,
+            type: "system/plugin-todo-reset",
+            scope: threadScope(),
+            data: { pluginId: "pi-todo", requestId, status: "pending" },
+          });
+        }
+        return null;
+      },
+      { behavior: "immediate" },
+    );
+    if (completed) return context.json(completed);
+    deps.hub.notifyThread(thread.id, ["events-appended"]);
+    const result = await runLiveHostCommand(deps, {
+      command: {
+        type: "thread.provider.action",
+        environmentId: environment.id,
+        threadId: thread.id,
+        action: payload.action,
+        requestId,
+      },
+      hostId: environment.hostId,
+      timeoutMs: LIVE_DAEMON_COMMAND_TIMEOUT_MS,
+    });
+    const boundarySequence = deps.db.transaction(
+      (tx) => {
+        const existing = getPiTodoResetState(tx, thread.id).completed.get(
+          requestId,
+        );
+        if (existing) return existing.boundarySequence;
+        return appendThreadEventInTransaction(tx, {
+          threadId: thread.id,
+          environmentId: thread.environmentId,
+          type: "system/plugin-todo-reset",
+          scope: threadScope(),
+          data: {
+            pluginId: "pi-todo",
+            requestId,
+            status: "completed",
+            nextId: result.nextId,
+          },
+        });
+      },
+      { behavior: "immediate" },
+    );
+    deps.hub.notifyThread(thread.id, ["events-appended"]);
+    requestQueuedMessageDispatch(deps, {
+      kind: "thread-ready",
+      threadId: thread.id,
+    });
+    return context.json({ nextId: result.nextId, boundarySequence });
   });
 
   post(routes.clearGoal, async (context) => {

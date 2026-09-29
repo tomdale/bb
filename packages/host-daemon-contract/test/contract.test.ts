@@ -544,6 +544,7 @@ const SETTLED_RESPONSE_RESULT_FIXTURES: SettledResponseResultFixtures = {
   "thread.stop": { providerCheckpointId: null },
   "thread.storage.delete": { providerCheckpointId: null },
   "thread.goal.clear": { cleared: true },
+  "thread.provider.action": { nextId: 2 },
   "thread.plan.cancel": { cancelled: true },
   "thread.rename": {},
   "thread.archive": {},
@@ -1144,7 +1145,7 @@ const CONTRIBUTED_ENV = [
 
 describe("host-daemon command schemas", () => {
   it("uses the current host-daemon protocol version", () => {
-    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(220);
+    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(221);
     expect(HOST_ARTIFACT_MAX_BYTES).toBe(256 * 1024 * 1024);
   });
 

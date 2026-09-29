@@ -1,5 +1,11 @@
 # APIs To Audit
 
+## `sdk.threads.experimental_providerAction`
+
+`experimental_providerAction({ threadId, action: "pi-todo.reset", requestId })` targets only an already-live idle Pi thread with its Todo extension loaded. The caller supplies a stable UUID for retries. The server persists a pending thread-scoped `system/plugin-todo-reset` event before invoking Pi, waits for a correlated extension confirmation, then persists a completed event and returns `{ nextId, boundarySequence }`. Reusing a completed UUID returns its original boundary; pending requests retry the same Pi reset, which is idempotent by UUID. A failure leaves the pending event for a deliberate retry; no automatic reset runs after reload. This does not clear chat history or start an agent turn. The CLI offers the same action through `bb thread provider-action [id] --action pi-todo.reset --request-id UUID`.
+
+Before stabilization, audit provider-specific naming versus a dedicated Todo reset operation, extension availability during upgrades, post-confirmation event persistence failure recovery, and concurrency with incoming turns and timeline replay.
+
 ## `app.commands.register`
 
 `app.commands.register` requires SDK 0.4.91; `defaultShortcut` and keyboard

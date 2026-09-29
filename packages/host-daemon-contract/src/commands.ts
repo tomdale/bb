@@ -379,6 +379,14 @@ const threadGoalClearCommandSchema = hostDaemonThreadTargetSchema
   })
   .strict();
 
+const threadProviderActionCommandSchema = hostDaemonThreadTargetSchema
+  .extend({
+    type: z.literal("thread.provider.action"),
+    action: z.literal("pi-todo.reset"),
+    requestId: z.string().uuid(),
+  })
+  .strict();
+
 const threadPlanCancelCommandSchema = hostDaemonThreadTargetSchema
   .extend({
     type: z.literal("thread.plan.cancel"),
@@ -1506,6 +1514,15 @@ export const hostDaemonCommandRegistry = {
     transport: "settled",
     retryable: false,
     flushEventsBeforeResult: true,
+    envLane: "read",
+  }),
+  "thread.provider.action": defineHostDaemonCommandDescriptor({
+    type: "thread.provider.action",
+    schema: threadProviderActionCommandSchema,
+    resultSchema: z.object({ nextId: z.number().int().positive() }).strict(),
+    transport: "settled",
+    retryable: false,
+    flushEventsBeforeResult: false,
     envLane: "read",
   }),
   "thread.plan.cancel": defineHostDaemonCommandDescriptor({

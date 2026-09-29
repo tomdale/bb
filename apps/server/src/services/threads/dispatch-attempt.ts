@@ -59,6 +59,7 @@ import { buildExecutionOptions } from "./thread-commands.js";
 import { getActiveTurnId, isManualCompactionActive } from "./thread-events.js";
 import { requireThreadCommandEnvironment } from "./thread-command-environment.js";
 import { assertThreadHostAcceptsWork } from "./thread-host-admission.js";
+import { getPiTodoResetState } from "./pi-todo-reset.js";
 import {
   requestThreadProvision,
   scheduleThreadProvisioningAdvance,
@@ -380,6 +381,10 @@ async function runDispatchAttempt(
     }
     return { kind: "queued", entry };
   };
+
+  if (getPiTodoResetState(deps.db, thread.id).pendingRequestId !== null) {
+    return waitOn({ kind: "thread-busy" }, null);
+  }
 
   // --- 1. plugin policy ---------------------------------------------------
 

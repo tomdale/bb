@@ -173,6 +173,7 @@ function createRuntime(): FakeDispatchRuntime {
       return { providerCheckpointId: null };
     }),
     clearThreadGoal: vi.fn(async () => ({ cleared: true })),
+    runThreadProviderAction: vi.fn(async () => ({ nextId: 2 })),
     renameThread: vi.fn(async () => undefined),
     archiveThread: vi.fn(async () => undefined),
     unarchiveThread: vi.fn(async () => undefined),
@@ -746,6 +747,51 @@ describe("dispatchCommand", () => {
     expect(runtime.getActiveTurnId("thread-1")).toBe("turn-newer-2");
     expect(runtime.stopThread).not.toHaveBeenCalled();
     expect(flush).not.toHaveBeenCalled();
+  });
+
+  it("runs a provider action only on its already-live runtime", async () => {
+    const runtime = createRuntime();
+    const manager = new RuntimeManager({
+      createRuntime: () => runtime,
+      provisionWorkspace: async () => createWorkspace(),
+    });
+    await manager.ensureEnvironment({
+      environmentId: "env-1",
+      injectedSkillSources: [],
+      workspacePath: WORKSPACE_PATH,
+    });
+    const command: CommandOf<"thread.provider.action"> = {
+      type: "thread.provider.action",
+      environmentId: "env-1",
+      threadId: "thread-1",
+      action: "pi-todo.reset",
+      requestId: "00000000-0000-4000-8000-000000000001",
+    };
+    const options = {
+      dataDir: "/tmp/bb-data",
+      logger: silentLogger,
+      eventSink: { emit: vi.fn(), flush: vi.fn(async () => undefined) },
+      fetchProjectAttachment: async () => {
+        throw new Error("Unexpected attachment fetch");
+      },
+      fetchPluginHostArtifact: fetchDispatchTestArtifact,
+      ...unexpectedProviderMaintenance,
+      runtimeManager: manager,
+      threadStorageRootPath: "/tmp/bb-thread-storage",
+    };
+    await expect(dispatchCommand(command, options)).rejects.toThrow(
+      "No live provider runtime",
+    );
+    expect(runtime.resumeThread).not.toHaveBeenCalled();
+    runtime.setIdle("thread-1");
+    await expect(dispatchCommand(command, options)).resolves.toEqual({
+      nextId: 2,
+    });
+    expect(runtime.runThreadProviderAction).toHaveBeenCalledWith({
+      threadId: "thread-1",
+      action: "pi-todo.reset",
+      requestId: command.requestId,
+    });
   });
 
   it("resumes a reaped Codex runtime before clearing its Goal", async () => {

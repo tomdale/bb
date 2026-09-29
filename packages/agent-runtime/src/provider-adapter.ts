@@ -114,6 +114,13 @@ export type AdapterCommand =
       providerThreadId: string;
     }
   | {
+      type: "thread/provider/action";
+      threadId: string;
+      providerThreadId: string;
+      action: "pi-todo.reset";
+      requestId: string;
+    }
+  | {
       type: "thread/name/set";
       threadId: string;
       providerThreadId: string;

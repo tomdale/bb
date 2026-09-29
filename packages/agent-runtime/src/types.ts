@@ -267,6 +267,12 @@ interface ClearThreadGoalArgs {
   threadId: string;
 }
 
+interface ThreadProviderActionArgs {
+  threadId: string;
+  action: "pi-todo.reset";
+  requestId: string;
+}
+
 interface ArchiveThreadArgs {
   bridgeLaunch: AgentRuntimeBridgeLaunch;
   providerId: string;
@@ -317,6 +323,10 @@ export interface AgentRuntime {
   stopThread(args: StopThreadArgs): Promise<StopThreadResult>;
 
   clearThreadGoal(args: ClearThreadGoalArgs): Promise<{ cleared: boolean }>;
+
+  runThreadProviderAction(
+    args: ThreadProviderActionArgs,
+  ): Promise<{ nextId: number }>;
 
   renameThread(args: RenameThreadArgs): Promise<void>;
 

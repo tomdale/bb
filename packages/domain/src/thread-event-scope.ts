@@ -206,6 +206,11 @@ const threadEventScopeDefinitionByType = {
     rationale:
       "Thread-management operations use thread scope outside provider turns; tool-owned operations use turn scope so the operation stays with the tool call that caused it.",
   },
+  "system/plugin-todo-reset": {
+    policy: "thread",
+    rationale:
+      "The Pi Todo reset applies to live state across turns on this thread.",
+  },
   "system/interaction/lifecycle": {
     policy: "thread-or-turn",
     rationale:
