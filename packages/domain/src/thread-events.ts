@@ -28,6 +28,7 @@ export const systemEventTypeValues = [
   "system/manager/user_message",
   "system/thread/interrupted",
   "system/operation",
+  "system/plugin-todo-reset",
   "system/interaction/lifecycle",
   "system/permissionGrant/lifecycle",
   "system/userQuestion/lifecycle",
@@ -240,6 +241,22 @@ export const systemOperationEventDataSchema = z.object({
   operationId: z.string(),
   metadata: z.record(z.string(), jsonValueSchema).optional(),
 });
+
+export const systemPluginTodoResetEventDataSchema = z
+  .object({
+    pluginId: z.literal("pi-todo"),
+    requestId: z.string().uuid(),
+    status: z.enum(["pending", "completed"]),
+    nextId: z.number().int().positive().refine(Number.isSafeInteger).optional(),
+  })
+  .superRefine((event, ctx) => {
+    if ((event.status === "completed") !== (event.nextId !== undefined)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Only a completed reset has nextId",
+      });
+    }
+  });
 
 export const systemInteractionLifecycleEventDataSchema = z.object({
   interaction: interactionLifecycleSchema,

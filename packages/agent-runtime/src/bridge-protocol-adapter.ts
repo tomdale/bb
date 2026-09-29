@@ -400,6 +400,17 @@ export function createBridgeProtocolAdapter(
               providerThreadId: command.providerThreadId,
             },
           });
+        case "thread/provider/action":
+          return gate("threadProviderAction", {
+            kind: "request",
+            method: BRIDGE_REQUEST_METHODS.threadProviderAction,
+            params: {
+              threadId: command.threadId,
+              providerThreadId: command.providerThreadId,
+              action: command.action,
+              requestId: command.requestId,
+            },
+          });
         case "thread/goal/clear":
           return gate("threadGoalClear", {
             kind: "request",

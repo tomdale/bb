@@ -581,6 +581,40 @@ export function registerActionsCommands(
       ),
     );
 
+  parent
+    .command("provider-action [id]")
+    .description("Run an allowlisted action on an already-live Pi thread")
+    .requiredOption("--action <action>", "Allowed action: pi-todo.reset")
+    .requiredOption(
+      "--request-id <uuid>",
+      "Stable request UUID to retry a failed reset",
+    )
+    .option("--self", "Target the current thread (from BB_THREAD_ID)")
+    .option("--json", "Print machine-readable JSON output")
+    .action(
+      action(
+        async (
+          id: string | undefined,
+          opts: ThreadActionOptions & { action: string; requestId: string },
+        ) => {
+          if (opts.action !== "pi-todo.reset")
+            throw new Error("Only pi-todo.reset is supported");
+          const threadId = requireThreadIdOrSelf(id, opts);
+          const result = await createCliBbSdk(
+            getUrl(),
+          ).threads.experimental_providerAction({
+            threadId,
+            action: opts.action,
+            requestId: opts.requestId,
+          });
+          if (outputJson(opts, { threadId, ...result })) return;
+          console.log(
+            `Pi Todo reset on thread ${threadId} (next id ${result.nextId}, boundary #${result.boundarySequence})`,
+          );
+        },
+      ),
+    );
+
   for (const { name, description, method, done } of [
     {
       name: "stop",

@@ -1151,6 +1151,7 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
           "Spawn or fork with lifecycleOwnerThreadId to archive/delete a dependent with a live owner across projects; ownership is immutable, independent of sidebar parents and supports different hosts/environments. Thread responses return the owner or null. Unarchive owner first; Stop does not cascade",
           "List machines and suspend, resume, or remove provider-managed machines",
           "Read recorded context usage with sdk.threads.context({ threadId }); usage is null when unavailable, and its snapshot is present only when the latest measurement includes a breakdown",
+          "Reset live Pi Todo tasks with sdk.threads.experimental_providerAction({ threadId, action: 'pi-todo.reset', requestId }); the result carries nextId and a durable replay boundary, without changing chat history",
           "Reach the same operations the [bb CLI](cli) and the bb UI use",
           "Have the threads it creates attributed back to the plugin",
           "Read the server's loopback URL, public app URL, and data directory when it needs server facts",
@@ -1161,6 +1162,7 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
           "PluginServerApi",
           "PluginsArea.experimental_getSafeMode",
           "PluginsArea.experimental_setSafeMode",
+          "ThreadsArea.experimental_providerAction",
         ],
         firstParty: [
           "Automations",

@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { androidAppPrepareRequestSchema } from "./api/system.js";
 import {
   machineEnvironmentSetSchema,
@@ -1473,6 +1474,22 @@ export const publicApiRoutes = {
       method: "post",
       request: noRequest<PathId>(),
       response: jsonResponse<{ ok: true }>(),
+    }),
+    experimental_providerAction: defineRoute({
+      path: "/threads/:id/provider-action",
+      method: "post",
+      request: jsonRequest<
+        PathId,
+        { action: "pi-todo.reset"; requestId: string }
+      >(
+        z
+          .object({
+            action: z.literal("pi-todo.reset"),
+            requestId: z.string().uuid(),
+          })
+          .strict(),
+      ),
+      response: jsonResponse<{ nextId: number; boundarySequence: number }>(),
     }),
     open: defineRoute({
       path: "/threads/:id/open",

@@ -295,6 +295,7 @@ Messaging:
   bb thread clear [id]                     Clear model context for an idle or failed thread
   bb thread cancel-plan [id]               Exit the provider's active Plan mode
   bb thread clear-goal [id]                Clear the provider's active Goal
+  bb thread provider-action [id] --action pi-todo.reset --request-id UUID  Reset live Pi Todo tasks; reuse UUID for retries
     --self                                 Target current thread
 
   `thread compact` enqueues the same structured /compact turn used by the

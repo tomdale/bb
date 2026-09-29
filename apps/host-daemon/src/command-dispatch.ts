@@ -477,6 +477,25 @@ const commandHandlers: CommandHandlerMap = {
     await options.eventSink.flush();
     return result;
   },
+  "thread.provider.action": async (command, options) => {
+    const owners = options.runtimeManager.listThreadOwnerEntries(
+      command.threadId,
+    );
+    const owner = owners.find((entry) =>
+      entry.runtime.hasThread(command.threadId),
+    );
+    if (!owner) {
+      throw new ExpectedCommandDispatchError(
+        "unknown_thread_runtime",
+        `No live provider runtime available for thread ${command.threadId}`,
+      );
+    }
+    return owner.runtime.runThreadProviderAction({
+      threadId: command.threadId,
+      action: command.action,
+      requestId: command.requestId,
+    });
+  },
   "thread.plan.cancel": async (command, options) => {
     const owners = options.runtimeManager.listThreadOwnerEntries(
       command.threadId,

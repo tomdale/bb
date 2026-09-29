@@ -23,6 +23,7 @@ export const BRIDGE_REQUEST_METHODS = {
   threadArchive: "thread/archive",
   threadUnarchive: "thread/unarchive",
   threadGoalClear: "thread/goal/clear",
+  threadProviderAction: "thread/provider/action",
   turnStart: "turn/start",
   turnSteer: "turn/steer",
   skillsConfigure: "skills/configure",
@@ -83,6 +84,10 @@ export const threadDiscardParamsSchema = threadRefParams;
 export const threadArchiveParamsSchema = threadRefParams;
 export const threadUnarchiveParamsSchema = threadRefParams;
 export const threadGoalClearParamsSchema = threadRefParams;
+export const threadProviderActionParamsSchema = threadRefParams.extend({
+  action: z.literal("pi-todo.reset"),
+  requestId: z.string().uuid(),
+});
 
 export const threadNameSetParamsSchema = z
   .object({
