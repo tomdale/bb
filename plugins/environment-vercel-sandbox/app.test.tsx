@@ -223,21 +223,33 @@ describe("launch inputs control", () => {
     });
   });
 
-  it.each([
-    ["condenses the full allowed list", null, [1, 2, 4, 8, 16, 32]],
-    ["keeps a valid current choice", { vcpus: 6 }, [1, 2, 4, 6, 8, 16, 32]],
-  ])("%s to valid vCPU counts", async (_label, value, expected) => {
+  it("lists every vCPU count Vercel allows and nothing else", async () => {
     const slot = renderSlot(
       inputsSlot(),
-      { value, onChange: vi.fn() },
-      { rpc: { "launch.options": () => LAUNCH_OPTIONS } },
+      { value: { vcpus: 6 }, onChange: vi.fn() },
+      {
+        rpc: {
+          "launch.options": () => ({
+            ...LAUNCH_OPTIONS,
+            limits: {
+              ...LAUNCH_OPTIONS.limits,
+              allowedVcpus: [...LAUNCH_OPTIONS.limits.allowedVcpus, 3],
+            },
+          }),
+        },
+      },
     );
-    openMenu(await slot.findByRole("button", { name: /vCPU/ }));
+    openMenu(await slot.findByRole("button", { name: /6 vCPU/ }));
     const counts = (await slot.findAllByRole("menuitemradio"))
       .map((item) => /^(\d+) vCPU/.exec(item.textContent ?? "")?.[1])
       .filter((count): count is string => count !== undefined)
       .map(Number);
-    expect(counts).toEqual(expected);
+    expect(counts).toEqual(LAUNCH_OPTIONS.limits.allowedVcpus);
+    expect(
+      slot
+        .getByRole("menuitemradio", { name: /^6 vCPU · 12 GiB/ })
+        .getAttribute("aria-checked"),
+    ).toBe("true");
   });
 
   it.each([

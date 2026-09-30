@@ -45,8 +45,6 @@ type Load<T> =
   | { status: "ready"; data: T }
   | { status: "error" };
 
-const PREFERRED_VCPUS = [1, 2, 4, 8, 16, 32] as const;
-const MAX_LISTED_VCPU_CHOICES = 8;
 const TIMEOUT_LADDER_MINUTES = [15, 30, 45, 60, 120, 240, 480, 1440] as const;
 const HOBBY_MAX_VCPUS = 4;
 const PRO_MAX_VCPUS = 8;
@@ -163,18 +161,10 @@ function timeoutPlanTag(minutes: number): string | null {
   return minutes <= HOBBY_MAX_TIMEOUT_MINUTES ? null : "Pro+";
 }
 
-function vcpuChoices(
-  options: LaunchOptions,
-  current: number | undefined,
-): number[] {
-  const allowed = [...new Set(options.limits.allowedVcpus)]
+function vcpuChoices(options: LaunchOptions): number[] {
+  return [...new Set(options.limits.allowedVcpus)]
     .filter(isAllowedVcpuCount)
     .sort((left, right) => left - right);
-  if (allowed.length <= MAX_LISTED_VCPU_CHOICES) return allowed;
-  const listed = new Set<number>(PREFERRED_VCPUS);
-  listed.add(options.defaultInputs.vcpus);
-  if (current !== undefined) listed.add(current);
-  return allowed.filter((candidate) => listed.has(candidate));
 }
 
 function choiceList(
@@ -437,7 +427,7 @@ function VercelMachineInputsControl({
         {loaded === null ? null : (
           <>
             <DropdownMenuLabel>vCPU</DropdownMenuLabel>
-            {vcpuChoices(loaded, valid.vcpus).map((candidate) => (
+            {vcpuChoices(loaded).map((candidate) => (
               <MenuChoice
                 key={candidate}
                 label={`${sizeLabel(candidate, candidate * loaded.memoryMiBPerVcpu)}${candidate === loaded.defaultInputs.vcpus ? " (default)" : ""}`}
