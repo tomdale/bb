@@ -833,6 +833,46 @@ describe("PluginNewThreadComposer seeding", () => {
     await submit();
     expect(onSubmit).toHaveBeenCalledOnce();
   });
+
+  it("retains host readiness checks when execution controls are hidden", async () => {
+    mocks.modelsLoading = true;
+    const guard = vi.fn(() => true);
+    const onSubmit = vi.fn();
+    const element = () => (
+      <MemoryRouter>
+        <PluginNewThreadComposer
+          draftKey="hidden-execution-readiness"
+          defaultProjectId="proj_1"
+          defaultProviderId="codex"
+          defaultModel="gpt-5.6"
+          initialPrompt="send to existing thread"
+          experimental_executionControlsVisibility="hidden"
+          experimental_onBeforeSubmit={guard}
+          onSubmit={onSubmit}
+        />
+      </MemoryRouter>
+    );
+    const view = render(element());
+    await waitFor(() =>
+      expect(latestPromptBoxProps().disabledReason).toBe("Select a provider."),
+    );
+    await submit();
+    const host = latestPromptBoxProps()
+      .pluginComposerHost as PluginComposerHost;
+    await expect(
+      host.submit!({ experimental_data: null }, undefined),
+    ).rejects.toThrow("Select a provider.");
+    expect(guard).not.toHaveBeenCalled();
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(latestPromptBoxProps().value).toBe("send to existing thread");
+
+    mocks.modelsLoading = false;
+    view.rerender(element());
+    await waitFor(() => expect(latestPromptBoxProps().disabled).toBe(false));
+    await submit();
+    expect(guard).toHaveBeenCalledOnce();
+    expect(onSubmit).toHaveBeenCalledOnce();
+  });
   beforeEach(() => {
     resetFixedPanelTabsStateForTest();
     mocks.closeTerminal.mockClear();
