@@ -1,9 +1,16 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import { speechRequestSchema, requestGatewaySpeech } from "./tts.js";
+import { z } from "zod";
+import {
+  speechRequestSchema,
+  requestGatewaySpeech,
+  speechModelIds,
+  speechVoices,
+} from "./tts.js";
 
 export async function handleSpeechRequest(
   request: Request,
   apiKey: string | undefined,
+  settings: { model: string; voice: string; speed: number },
   fetchImpl: typeof fetch = fetch,
 ): Promise<Response> {
   if (!apiKey) {
@@ -58,6 +65,7 @@ export async function handleSpeechRequest(
       apiKey,
       text: parsed.data.text,
       signal: request.signal,
+      settings,
       fetchImpl,
     });
     const audio = gatewayResponse;
@@ -101,6 +109,25 @@ export default async function plugin(bb: BbPluginApi) {
       description:
         "Optional server-side override. Otherwise Read aloud uses AI_GATEWAY_API_KEY from BB Environment variables for this thread's project, then the global value.",
       secret: true,
+    },
+    model: {
+      type: "select",
+      label: "Speech model",
+      options: [...speechModelIds],
+      default: "openai/tts-1",
+    },
+    voice: {
+      type: "select",
+      label: "Voice",
+      options: [...speechVoices],
+      default: "alloy",
+    },
+    speed: {
+      type: "number",
+      label: "Speaking speed",
+      description: "Supported range is 0.25–4; values outside it are clamped.",
+      experimental_schema: z.number().finite(),
+      default: 1,
     },
   });
   bb.http.route("POST", "/speech", async (context) => {
@@ -163,15 +190,19 @@ export default async function plugin(bb: BbPluginApi) {
     } catch {
       return Response.json({ error: "Thread not found." }, { status: 404 });
     }
-    const { apiKey: configuredKey } = await settings.get();
-    const apiKey = configuredKey?.trim() || environmentKey?.trim();
+    const configuredSettings = await settings.get();
+    const apiKey = configuredSettings.apiKey?.trim() || environmentKey?.trim();
     const request = new Request(context.req.url, {
       body: JSON.stringify({ text: body.text }),
       headers: context.req.raw.headers,
       method: context.req.raw.method,
       signal: context.req.raw.signal,
     });
-    return handleSpeechRequest(request, apiKey || undefined);
+    return handleSpeechRequest(request, apiKey || undefined, {
+      model: configuredSettings.model,
+      voice: configuredSettings.voice,
+      speed: configuredSettings.speed,
+    });
   });
   const { apiKey } = await settings.get();
   const globalEnvironmentKey =

@@ -34,10 +34,61 @@ export const speechRequestSchema = z
   .object({ text: z.string().trim().min(1).max(MAX_SPEECH_CHARACTERS) })
   .strict();
 
+export const speechModelIds = ["openai/tts-1", "openai/tts-1-hd"] as const;
+
+export const speechVoices = [
+  "alloy",
+  "echo",
+  "fable",
+  "nova",
+  "onyx",
+  "shimmer",
+] as const;
+
+const speechSettingsSchema = z
+  .object({
+    model: z.enum(speechModelIds),
+    voice: z.enum(speechVoices),
+    speed: z
+      .number()
+      .finite()
+      .transform((speed) => Math.min(4, Math.max(0.25, speed))),
+  })
+  .strict();
+
+export type SpeechSettings = z.input<typeof speechSettingsSchema>;
+
+export function parseSpeechSettings(
+  input: unknown,
+): z.output<typeof speechSettingsSchema> {
+  const parsed = speechSettingsSchema.safeParse(input);
+  if (!parsed.success) {
+    throw new Error("Read aloud speech settings are invalid.");
+  }
+  return parsed.data;
+}
+
+export function buildGatewaySpeechBody(
+  text: string,
+  inputSettings: unknown,
+): { model: (typeof speechModelIds)[number]; body: string } {
+  const settings = parseSpeechSettings(inputSettings);
+  return {
+    model: settings.model,
+    body: JSON.stringify({
+      text,
+      voice: settings.voice,
+      speed: settings.speed,
+      outputFormat: "mp3",
+    }),
+  };
+}
+
 export interface GatewaySpeechOptions {
   apiKey: string;
   text: string;
   signal: AbortSignal;
+  settings: unknown;
   fetchImpl?: typeof fetch;
 }
 
@@ -170,12 +221,14 @@ export async function requestGatewaySpeech({
   apiKey,
   text,
   signal,
+  settings,
   fetchImpl = fetch,
 }: GatewaySpeechOptions): Promise<Uint8Array> {
   const parsed = speechRequestSchema.safeParse({ text });
   if (!parsed.success) {
     throw new Error("Speech text must contain 1–4000 characters.");
   }
+  const gatewaySpeech = buildGatewaySpeechBody(parsed.data.text, settings);
   let response: Response;
   try {
     response = await fetchImpl(
@@ -187,14 +240,10 @@ export async function requestGatewaySpeech({
           authorization: `Bearer ${apiKey}`,
           "ai-gateway-protocol-version": "0.0.1",
           "ai-speech-model-specification-version": "4",
-          "ai-model-id": "openai/tts-1",
+          "ai-model-id": gatewaySpeech.model,
           "content-type": "application/json",
         },
-        body: JSON.stringify({
-          text: parsed.data.text,
-          voice: "alloy",
-          outputFormat: "mp3",
-        }),
+        body: gatewaySpeech.body,
       },
     );
   } catch {

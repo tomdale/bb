@@ -68,18 +68,30 @@ containing the accessor) for environment-key use. When the method is absent,
 status asks for a plugin key override.
 
 The plugin uses Vercel AI Gateway's versioned speech-model endpoint
-`https://ai-gateway.vercel.sh/v4/ai/speech-model` with `openai/tts-1`, the
-`alloy` voice, and MP3 output. The Gateway returns complete base64-encoded audio
-in JSON; its REST speech API does not support streaming audio output. The plugin
-splits prose into short phrase requests, starts playback when the first phrase
-is ready, and prefetches the next phrase during playback. This reduces the
-initial synthesis workload and hides some later request time, but does not make
-a phrase itself stream. Hovering over the player shows the elapsed time from
-activation to first playback. Gateway model/voice availability and account
-entitlements are controlled by Vercel; an unavailable model appears as a bounded
-error in the player. The server bounds requests to 4,000 extracted characters
-and decoded audio to 10 MiB, disables caching, and sends no credentials to the
-client. Generated speech text and audio are sent to Vercel AI Gateway.
+`https://ai-gateway.vercel.sh/v4/ai/speech-model` with configurable OpenAI
+`tts-1`/`tts-1-hd` models, their six supported voices (`alloy`, `echo`, `fable`,
+`nova`, `onyx`, `shimmer`), and speaking speed from 0.25 to 4. MP3 output stays
+fixed for browser playback. Defaults preserve `openai/tts-1`, `alloy`, and speed
+
+1. Gateway speech documentation also lists Google Gemini 3.8 TTS, which returns
+   WAV by default and does not support numeric speed; those models are excluded
+   because the current player requires MP3. The Gateway returns complete
+   base64-encoded audio in JSON; its REST speech API does not support streaming
+   output. The plugin splits prose into short phrase requests, starts playback when
+   the first phrase is ready, and prefetches the next phrase during playback. This
+   reduces the initial synthesis workload and hides some later request time, but does
+   not make a phrase itself stream. Hovering over the player shows the elapsed time
+   from activation to first playback. Gateway model/voice availability and account
+   entitlements are controlled by Vercel; an unavailable model appears as a bounded
+   error in the player. Configure settings in Settings → Installed plugins →
+   Read aloud, or from the CLI: `bb plugin config tts` shows settings,
+   `bb plugin config tts set model openai/tts-1-hd`,
+   `bb plugin config tts set voice nova`, and
+   `bb plugin config tts set speed 1.25`. The SDK equivalent is
+   `bb.sdk.plugins.updateSettings({ pluginId: "tts", values: { model: "openai/tts-1-hd", voice: "nova", speed: 1.25 } })`.
+   The server bounds requests to 4,000 extracted characters and decoded audio to
+   10 MiB, disables caching, and sends no credentials to the client. Generated
+   speech text and audio are sent to Vercel AI Gateway.
 
 Markdown is reduced to readable prose, including headings, links, inline/fenced
 code, lists, quotes and tables. The response text action doesn't include tool
