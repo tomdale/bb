@@ -174,7 +174,10 @@ describe("read aloud message action", () => {
         state = "running";
         destination = {};
         close = vi.fn(async () => undefined);
-        createMediaElementSource = vi.fn(() => ({ connect: vi.fn() }));
+        createMediaElementSource = vi.fn(() => ({
+          connect: vi.fn(),
+          disconnect: vi.fn(),
+        }));
         createAnalyser = vi.fn(() => ({
           fftSize: 0,
           frequencyBinCount: 64,
@@ -238,13 +241,26 @@ describe("read aloud message action", () => {
         }
       },
     );
+    const contexts: Array<{
+      state: string;
+      resume: ReturnType<typeof vi.fn>;
+    }> = [];
     vi.stubGlobal(
       "AudioContext",
       class {
-        state = "running";
+        state = "suspended";
+        resume = vi.fn(async () => {
+          this.state = "running";
+        });
+        constructor() {
+          contexts.push(this);
+        }
         destination = {};
         close = vi.fn(async () => undefined);
-        createMediaElementSource = vi.fn(() => ({ connect: vi.fn() }));
+        createMediaElementSource = vi.fn(() => ({
+          connect: vi.fn(),
+          disconnect: vi.fn(),
+        }));
         createAnalyser = vi.fn(() => ({
           fftSize: 0,
           frequencyBinCount: 64,
@@ -269,7 +285,12 @@ describe("read aloud message action", () => {
       await Promise.resolve();
     });
     await waitFor(() => expect(audioInstances).toHaveLength(1));
+    for (const context of contexts) {
+      context.state = "suspended";
+      context.resume.mockClear();
+    }
     fireEvent.keyDown(overlay.getByRole("slider"), { key: "End" });
+    expect(contexts[0]?.resume).toHaveBeenCalledOnce();
     await waitFor(() => expect(pending).toHaveLength(2));
     await act(async () => {
       pending[1]!(new Response(new Uint8Array([4, 5, 6])));
@@ -278,6 +299,7 @@ describe("read aloud message action", () => {
     });
     await waitFor(() => expect(audioInstances).toHaveLength(2));
     expect(audioInstances[1]?.currentTime).toBe(10);
+    expect(contexts).toHaveLength(1);
     overlay.lifecycle.unmount();
   });
 
@@ -323,7 +345,10 @@ describe("read aloud message action", () => {
         state = "running";
         destination = {};
         close = vi.fn(async () => undefined);
-        createMediaElementSource = vi.fn(() => ({ connect: vi.fn() }));
+        createMediaElementSource = vi.fn(() => ({
+          connect: vi.fn(),
+          disconnect: vi.fn(),
+        }));
         createAnalyser = vi.fn(() => ({
           fftSize: 0,
           frequencyBinCount: 64,

@@ -31,6 +31,7 @@ type ActivePlayback = {
   seek: ((progress: number) => void) | null;
   audioContext: AudioContext | null;
   analyser: AnalyserNode | null;
+  source: MediaElementAudioSourceNode | null;
   startedAt: number;
 };
 type PlaybackView = {
@@ -358,8 +359,10 @@ const PLAYER_STYLES = `
 
 type SpaceHandoff = {
   settle: () => void;
-  arm: () => void;
+  release: () => void;
 };
+
+const CONTENT_BELOW_THRESHOLD_PX = 32;
 
 let releaseActiveHandoff: (() => void) | null = null;
 
@@ -394,54 +397,52 @@ function handOffSpace(
   timing: KeyframeAnimationOptions | null,
 ): SpaceHandoff | null {
   const timeline = pinnedTimelineContent(shell);
-  const row = shell.closest("[data-timeline-row-id]");
-  if (!timeline || !row) return null;
+  if (!timeline) return null;
+  const shellBox = shell.getBoundingClientRect();
+  const contentBelow =
+    timeline.content.getBoundingClientRect().bottom - shellBox.bottom;
+  if (contentBelow < CONTENT_BELOW_THRESHOLD_PX) return null;
   releaseSpaceHandoff();
-  const height = shell.getBoundingClientRect().height;
+  const height = shellBox.height;
   const spacer = document.createElement("div");
   spacer.dataset.ttsScrollSpacer = "";
   spacer.setAttribute("aria-hidden", "true");
   spacer.style.cssText =
     "flex:none;height:0px;overflow-anchor:none;pointer-events:none";
   timeline.sentinel.before(spacer);
+  const canAnimateSpacer = typeof spacer.animate === "function";
   const growth =
-    timing && typeof spacer.animate === "function"
+    timing && canAnimateSpacer
       ? spacer.animate([{ height: "0px" }, { height: `${height}px` }], {
           ...timing,
           fill: "forwards",
         })
       : null;
-  let observer: ResizeObserver | null = null;
+  let shrink: Animation | null = null;
   const release = () => {
-    observer?.disconnect();
     growth?.cancel();
+    shrink?.cancel();
     spacer.remove();
+    if (releaseActiveHandoff === release) releaseActiveHandoff = null;
   };
   releaseActiveHandoff = release;
   return {
     settle() {
       spacer.style.height = `${height}px`;
       growth?.cancel();
-    },
-    arm() {
-      if (typeof ResizeObserver === "undefined") {
-        releaseSpaceHandoff();
+      if (!canAnimateSpacer || prefersReducedMotion()) {
+        release();
         return;
       }
-      const baseline = timeline.content.getBoundingClientRect().height;
-      observer = new ResizeObserver(() => {
-        if (!row.isConnected || !spacer.isConnected) {
-          releaseSpaceHandoff();
-          return;
-        }
-        const grown =
-          timeline.content.getBoundingClientRect().height - baseline;
-        const remaining = height - Math.max(0, grown);
-        if (remaining <= 0.5) releaseSpaceHandoff();
-        else spacer.style.height = `${remaining}px`;
+      shrink = spacer.animate([{ height: `${height}px` }, { height: "0px" }], {
+        duration: 480,
+        delay: 60,
+        easing: EASE_IN_OUT,
+        fill: "forwards",
       });
-      observer.observe(timeline.content);
+      void shrink.finished.then(release, () => undefined);
     },
+    release,
   };
 }
 
@@ -510,9 +511,8 @@ function usePlayerMotion(closing: boolean, onExited: () => void) {
     const finish = () => {
       if (cancelled || finished) return;
       finished = true;
-      space?.settle();
       onExitedRef.current();
-      space?.arm();
+      space?.settle();
     };
     if (!canAnimate(shell) || !canAnimate(pill)) {
       finish();
@@ -580,7 +580,7 @@ function usePlayerMotion(closing: boolean, onExited: () => void) {
       finish,
     );
     return () => {
-      if (!finished && space !== null) releaseSpaceHandoff();
+      if (!finished) space?.release();
       cancelled = true;
     };
   }, [closing]);
@@ -815,9 +815,22 @@ function ReadAloudAction() {
         seek: null,
         audioContext: null,
         analyser: null,
+        source: null,
         startedAt: performance.now(),
       };
       activeRef.current = playback;
+      try {
+        const audioContext = new AudioContext();
+        const frequency = audioContext.createAnalyser();
+        frequency.fftSize = 128;
+        frequency.connect(audioContext.destination);
+        playback.audioContext = audioContext;
+        playback.analyser = frequency;
+        setAnalyser(frequency);
+      } catch {
+        playback.audioContext = null;
+        playback.analyser = null;
+      }
       const timelineRow = Array.from(
         document.querySelectorAll<HTMLElement>("[data-timeline-row-id]"),
       ).find((element) => element.dataset.timelineRowId === message.id);
@@ -930,34 +943,27 @@ function ReadAloudAction() {
           window.clearInterval(playback.progressTimer);
           playback.progressTimer = null;
         }
-        await playback.audioContext?.close();
-        if (
-          activeRef.current !== playback ||
-          controller.signal.aborted ||
-          version !== playback.seekVersion
-        )
-          return;
         playback.currentIndex = index;
-        playback.audioContext = null;
-        playback.analyser = null;
+        const previous = playback.audio;
+        if (previous) {
+          previous.pause();
+          previous.removeAttribute("src");
+          previous.load();
+        }
+        playback.source?.disconnect();
+        playback.source = null;
         const audio = new Audio(segment.url);
         playback.audio = audio;
-        try {
-          const audioContext = new AudioContext();
-          const source = audioContext.createMediaElementSource(audio);
-          const frequency = audioContext.createAnalyser();
-          frequency.fftSize = 128;
-          source.connect(frequency);
-          frequency.connect(audioContext.destination);
-          playback.audioContext = audioContext;
-          playback.analyser = frequency;
-          setAnalyser(frequency);
-          if (audioContext.state === "suspended") void audioContext.resume();
-        } catch {
-          playback.audioContext?.close();
-          playback.audioContext = null;
-          playback.analyser = null;
-          setAnalyser(null);
+        const { audioContext, analyser: frequency } = playback;
+        if (audioContext && frequency) {
+          try {
+            const source = audioContext.createMediaElementSource(audio);
+            source.connect(frequency);
+            playback.source = source;
+          } catch {
+            playback.source = null;
+          }
+          if (audioContext.state !== "running") void audioContext.resume();
         }
         const setProgress = () => {
           if (activeRef.current !== playback || playback.audio !== audio)
@@ -1076,6 +1082,8 @@ function ReadAloudAction() {
       };
       const initialSeekVersion = playback.seekVersion;
       playback.seek = (progress) => {
+        if (playback.audioContext?.state === "suspended")
+          void playback.audioContext.resume();
         const { index, fraction } = positionFor(progress);
         const current = playback.audio;
         const version = ++playback.seekVersion;
@@ -1165,6 +1173,8 @@ function ReadAloudAction() {
     const playback = activeRef.current;
     if (playback?.audio === null || playback === null) return;
     if (playback.audio.paused) {
+      if (playback.audioContext?.state === "suspended")
+        void playback.audioContext.resume();
       playback.isPlaying = true;
       void playback.audio.play();
       setActive((view) => (view ? { ...view, state: "playing" } : view));
