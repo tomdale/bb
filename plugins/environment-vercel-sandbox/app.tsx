@@ -550,7 +550,7 @@ type ConnectState =
 
 const LINK_PATH_PLACEHOLDER = "/absolute/path/to/folder";
 const CONNECT_FAILED_MESSAGE =
-  "Couldn't connect. Check that the machine is online and that vc login and vc link finished there, then try again.";
+  "Couldn't connect. Check that the machine is online and that vc login and vc link finished there as the OS user that runs BB, then try again.";
 
 function isAbsolutePath(path: string): boolean {
   return path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path);
@@ -806,11 +806,13 @@ function ConnectForm({
   hosts,
   retryHosts,
   onConnected,
+  reinspect,
 }: {
   account: AccountStatus | null;
   hosts: Load<AccountHost[]>;
   retryHosts: () => void;
   onConnected: (account: AccountStatus) => void;
+  reinspect: () => void;
 }) {
   const rpc = useRpc<Contract>();
   const idPrefix = useId();
@@ -864,6 +866,8 @@ function ConnectForm({
     ) {
       return;
     }
+    setHostChoice(selectedHost.id);
+    setDirectoryDraft(trimmed);
     setConnect({ status: "connecting" });
     rpc
       .call("account.connect", {
@@ -878,7 +882,9 @@ function ConnectForm({
           onConnected(result);
         },
         () => {
-          if (mounted.current) setConnect({ status: "failed" });
+          if (!mounted.current) return;
+          setConnect({ status: "failed" });
+          reinspect();
         },
       );
   };
@@ -896,12 +902,13 @@ function ConnectForm({
     >
       <ol className="list-decimal space-y-1.5 pl-4 text-xs leading-relaxed text-muted-foreground">
         <li>
-          On the machine BB should use, run{" "}
-          <code className="font-mono text-foreground">vc login</code> in a
-          terminal and finish Vercel's sign-in in your browser.
+          On the machine BB should use, open a terminal as the same OS user that
+          runs BB there, run{" "}
+          <code className="font-mono text-foreground">vc login</code>, and
+          finish Vercel's sign-in in your browser.
         </li>
         <li>
-          Link a folder on that machine to an existing Vercel project:{" "}
+          In the same terminal, link a folder to an existing Vercel project:{" "}
           <code className="break-all font-mono text-foreground">
             {linkCommand}
           </code>
@@ -1020,13 +1027,15 @@ function AdoptedNote({
 }
 
 function LegacyAllocations({
-  account,
-  machineName,
+  state,
+  hosts,
   onConnected,
+  reinspect,
 }: {
-  account: AccountStatus;
-  machineName: string;
+  state: Load<AccountStatus>;
+  hosts: Load<AccountHost[]>;
   onConnected: (account: AccountStatus) => void;
+  reinspect: () => void;
 }) {
   const rpc = useRpc<Contract>();
   const consentId = useId();
@@ -1039,19 +1048,45 @@ function LegacyAllocations({
       mounted.current = false;
     };
   }, []);
-  const legacy = account.legacyAllocations;
-  const pending = legacy !== null && legacy.count > 0 ? legacy : null;
-  if (pending === null) {
-    if (adopt.status !== "adopted") return null;
+  const account = state.status === "ready" ? state.data : null;
+  const legacy = account?.legacyAllocations ?? null;
+  const remaining = legacy !== null && legacy.count > 0 ? legacy : null;
+  const failed = adopt.status === "failed";
+
+  if (account === null || remaining === null) {
+    if (adopt.status === "adopted") {
+      return (
+        <section className="space-y-2">
+          <SettingsHeading title="Earlier sandboxes" />
+          <AdoptedNote count={adopt.count} accountId={adopt.accountId} />
+        </section>
+      );
+    }
+    if (!failed) return null;
     return (
       <section className="space-y-2">
         <SettingsHeading title="Earlier sandboxes" />
-        <AdoptedNote count={adopt.count} accountId={adopt.accountId} />
+        <PartialAdoptionAlert />
+        {state.status === "pending" ? (
+          <p role="status" className="text-xs text-muted-foreground">
+            Checking which earlier sandboxes still need an account…
+          </p>
+        ) : state.status === "error" ? (
+          <p role="alert" className="text-xs text-destructive-text">
+            Couldn't check which earlier sandboxes still need an account. Check
+            again before retrying.
+          </p>
+        ) : (
+          <p role="status" className="text-xs text-muted-foreground">
+            No earlier sandboxes still need an account.
+          </p>
+        )}
       </section>
     );
   }
-  const hostId = account.hostId;
-  const directory = account.directory;
+
+  const { hostId, directory } = account;
+  const machineName = hostId === null ? "" : hostLabel(hosts, hostId);
   const canAdopt =
     account.available &&
     hostId !== null &&
@@ -1078,7 +1113,10 @@ function LegacyAllocations({
           onConnected(result);
         },
         () => {
-          if (mounted.current) setAdopt({ status: "failed" });
+          if (!mounted.current) return;
+          setConsent(false);
+          setAdopt({ status: "failed" });
+          reinspect();
         },
       );
   };
@@ -1086,10 +1124,11 @@ function LegacyAllocations({
   return (
     <section className="space-y-2">
       <SettingsHeading title="Earlier sandboxes" />
+      {failed ? <PartialAdoptionAlert /> : null}
       <p className="text-xs leading-relaxed text-foreground">
-        BB recorded {pluralSandboxes(pending.count)} in{" "}
+        BB recorded {pluralSandboxes(remaining.count)} in{" "}
         <span className="font-mono">
-          {pending.teamId} / {pending.projectId}
+          {remaining.teamId} / {remaining.projectId}
         </span>{" "}
         before it tracked which Vercel account created them. BB won't manage or
         clean them up until you choose an account for them.
@@ -1105,16 +1144,13 @@ function LegacyAllocations({
           checked={consent}
           disabled={!canAdopt}
           aria-describedby={`${consentId}-note`}
-          onCheckedChange={(checked) => {
-            setConsent(checked === true);
-            if (adopt.status === "failed") setAdopt({ status: "idle" });
-          }}
+          onCheckedChange={(checked) => setConsent(checked === true)}
           className="mt-0.5"
         />
         <div className="min-w-0 space-y-1">
           <Label htmlFor={consentId} className="text-xs leading-relaxed">
             Let {who} on {machineName} manage and clean up these{" "}
-            {pluralSandboxes(pending.count)}
+            {pluralSandboxes(remaining.count)}
           </Label>
           <p
             id={`${consentId}-note`}
@@ -1140,19 +1176,28 @@ function LegacyAllocations({
           ) : null}
           {adopt.status === "adopting"
             ? "Saving…"
-            : `Use this account for ${pluralSandboxes(pending.count)}`}
+            : `Use this account for ${pluralSandboxes(remaining.count)}`}
         </Button>
-        {adopt.status === "failed" ? (
-          <p role="alert" className="text-xs text-destructive-text">
-            Couldn't update the earlier sandboxes. Check the connection, then
-            try again.
-          </p>
-        ) : null}
         {adopt.status === "adopted" ? (
           <AdoptedNote count={adopt.count} accountId={adopt.accountId} />
         ) : null}
       </div>
     </section>
+  );
+}
+
+function PartialAdoptionAlert() {
+  return (
+    <p
+      role="alert"
+      className="flex items-start gap-2 text-xs text-destructive-text"
+    >
+      <Icon name="AlertCircle" className="mt-0.5 size-3.5 shrink-0" />
+      <span className="min-w-0 break-words">
+        Couldn't finish updating the earlier sandboxes. Some may already use
+        this account; BB rechecks which still need one before you try again.
+      </span>
+    </p>
   );
 }
 
@@ -1190,17 +1235,12 @@ function VercelSettingsSection() {
         <ConnectionStatus state={account.state} hosts={hosts.state} />
       </section>
 
-      {account.state.status === "ready" ? (
-        <LegacyAllocations
-          account={account.state.data}
-          machineName={
-            account.state.data.hostId === null
-              ? ""
-              : hostLabel(hosts.state, account.state.data.hostId)
-          }
-          onConnected={account.replace}
-        />
-      ) : null}
+      <LegacyAllocations
+        state={account.state}
+        hosts={hosts.state}
+        onConnected={account.replace}
+        reinspect={account.retry}
+      />
 
       <section className="space-y-2">
         <SettingsHeading
@@ -1216,6 +1256,7 @@ function VercelSettingsSection() {
           hosts={hosts.state}
           retryHosts={hosts.retry}
           onConnected={account.replace}
+          reinspect={account.retry}
         />
       </section>
 

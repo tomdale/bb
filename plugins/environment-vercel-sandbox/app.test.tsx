@@ -538,6 +538,7 @@ describe("settings section", () => {
       .getAllByRole("listitem")
       .map((item) => item.textContent);
     expect(steps[0]).toContain("vc login");
+    expect(steps[0]).toContain("same OS user that runs BB");
     expect(steps[1]).toContain("vc link --cwd /absolute/path/to/folder");
     fireEvent.change(slot.getByLabelText("Linked folder"), {
       target: { value: "/Users/me/My App" },
@@ -625,9 +626,13 @@ describe("settings section", () => {
     expect(alert.textContent).toContain("Fix it on Tom's MacBook");
   });
 
-  it("replaces a failed connect call with generic next steps", async () => {
+  it("replaces a failed connect call with generic next steps and rechecks", async () => {
+    let inspects = 0;
     const slot = renderSettings({
-      "account.inspect": () => NOT_CONNECTED,
+      "account.inspect": () => {
+        inspects += 1;
+        return NOT_CONNECTED;
+      },
       "account.connect": () => {
         throw new Error("vc stderr: Bearer eyJsecret");
       },
@@ -635,7 +640,7 @@ describe("settings section", () => {
     await slot.findByText(/Not connected/);
     openMenu(slot.getByRole("button", { name: /Machine/ }));
     fireEvent.click(
-      await slot.findByRole("menuitemradio", { name: /Tom's MacBook/ }),
+      await slot.findByRole("menuitemradio", { name: /Build box/ }),
     );
     fireEvent.change(slot.getByLabelText("Linked folder"), {
       target: { value: "/Users/me/app" },
@@ -643,11 +648,20 @@ describe("settings section", () => {
     fireEvent.click(
       slot.getByRole("button", { name: "Connect linked project" }),
     );
-    const alert = await slot.findByRole("alert");
+    const alert = await slot.findByText(/Couldn't connect/);
     expect(alert.textContent).toContain(
-      "Check that the machine is online and that vc login and vc link finished there",
+      "vc login and vc link finished there as the OS user that runs BB",
     );
+    await waitFor(() => expect(inspects).toBe(2));
+    await slot.findByText(/Not connected/);
+    expect(slot.getByText(/Couldn't connect/)).toBeTruthy();
     expect(document.body.textContent).not.toMatch(TOKEN_SHAPED);
+    expect(
+      slot.getByRole("button", { name: /Machine Build box/ }),
+    ).toBeTruthy();
+    expect(
+      (slot.getByLabelText("Linked folder") as HTMLInputElement).value,
+    ).toBe("/Users/me/app");
     expect(
       slot
         .getByRole("button", { name: "Connect linked project" })
@@ -843,8 +857,8 @@ describe("settings section", () => {
     expect(slot.queryByRole("checkbox")).toBeNull();
   });
 
-  it("disables adoption while the connection is broken and reports failures generically", async () => {
-    const broken = renderSettings({
+  it("disables adoption while the connection is broken", async () => {
+    const slot = renderSettings({
       "account.inspect": () => ({
         ...CONNECTED,
         available: false,
@@ -852,25 +866,85 @@ describe("settings section", () => {
         legacyAllocations: LEGACY,
       }),
     });
-    const disabled = await broken.findByRole("checkbox", {
+    const disabled = await slot.findByRole("checkbox", {
       name: /manage and clean up/,
     });
     expect(disabled.hasAttribute("disabled")).toBe(true);
-    expect(broken.getByText(/Fix the connection above/)).toBeTruthy();
-    broken.unmount();
+    expect(slot.getByText(/Fix the connection above/)).toBeTruthy();
+  });
 
-    const failing = renderSettings({
-      "account.inspect": () => ({ ...CONNECTED, legacyAllocations: LEGACY }),
+  it("rechecks after a partial adoption and offers only the remaining count", async () => {
+    const recheck = deferred<Account>();
+    let inspects = 0;
+    const slot = renderSettings({
+      "account.inspect": () => {
+        inspects += 1;
+        return inspects === 1
+          ? { ...CONNECTED, legacyAllocations: LEGACY }
+          : recheck.promise;
+      },
       "account.connect": () => {
-        throw new Error("vc api: Bearer eyJsecret");
+        throw new Error(
+          "Connection update was not confirmed after 1 confirmed allocation bindings. Bearer eyJsecret",
+        );
       },
     });
     fireEvent.click(
-      await failing.findByRole("checkbox", { name: /manage and clean up/ }),
+      await slot.findByRole("checkbox", { name: /manage and clean up/ }),
     );
-    fireEvent.click(failing.getByRole("button", { name: /Use this account/ }));
-    await failing.findByText(/Couldn't update the earlier sandboxes/);
+    fireEvent.click(slot.getByRole("button", { name: /Use this account/ }));
+    await slot.findByText(/Some may already use this account/);
+    expect(inspects).toBe(2);
+    expect(
+      slot.getByText("Checking which earlier sandboxes still need an account…"),
+    ).toBeTruthy();
+    expect(slot.queryByRole("checkbox")).toBeNull();
+    expect(slot.queryByRole("button", { name: /Use this account/ })).toBeNull();
+    expect(slot.queryByText(/BB recorded/)).toBeNull();
+    await act(async () => {
+      recheck.resolve({
+        ...CONNECTED,
+        legacyAllocations: { ...LEGACY, count: 1 },
+      });
+      await recheck.promise;
+    });
+    expect(slot.getByText(/Some may already use this account/)).toBeTruthy();
+    expect(slot.getByText(/BB recorded 1 earlier sandbox in/)).toBeTruthy();
+    const consent = slot.getByRole("checkbox", {
+      name: "Let user_abc on Tom's MacBook manage and clean up these 1 earlier sandbox",
+    });
+    expect(consent.getAttribute("aria-checked")).toBe("false");
+    expect(
+      slot
+        .getByRole("button", { name: "Use this account for 1 earlier sandbox" })
+        .hasAttribute("disabled"),
+    ).toBe(true);
     expect(document.body.textContent).not.toMatch(TOKEN_SHAPED);
+    expect(document.body.textContent).not.toContain("confirmed allocation");
+  });
+
+  it("offers no retry when the recheck after a failed adoption fails", async () => {
+    let inspects = 0;
+    const slot = renderSettings({
+      "account.inspect": () => {
+        inspects += 1;
+        if (inspects === 1) return { ...CONNECTED, legacyAllocations: LEGACY };
+        throw new Error("offline");
+      },
+      "account.connect": () => {
+        throw new Error("interrupted");
+      },
+    });
+    fireEvent.click(
+      await slot.findByRole("checkbox", { name: /manage and clean up/ }),
+    );
+    fireEvent.click(slot.getByRole("button", { name: /Use this account/ }));
+    await slot.findByText(
+      /Couldn't check which earlier sandboxes still need an account/,
+    );
+    expect(slot.getByText(/Some may already use this account/)).toBeTruthy();
+    expect(slot.queryByRole("checkbox")).toBeNull();
+    expect(slot.queryByText(/BB recorded/)).toBeNull();
   });
 
   it("replaces RPC failures with generic copy", async () => {
