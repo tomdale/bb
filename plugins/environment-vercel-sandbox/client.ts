@@ -32,11 +32,37 @@ function notFound(error: unknown): boolean {
 export function createVercelClient(
   settings: Credentials,
   transport: typeof fetch,
+  refresh: (signal: AbortSignal) => Promise<Credentials>,
 ) {
+  let current = settings;
   const scopedFetch: typeof fetch = async (input, init) => {
     const mutating = (init?.method ?? "GET") !== "GET";
     try {
-      const response = await transport(input, init);
+      if (current.expiresAt <= Date.now() + 30_000) {
+        const refreshed = await refresh(
+          init?.signal ?? AbortSignal.timeout(60_000),
+        );
+        if (
+          refreshed.teamId !== settings.teamId ||
+          refreshed.projectId !== settings.projectId ||
+          refreshed.expiresAt <= Date.now() + 30_000
+        )
+          throw new SafeError(
+            "Refreshed OIDC credentials do not match the pinned allocation.",
+          );
+        current = refreshed;
+      }
+      const headers = new Headers(init?.headers);
+      headers.set("Authorization", `Bearer ${current.token}`);
+      const url = new URL(String(input));
+      if (
+        url.origin !== "https://vercel.com" ||
+        url.searchParams.get("teamId") !== settings.teamId
+      )
+        throw new SafeError(
+          "Vercel request scope does not match the pinned connection.",
+        );
+      const response = await transport(input, { ...init, headers });
       if (mutating && (response.status === 429 || response.status >= 500)) {
         throw new DOMException(
           "Vercel mutation outcome is uncertain",
@@ -54,7 +80,7 @@ export function createVercelClient(
     }
   };
   const credentials = {
-    token: settings.token,
+    token: "bb-host-oidc",
     teamId: settings.teamId,
     projectId: settings.projectId,
     fetch: scopedFetch,

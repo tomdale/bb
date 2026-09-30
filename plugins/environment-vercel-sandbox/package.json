@@ -18,7 +18,8 @@
     "app": "./app.tsx",
     "skills": [
       "skills"
-    ]
+    ],
+    "host": "./host.ts"
   },
   "keywords": [
     "bb-plugin"

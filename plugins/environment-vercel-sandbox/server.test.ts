@@ -3,12 +3,20 @@ import {
   createFakePluginHost,
   makeHostResponse,
 } from "@get-bb/plugin-sdk/testing";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { resourceSchema } from "./allocations.js";
 import { createVercelSandboxPlugin } from "./server.js";
 import { vendorTransport } from "./vendor-test-transport.js";
 import { launchInputsSchema } from "./configuration.js";
 
+import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/host";
+import { createVercelHostEntry } from "./host.js";
+import { hostContract } from "./host-contract.js";
+import { cliFixture } from "./cli-test-fixture.js";
+const disposals: (() => Promise<void>)[] = [];
+afterEach(async () => {
+  for (const dispose of disposals.splice(0)) await dispose();
+});
 const report = { step() {}, log() {} };
 const settings = {
   token: "secret-token",
@@ -23,15 +31,87 @@ async function setup(
   } = {},
 ) {
   const vendor = vendorTransport();
+  const cli = await cliFixture();
+  const worker = experimental_createHostEntryHarness(
+    createVercelHostEntry(vendor.transport, cli.run),
+  );
+  disposals.push(
+    () => worker.experimental_dispose(),
+    () => cli.dispose(),
+  );
   let stored: JsonValue | null = null;
   let bootstraps = 0;
   const host = createFakePluginHost({
     pluginId: "environment-vercel-sandbox",
     settings,
     machineResource: async () => stored,
+    experimental_callHostRpc: async ({ method, input, signal }) => {
+      switch (method) {
+        case "connect":
+          return worker.experimental_call(
+            "connect",
+            hostContract.connect.input.parse(input),
+            { signal },
+          );
+        case "inspect":
+          return worker.experimental_call(
+            "inspect",
+            hostContract.inspect.input.parse(input),
+            { signal },
+          );
+        case "get":
+          return worker.experimental_call(
+            "get",
+            hostContract.get.input.parse(input),
+            { signal },
+          );
+        case "create":
+          return worker.experimental_call(
+            "create",
+            hostContract.create.input.parse(input),
+            { signal },
+          );
+        case "getSession":
+          return worker.experimental_call(
+            "getSession",
+            hostContract.getSession.input.parse(input),
+            { signal },
+          );
+        case "stop":
+          return worker.experimental_call(
+            "stop",
+            hostContract.stop.input.parse(input),
+            { signal },
+          );
+        case "stopSession":
+          return worker.experimental_call(
+            "stopSession",
+            hostContract.stopSession.input.parse(input),
+            { signal },
+          );
+        case "delete":
+          return worker.experimental_call(
+            "delete",
+            hostContract.delete.input.parse(input),
+            { signal },
+          );
+        case "exec":
+          return worker.experimental_call(
+            "exec",
+            hostContract.exec.input.parse(input),
+            { signal },
+          );
+        default:
+          throw new Error("Unexpected host RPC");
+      }
+    },
     sdk: {
       hosts: {
-        get: () => makeHostResponse({ machineProviderId: "vercel-sandbox" }),
+        get: ({ hostId }) =>
+          makeHostResponse({
+            id: hostId,
+            machineProviderId: hostId === "host_auth" ? null : "vercel-sandbox",
+          }),
       },
     },
     machineBootstrap: {
@@ -43,7 +123,12 @@ async function setup(
       },
     },
   });
-  await createVercelSandboxPlugin(vendor.transport)(host.bb);
+  await createVercelSandboxPlugin()(host.bb);
+  await host.harness.behavior.callRpc("account.connect", {
+    hostId: "host_auth",
+    directory: cli.directory,
+  });
+  vendor.requests.length = 0;
   const machine =
     host.harness.registrations.machineProviders.get("vercel-sandbox")!;
   const signal = new AbortController().signal;
@@ -60,6 +145,8 @@ async function setup(
   return {
     ...host,
     vendor,
+    cli,
+    worker,
     machine,
     context,
     get stored() {
@@ -302,7 +389,7 @@ describe("Vercel machine allocation", () => {
     test.vendor.deleteBeforeFailure = false;
     test.vendor.deleteFailure = true;
     const reloaded = await test.harness.lifecycle.reload(
-      createVercelSandboxPlugin(test.vendor.transport),
+      createVercelSandboxPlugin(),
     );
     const machine =
       reloaded.harness.registrations.machineProviders.get("vercel-sandbox")!;
@@ -547,7 +634,7 @@ describe("Vercel machine allocation", () => {
       defaultTimeoutMinutes: 40,
     });
     const replacement = await test.harness.lifecycle.reload(
-      createVercelSandboxPlugin(test.vendor.transport),
+      createVercelSandboxPlugin(),
     );
     const reloaded =
       replacement.harness.registrations.machineProviders.get("vercel-sandbox")!;
@@ -562,7 +649,7 @@ describe("Vercel machine allocation", () => {
     await test.machine.create(test.context);
     const resource = resourceSchema.parse(test.stored);
     const before = test.vendor.requests.length;
-    await test.harness.behavior.setSettings({ projectId: "prj_other" });
+    await test.cli.link({ teamId: "team_test", projectId: "prj_other" });
     expect(
       await test.machine.remove({
         ...test.context,
@@ -574,7 +661,7 @@ describe("Vercel machine allocation", () => {
       message: expect.stringContaining("original"),
     });
     expect(test.vendor.requests).toHaveLength(before);
-    await test.harness.behavior.setSettings({ projectId: "prj_test" });
+    await test.cli.link(test.cli.scope);
     const allocation = test.vendor.allocations.get(resource.sandboxName)!;
     allocation.sandbox.tags.bbOwner = "foreign-server";
     expect(await test.machine.reconcileCleanup(test.context)).toMatchObject({
@@ -612,6 +699,242 @@ describe("Vercel machine allocation", () => {
 });
 
 describe("diagnostics and launch validation", () => {
+  it("requires explicit connection without reading old settings or starting auth during plugin load", async () => {
+    const host = createFakePluginHost({
+      pluginId: "environment-vercel-sandbox",
+      settings,
+    });
+    await createVercelSandboxPlugin()(host.bb);
+    expect(host.harness.experimental_hostRpcCalls).toHaveLength(0);
+    expect(
+      await host.harness.behavior.callRpc("account.inspect", {}),
+    ).toMatchObject({ available: false, hostId: null });
+    expect(host.harness.experimental_hostRpcCalls).toHaveLength(0);
+    await host.harness.lifecycle.dispose();
+  });
+  it("keeps existing allocation account pinned after reconnect, preserves it through reload, and uses it for cleanup", async () => {
+    const test = await setup();
+    await test.machine.create(test.context);
+    const resource = resourceSchema.parse(test.stored);
+    test.cli.accountId = "user_other";
+    await test.harness.behavior.callRpc("account.connect", {
+      hostId: "host_auth",
+      directory: test.cli.directory,
+    });
+    expect(
+      await test.machine.remove({
+        resource,
+        hostId: "host_vercel",
+        signal: test.context.signal,
+        report,
+      }),
+    ).toMatchObject({ status: "failed" });
+    test.cli.accountId = "user_test";
+    const replacement = await test.harness.lifecycle.reload(
+      createVercelSandboxPlugin(),
+    );
+    const machine =
+      replacement.harness.registrations.machineProviders.get("vercel-sandbox")!;
+    const replay = await machine.create({ ...test.context, attempt: 2 });
+    expect(replay).toMatchObject({ status: "created", resource });
+    expect(
+      await machine.remove({
+        resource,
+        hostId: "host_vercel",
+        signal: test.context.signal,
+        report,
+      }),
+    ).toEqual({ status: "removed" });
+    expect(test.vendor.allocationCount).toBe(1);
+  });
+  it("binds unbound recorded allocations only through explicit matching reconnect without losing namespace, generation, or stop proof", async () => {
+    const test = await setup();
+    await test.machine.create(test.context);
+    const resource = resourceSchema.parse(test.stored);
+    const key = (await test.bb.storage.kv.list("allocations/"))[0]!;
+    const intent = await test.bb.storage.kv.get<{
+      phase: string;
+      resource: typeof resource;
+    }>(key);
+    const { connection: _connection, ...original } = resource;
+    await test.bb.storage.kv.set(key, { ...intent, resource: original });
+    test.stored = original;
+    await expect(
+      test.harness.behavior.callRpc("machine.inspect", {
+        hostId: "host_vercel",
+      }),
+    ).rejects.toThrow("Explicitly reconnect");
+    expect(
+      await test.harness.behavior.callRpc("account.connect", {
+        hostId: "host_auth",
+        directory: test.cli.directory,
+      }),
+    ).toMatchObject({ adoptedAllocations: 0, legacyAllocations: { count: 1 } });
+    expect(await test.bb.storage.kv.get(key)).toMatchObject({
+      resource: original,
+    });
+    await expect(
+      test.harness.behavior.callRpc("machine.inspect", {
+        hostId: "host_vercel",
+      }),
+    ).rejects.toThrow("Explicitly reconnect");
+    await test.harness.behavior.callRpc("account.connect", {
+      hostId: "host_auth",
+      directory: test.cli.directory,
+      adoptLegacyAllocations: true,
+    });
+    expect(await test.bb.storage.kv.get(key)).toMatchObject({
+      phase: "allocated",
+      resource: { ...original, connection: { accountId: "user_test" } },
+    });
+    expect(
+      await test.machine.remove({
+        resource: original,
+        hostId: "host_vercel",
+        signal: test.context.signal,
+        report,
+      }),
+    ).toEqual({ status: "removed" });
+  });
+  it("reports partial migration safely, leaves default unchanged, and never overwrites bound records on retry", async () => {
+    const test = await setup();
+    await test.machine.create(test.context);
+    await test.machine.create({ ...test.context, key: "second-key" });
+    const keys = await test.bb.storage.kv.list("allocations/");
+    for (const key of keys) {
+      const intent = await test.bb.storage.kv.get<{
+        phase: string;
+        resource: ReturnType<typeof resourceSchema.parse>;
+      }>(key);
+      const { connection: _connection, ...resource } = intent!.resource;
+      await test.bb.storage.kv.set(key, { ...intent, resource });
+    }
+    const originalDefault = await test.bb.storage.kv.get("cli-connection");
+    const write = test.bb.storage.kv.set;
+    let writes = 0;
+    test.bb.storage.kv.set = async (key, value) => {
+      if (key.startsWith("allocations/") && ++writes === 2)
+        throw new Error("private-storage-error");
+      await write(key, value);
+    };
+    test.cli.accountId = "user_adopted";
+    await expect(
+      test.harness.behavior.callRpc("account.connect", {
+        hostId: "host_auth",
+        directory: test.cli.directory,
+        adoptLegacyAllocations: true,
+      }),
+    ).rejects.toThrow("after 1 confirmed allocation bindings");
+    expect(await test.bb.storage.kv.get("cli-connection")).toEqual(
+      originalDefault,
+    );
+    test.bb.storage.kv.set = write;
+    expect(
+      await test.harness.behavior.callRpc("account.inspect", {}),
+    ).toMatchObject({ legacyAllocations: { count: 1 }, adoptedAllocations: 0 });
+    test.cli.accountId = "user_retry";
+    expect(
+      await test.harness.behavior.callRpc("account.connect", {
+        hostId: "host_auth",
+        directory: test.cli.directory,
+        adoptLegacyAllocations: true,
+      }),
+    ).toMatchObject({ adoptedAllocations: 1, legacyAllocations: null });
+    const accounts = await Promise.all(
+      keys.map(
+        async (key) =>
+          (await test.bb.storage.kv.get<{
+            resource: { connection: { accountId: string } };
+          }>(key))!.resource.connection.accountId,
+      ),
+    );
+    expect(accounts.sort()).toEqual(["user_adopted", "user_retry"]);
+  });
+  it("validates the entire migration candidate set before persisting any binding", async () => {
+    const test = await setup();
+    await test.machine.create(test.context);
+    await test.machine.create({ ...test.context, key: "second-key" });
+    const keys = await test.bb.storage.kv.list("allocations/");
+    for (const [index, key] of keys.entries()) {
+      const intent = await test.bb.storage.kv.get<{
+        phase: string;
+        resource: ReturnType<typeof resourceSchema.parse>;
+      }>(key);
+      const { connection: _connection, ...resource } = intent!.resource;
+      await test.bb.storage.kv.set(key, {
+        ...intent,
+        resource:
+          index === 1
+            ? { ...resource, sandboxName: "bb-" + "f".repeat(48) }
+            : resource,
+      });
+    }
+    await expect(
+      test.harness.behavior.callRpc("account.connect", {
+        hostId: "host_auth",
+        directory: test.cli.directory,
+        adoptLegacyAllocations: true,
+      }),
+    ).rejects.toThrow("invalid ownership");
+    for (const key of keys)
+      expect(await test.bb.storage.kv.get(key)).not.toHaveProperty(
+        "resource.connection",
+      );
+  });
+  it("serializes migration with same-key cleanup and does not resurrect a removed allocation", async () => {
+    const test = await setup();
+    await test.machine.create(test.context);
+    const resource = resourceSchema.parse(test.stored);
+    const key = (await test.bb.storage.kv.list("allocations/"))[0]!;
+    const intent = await test.bb.storage.kv.get<{
+      phase: string;
+      resource: typeof resource;
+    }>(key);
+    const { connection: _connection, ...unbound } = resource;
+    await test.bb.storage.kv.set(key, { ...intent, resource: unbound });
+    let release!: () => void;
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const store = await import("./allocations.js").then(({ allocationStore }) =>
+      allocationStore(test.bb),
+    );
+    const cleanup = store.run(resource.key, async () => {
+      await barrier;
+      await test.bb.storage.kv.set(key, {
+        phase: "removed",
+        resource: unbound,
+      });
+    });
+    const migration = test.harness.behavior.callRpc("account.connect", {
+      hostId: "host_auth",
+      directory: test.cli.directory,
+      adoptLegacyAllocations: true,
+    });
+    release();
+    await cleanup;
+    expect(await migration).toMatchObject({ adoptedAllocations: 0 });
+    expect(await test.bb.storage.kv.get(key)).toEqual({
+      phase: "removed",
+      resource: unbound,
+    });
+  });
+  it("reports a disconnected authentication host safely and refuses ephemeral auth ownership", async () => {
+    const test = await setup();
+    await test.worker.experimental_dispose();
+    expect(
+      await test.harness.behavior.callRpc("account.inspect", {}),
+    ).toMatchObject({ available: false });
+    test.harness.sdk.stub("hosts.get", () =>
+      makeHostResponse({ type: "ephemeral" }),
+    );
+    await expect(
+      test.harness.behavior.callRpc("account.connect", {
+        hostId: "host_vercel",
+        directory: test.cli.directory,
+      }),
+    ).rejects.toThrow("persistent enrolled machine");
+  });
   it("requires direct owned-session proof and refuses foreign session data or stale allocation generations", async () => {
     const test = await setup();
     await test.machine.create(test.context);
@@ -677,17 +1000,16 @@ describe("diagnostics and launch validation", () => {
     ).toMatchObject({ resources: { vcpus: 1 } });
   });
 
-  it("refuses OIDC credentials before SDK scope override or implicit local token refresh", async () => {
+  it("refuses mismatched OIDC scope before SDK mutation or automatic refresh and keeps tokens out of RPC", async () => {
     const test = await setup();
-    const token = `eyJhbGciOiJub25lIn0.${Buffer.from(JSON.stringify({ owner_id: "team_foreign", project_id: "prj_foreign" })).toString("base64url")}.secret`;
-    await test.harness.behavior.setSettings({ token });
+    test.cli.tokenScope = { teamId: "team_foreign", projectId: "prj_foreign" };
     expect(await test.machine.create(test.context)).toMatchObject({
       status: "failed",
-      message: expect.stringContaining("access token"),
     });
     const result = await test.harness.behavior.callRpc("account.inspect", {});
     expect(result).toMatchObject({ available: false });
-    expect(JSON.stringify(result)).not.toContain(token);
+    for (const token of test.cli.tokens)
+      expect(JSON.stringify(result)).not.toContain(token);
     expect(test.vendor.requests).toHaveLength(0);
   });
   it("keeps read retries and CLI/RPC parity without allocating or returning credentials", async () => {

@@ -495,8 +495,13 @@ without waking the machine. It works offline and with no live threads; the path
 is null before the first session. Reading details does not create directories.
 
 Vercel Sandbox machines use provider `vercel-sandbox` from the optional BB
-Official `environment-vercel-sandbox` plugin. Configure its secret token and
-canonical team/project IDs, then check `bb vercel-sandbox account inspect --json`.
+Official `environment-vercel-sandbox` plugin. On a persistent enrolled machine,
+run `vc login` and `vc link --cwd /absolute/directory`, then connect with
+`bb vercel-sandbox account connect --host HOST --directory /absolute/directory
+--json`. Check `bb vercel-sandbox account inspect --json`. Authentication stays on
+that machine; recorded allocations pin the original account and linked scope.
+Matching records without CLI identity require explicit
+`account connect --adopt-legacy-allocations` consent after inspecting their count.
 Create with `bb machine create --provider vercel-sandbox --inputs
 '{"vcpus":2,"timeoutMinutes":30}' --json`, or spawn with
 `--environment-provider vercel-sandbox --machine-inputs` for a project checkout.

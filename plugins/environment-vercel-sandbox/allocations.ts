@@ -6,13 +6,14 @@ import {
   scopeSchema,
   SafeError,
 } from "./configuration.js";
-import type { Credentials } from "./configuration.js";
+import { connectionSchema, type Connection } from "./auth-contract.js";
 import type { Sandbox } from "@vercel/sandbox";
 import { PROVIDER_ID } from "./provider-id.js";
 
 export const resourceSchema = scopeSchema
   .extend({
     version: z.literal(1),
+    connection: connectionSchema.optional(),
     owner: z.string().uuid(),
     generation: z.string().uuid(),
     key: z.string().min(1).max(200),
@@ -56,18 +57,77 @@ export async function allocationStore(bb: Pick<BbPluginApi, "storage">) {
     stored === undefined ? randomUUID() : z.string().uuid().parse(stored);
   if (stored === undefined) await bb.storage.kv.set("owner", owner);
   const storageKey = (key: string) => `allocations/${digest(key)}`;
+  async function run<T>(key: string, task: () => Promise<T>): Promise<T> {
+    const lockKey = JSON.stringify([owner, key]);
+    const previous = operations.get(lockKey) ?? Promise.resolve();
+    const operation = previous.catch(() => {}).then(task);
+    operations.set(lockKey, operation);
+    try {
+      return await operation;
+    } finally {
+      if (operations.get(lockKey) === operation) operations.delete(lockKey);
+    }
+  }
+
   return {
     owner,
-    async run<T>(key: string, task: () => Promise<T>): Promise<T> {
-      const lockKey = JSON.stringify([owner, key]);
-      const previous = operations.get(lockKey) ?? Promise.resolve();
-      const operation = previous.catch(() => {}).then(task);
-      operations.set(lockKey, operation);
+    run,
+    async legacyAllocations(connection: Connection) {
+      const candidates = await Promise.all(
+        (await bb.storage.kv.list("allocations/")).map(async (key) => {
+          const intent = intentSchema.parse(
+            await bb.storage.kv.get<unknown>(key),
+          );
+          if (
+            intent.resource.owner !== owner ||
+            intent.resource.sandboxName !==
+              allocationName(owner, intent.resource.key)
+          )
+            throw new SafeError(
+              "An allocation has invalid ownership; investigate before authorizing CLI migration.",
+            );
+          return intent;
+        }),
+      );
+      return candidates.filter(
+        ({ phase, resource }) =>
+          phase !== "removed" &&
+          !resource.connection &&
+          resource.teamId === connection.teamId &&
+          resource.projectId === connection.projectId,
+      );
+    },
+    async bindConnection(connection: Connection) {
+      const candidates = await this.legacyAllocations(connection);
+      let adopted = 0;
       try {
-        return await operation;
-      } finally {
-        if (operations.get(lockKey) === operation) operations.delete(lockKey);
+        for (const candidate of candidates) {
+          await run(candidate.resource.key, async () => {
+            const key = storageKey(candidate.resource.key);
+            const intent = intentSchema.parse(
+              await bb.storage.kv.get<unknown>(key),
+            );
+            if (
+              intent.phase !== "removed" &&
+              !intent.resource.connection &&
+              intent.resource.generation === candidate.resource.generation &&
+              intent.resource.teamId === connection.teamId &&
+              intent.resource.projectId === connection.projectId
+            ) {
+              await bb.storage.kv.set(key, {
+                ...intent,
+                resource: { ...intent.resource, connection },
+              });
+              adopted++;
+            }
+          });
+        }
+      } catch {
+        throw new SafeError(
+          `CLI migration was interrupted after ${adopted} confirmed allocation bindings. The default connection was not changed. Reinspect the recorded allocations before retrying; confirmed bindings retain their authorized account.`,
+        );
       }
+      return adopted;
     },
     async get(key: string): Promise<Intent | null> {
       const value = await bb.storage.kv.get<unknown>(storageKey(key));
@@ -94,16 +154,24 @@ export async function allocationStore(bb: Pick<BbPluginApi, "storage">) {
     },
   };
 }
-export function assertScope(resource: Resource, settings: Credentials) {
+export function assertScope(
+  resource: Resource,
+  settings: { teamId: string; projectId: string },
+) {
   if (
     resource.teamId !== settings.teamId ||
     resource.projectId !== settings.projectId
   )
     throw new SafeError(
-      "Restore this machine's original Vercel team and project settings before inspection or cleanup.",
+      "Restore this machine's original CLI-linked Vercel team and project before inspection or cleanup.",
     );
 }
-export function assertOwnership(resource: Resource, sandbox: Sandbox) {
+export function assertOwnership(
+  resource: Resource,
+  sandbox: Pick<Sandbox, "name" | "persistent" | "tags"> & {
+    currentSession(): { sessionId: string };
+  },
+) {
   const tags = allocationTags(resource);
   if (
     sandbox.name !== resource.sandboxName ||
@@ -123,7 +191,7 @@ export function assertOwnership(resource: Resource, sandbox: Sandbox) {
 }
 export function observedResource(
   resource: Resource,
-  sandbox: Sandbox,
+  sandbox: { expiresAt: Date | null; currentSession(): { sessionId: string } },
 ): Resource {
   return {
     ...resource,

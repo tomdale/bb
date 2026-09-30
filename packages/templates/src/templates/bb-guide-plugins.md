@@ -961,9 +961,13 @@ Modal image debugging: `bb modal image build [--json]` prepares the saved image;
 
 `bb plugin rpc call <plugin-id> <method> [--input-file <json-path>] [--json]` invokes a method using server-side schema validation. Omitting the input file sends JSON null. Input files avoid putting sensitive values in command arguments.
 
-Vercel Sandbox [Experimental] is an optional BB Official plugin. Configure
-`token` (secret), `teamId`, `projectId`, `defaultVcpus` (2), and
-`defaultTimeoutMinutes` (30) in its settings. `bb vercel-sandbox account inspect
+Vercel Sandbox [Experimental] is an optional BB Official plugin. On a persistent
+enrolled machine, run `vc login` and `vc link --cwd /absolute/directory`, then
+`bb vercel-sandbox account connect --host HOST --directory /absolute/directory
+[--json]`. The CLI owns OAuth/OIDC on that machine. Plugin settings retain
+`defaultVcpus` (2) and `defaultTimeoutMinutes` (30). Existing allocations pin their
+original connection; records without CLI identity require explicit
+`account connect --adopt-legacy-allocations` consent for the matching scope. `bb vercel-sandbox account inspect
 [--json]` checks authenticated listing without allocating compute; successful
 listing does not prove create permission or plan capacity. `bb vercel-sandbox
 launch options [--json]` reads launch defaults, and `bb vercel-sandbox machine

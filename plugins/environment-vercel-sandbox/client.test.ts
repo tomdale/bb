@@ -2,7 +2,6 @@ import { gunzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { createVercelClient, sandboxExecutor } from "./client.js";
-import { resolveCredentials } from "./configuration.js";
 import { vendorTransport } from "./vendor-test-transport.js";
 
 async function execFixture(
@@ -74,12 +73,17 @@ async function execFixture(
     }
     throw new Error(`Unexpected vendor execution path ${url.pathname}`);
   };
-  const settings = resolveCredentials({
+  const settings = {
     token: "secret-token",
+    expiresAt: Date.now() + 3600_000,
     teamId: "team_test",
     projectId: "prj_test",
-  });
-  const sandbox = await createVercelClient(settings, transport).create(
+  };
+  const sandbox = await createVercelClient(
+    settings,
+    transport,
+    async () => settings,
+  ).create(
     "bb-exec-test",
     {},
     { vcpus: 2, timeoutMinutes: 30 },
@@ -158,5 +162,49 @@ describe("Vercel bootstrap executor", () => {
     ).toHaveLength(1);
     expect(test.kills).toHaveLength(0);
     expect(test.commands.at(-1)?.command).toBe("rm");
+  });
+});
+
+describe("host-owned OIDC transport", () => {
+  it("refreshes expiring OIDC privately and refuses a refreshed foreign scope before sending a mutation", async () => {
+    const vendor = vendorTransport();
+    const settings = {
+      token: "old-private-oidc",
+      expiresAt: 0,
+      teamId: "team_test",
+      projectId: "prj_test",
+    };
+    const headers: string[] = [];
+    const transport: typeof fetch = async (input, init) => {
+      headers.push(new Headers(init?.headers).get("authorization")!);
+      return vendor.transport(input, init);
+    };
+    let refreshes = 0;
+    const client = createVercelClient(settings, transport, async () => {
+      refreshes++;
+      return {
+        ...settings,
+        token: "fresh-private-oidc",
+        expiresAt: Date.now() + 3600_000,
+      };
+    });
+    await client.inspectAccount(new AbortController().signal);
+    expect(refreshes).toBe(1);
+    expect(headers).toEqual(["Bearer fresh-private-oidc"]);
+    const foreign = createVercelClient(settings, transport, async () => ({
+      ...settings,
+      teamId: "team_other",
+      expiresAt: Date.now() + 3600_000,
+    }));
+    await expect(
+      foreign.create(
+        "bb-foreign",
+        {},
+        { vcpus: 2, timeoutMinutes: 30 },
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow();
+    expect(vendor.allocationCount).toBe(0);
+    expect(headers).toHaveLength(1);
   });
 });

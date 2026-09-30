@@ -1,6 +1,10 @@
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { resolvedInputsSchema, vcpusSchema } from "./configuration.js";
+import {
+  accountInspectionSchema,
+  accountConnectInputSchema,
+} from "./auth-contract.js";
 export const stateSchema = z.enum([
   "pending",
   "running",
@@ -33,14 +37,11 @@ export const vercelRpcContract = defineRpcContract({
   },
   "account.inspect": {
     input: z.object({}).strict(),
-    output: z
-      .object({
-        available: z.boolean(),
-        message: z.string(),
-        teamId: z.string().nullable(),
-        projectId: z.string().nullable(),
-      })
-      .strict(),
+    output: accountInspectionSchema,
+  },
+  "account.connect": {
+    input: accountConnectInputSchema,
+    output: accountInspectionSchema,
   },
   "machine.inspect": {
     input: z.object({ hostId: z.string().min(1).max(200) }).strict(),

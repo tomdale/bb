@@ -41,7 +41,13 @@ Modal image debugging uses `bb modal image build`, `bb modal sandbox run`, `bb m
 
 Vercel Sandbox connection and launch commands are documented in
 [vercel-sandboxes](../plugins/environment-vercel-sandbox/skills/vercel-sandboxes/SKILL.md).
-`bb vercel-sandbox account inspect [--json]` checks authenticated scoped listing
+`bb vercel-sandbox account connect --host HOST --directory PATH [--json]` verifies
+the selected persistent machine's CLI login and linked project, then saves the
+future allocation connection. Run `vc login` and `vc link` on that machine first.
+Matching recorded allocations without CLI identity require explicit
+`--adopt-legacy-allocations` consent; inspect/connect report matching unbound and
+confirmed adopted counts. `bb vercel-sandbox account inspect [--json]` checks CLI
+identity, linked scope, OIDC authentication, and scoped listing
 without allocation. `bb vercel-sandbox launch options [--json]` reads defaults
 and provider limits. `bb vercel-sandbox machine inspect HOST [--json]` reads owned
 vendor state and expiry without starting stopped compute. Core `bb machine create

@@ -1872,11 +1872,16 @@ asset and the stable `bb-android.apk` alias, then `latest.json`.
 ## Vercel Sandbox machines
 
 The optional BB Official `environment-vercel-sandbox` plugin registers machine
-and composed environment provider `vercel-sandbox`. Plugin settings are secret
-`token`, canonical `teamId` (`team_…`), canonical `projectId` (`prj_…`),
-`defaultVcpus` (2), and `defaultTimeoutMinutes` (30). Configure core machine server
-access so cloud compute can reach the BB server. Runtime credentials remain in
-core machine environment settings.
+and composed environment provider `vercel-sandbox`. A persistent enrolled machine
+owns Vercel CLI OAuth login and a project linked with `vc link`. Run `vc login` and
+`vc link --cwd /absolute/directory` on that machine, then connect it through plugin
+settings or `bb vercel-sandbox account connect --host HOST --directory PATH --json`.
+The host extension consumes project OIDC tokens privately and executes vendor SDK
+operations; recorded allocations pin their original machine/account/scope.
+Matching unbound records require explicit `--adopt-legacy-allocations` consent.
+Plugin settings retain `defaultVcpus` (2) and `defaultTimeoutMinutes` (30).
+Configure core machine server access so cloud compute can reach the BB server.
+Runtime credentials remain in core machine environment settings.
 
 Inputs accept 1 vCPU or an even integer count up to 32 and lifetime 5–1440 minutes; Vercel account plan
 limits apply. Memory is 2048 MiB per vCPU. The plugin uses the mutable universal

@@ -15,11 +15,11 @@ import {
   type Resource,
   type Intent,
 } from "./allocations.js";
-import { createVercelClient, sandboxExecutor } from "./client.js";
+import { remoteVercelClient } from "./remote-client.js";
+import { connectionSchema, type Connection } from "./auth-contract.js";
 import {
   allowedVcpus,
   launchInputsSchema,
-  resolveCredentials,
   resolveLaunchDefaults,
   SafeError,
   safeMessage,
@@ -28,14 +28,22 @@ import {
 import { IMAGE, PROVIDER_ID } from "./provider-id.js";
 import { vercelRpcContract } from "./rpc.js";
 
-export function createVercelSandboxPlugin(transport: typeof fetch) {
+export function createVercelSandboxPlugin() {
   return async (bb: BbPluginApi) => {
     const settings = bb.settings.define(SETTING_DESCRIPTORS);
     const allocations = await allocationStore(bb);
     const lifetime = new AbortController();
     bb.onDispose(() => lifetime.abort());
-    const currentCredentials = async () =>
-      resolveCredentials(await settings.get());
+    const remote = remoteVercelClient(bb);
+    const currentConnection = async (): Promise<Connection> => {
+      const stored = await bb.storage.kv.get<unknown>("cli-connection");
+      const result = connectionSchema.safeParse(stored);
+      if (!result.success)
+        throw new SafeError(
+          "On an enrolled machine, run vc login and vc link, then connect its linked directory in Vercel Sandbox settings.",
+        );
+      return result.data;
+    };
     const operationSignal = (signal?: AbortSignal, timeoutMs = 30_000) =>
       AbortSignal.any([
         lifetime.signal,
@@ -43,9 +51,15 @@ export function createVercelSandboxPlugin(transport: typeof fetch) {
         ...(signal ? [signal] : []),
       ]);
     const clientFor = async (resource?: Resource) => {
-      const current = await currentCredentials();
-      if (resource) assertScope(resource, current);
-      return createVercelClient(current, transport);
+      if (!resource)
+        throw new SafeError("Vercel allocation identity is required.");
+      const current = resource.connection;
+      if (!current)
+        throw new SafeError(
+          "Explicitly reconnect the original team and project to authorize CLI access to this recorded allocation.",
+        );
+      assertScope(resource, current);
+      return remote.forResource(current, resource);
     };
     const launchOptions = async () => {
       const raw = await settings.get();
@@ -63,31 +77,85 @@ export function createVercelSandboxPlugin(transport: typeof fetch) {
         memoryMiBPerVcpu: 2048,
       };
     };
+    const accountResult = async (
+      connection: Connection | null,
+      available: boolean,
+      message: string,
+      adoptedAllocations = 0,
+    ) => {
+      const count = connection
+        ? (await allocations.legacyAllocations(connection)).length
+        : 0;
+      return {
+        available,
+        message,
+        hostId: connection?.hostId ?? null,
+        directory: connection?.directory ?? null,
+        accountId: connection?.accountId ?? null,
+        teamId: connection?.teamId ?? null,
+        projectId: connection?.projectId ?? null,
+        legacyAllocations:
+          connection && count > 0
+            ? {
+                count,
+                teamId: connection.teamId,
+                projectId: connection.projectId,
+              }
+            : null,
+        adoptedAllocations,
+      };
+    };
     const inspectAccount = async (signal?: AbortSignal) => {
-      let teamId: string | null = null;
-      let projectId: string | null = null;
+      let connection: Connection | null = null;
       try {
-        const current = await currentCredentials();
-        teamId = current.teamId;
-        projectId = current.projectId;
-        await createVercelClient(current, transport).inspectAccount(
-          operationSignal(signal),
+        connection = await currentConnection();
+        await remote.inspect(connection, operationSignal(signal, 60_000));
+        return accountResult(
+          connection,
+          true,
+          "CLI login, linked project, OIDC authentication, and scoped listing succeeded on the connected machine. Create permission and plan capacity are checked at launch.",
         );
-        return {
-          available: true,
-          message:
-            "Authenticated sandbox listing succeeded for the configured team and project. Create permission and plan capacity are checked at launch.",
-          teamId,
-          projectId,
-        };
       } catch (error) {
         signal?.throwIfAborted();
-        return {
-          available: false,
-          message: safeMessage(error),
-          teamId,
-          projectId,
-        };
+        return accountResult(connection, false, safeMessage(error));
+      }
+    };
+    const connectAccount = async (
+      input: {
+        hostId: string;
+        directory: string;
+        adoptLegacyAllocations?: boolean;
+      },
+      signal?: AbortSignal,
+    ) => {
+      let adopted = 0;
+      try {
+        const host = await bb.sdk.hosts.get({ hostId: input.hostId });
+        if (host.type === "ephemeral")
+          throw new SafeError(
+            "Choose a persistent enrolled machine to own Vercel authentication.",
+          );
+        const connection = await remote.connect(
+          { hostId: input.hostId, directory: input.directory },
+          operationSignal(signal, 60_000),
+        );
+        adopted = input.adoptLegacyAllocations
+          ? await allocations.bindConnection(connection)
+          : 0;
+        await bb.storage.kv.set("cli-connection", connection);
+        return accountResult(
+          connection,
+          true,
+          "Connected CLI login and linked project. Future allocations use this connection; existing allocations retain their original machine and account.",
+          adopted,
+        );
+      } catch (error) {
+        signal?.throwIfAborted();
+        throw new SafeError(
+          error instanceof SafeError
+            ? error.message
+            : `Connection update was not confirmed after ${adopted} confirmed allocation bindings. Reinspect the connection and recorded allocations before retrying.`,
+        );
       }
     };
     const inspectMachine = async (
@@ -99,7 +167,7 @@ export function createVercelSandboxPlugin(transport: typeof fetch) {
         throw new SafeError(
           "This machine is not owned by the Vercel Sandbox provider.",
         );
-      const resource = allocations.parse(
+      let resource = allocations.parse(
         await bb.experimental_machines.getResource(hostId),
       );
       const intent = await allocations.get(resource.key);
@@ -107,6 +175,7 @@ export function createVercelSandboxPlugin(transport: typeof fetch) {
         throw new SafeError(
           "Vercel allocation session changed; refusing inspection of replacement compute.",
         );
+      resource = intent?.resource ?? resource;
       const client = await clientFor(resource);
       const sandbox = await client.get(
         resource.sandboxName,
@@ -137,7 +206,7 @@ export function createVercelSandboxPlugin(transport: typeof fetch) {
         projectId: resource.projectId,
       };
       return {
-        summary: `Vercel sandbox ${values.sandboxName}: ${values.state}. ${values.expiresAt === null ? "No vendor expiry is available." : `Recorded vendor expiry ${new Date(values.expiresAt).toISOString()}.`} ${session ? "Files are disposable; save important work to Git." : stopConfirmed ? "BB durably confirmed this session stopped before metadata deletion." : "Missing metadata does not confirm compute termination. Retain this machine and its original account settings, inspect the recorded session in Vercel or contact Vercel support, then retry cleanup."}`,
+        summary: `Vercel sandbox ${values.sandboxName}: ${values.state}. ${values.expiresAt === null ? "No vendor expiry is available." : `Recorded vendor expiry ${new Date(values.expiresAt).toISOString()}.`} ${session ? "Files are disposable; save important work to Git." : stopConfirmed ? "BB durably confirmed this session stopped before metadata deletion." : "Missing metadata does not confirm compute termination. Retain this machine and its original CLI connection, inspect the recorded session in Vercel or contact Vercel support, then retry cleanup."}`,
         values,
       };
     };
@@ -150,6 +219,7 @@ export function createVercelSandboxPlugin(transport: typeof fetch) {
         }
       },
       "account.inspect": () => inspectAccount(),
+      "account.connect": (input) => connectAccount(input),
       "machine.inspect": async (input) => {
         try {
           return await inspectMachine(input);
@@ -175,6 +245,48 @@ export function createVercelSandboxPlugin(transport: typeof fetch) {
         name: "vercel-sandbox",
         summary: "Inspect Vercel Sandbox configuration and machines",
         commands: {
+          "account connect": cliCommand({
+            summary:
+              "Connect an enrolled machine's CLI login and linked Vercel project",
+            options: {
+              ...jsonOption,
+              host: {
+                type: "string",
+                required: true,
+                description: "Persistent BB machine owning the CLI login",
+              },
+              "adopt-legacy-allocations": {
+                type: "boolean",
+                description:
+                  "Authorize this verified account once for matching recorded allocations without CLI identity",
+              },
+              directory: {
+                type: "string",
+                required: true,
+                description:
+                  "Absolute directory linked with vc link on that machine",
+              },
+            },
+            run(input, context) {
+              return guarded(async () => {
+                const result = await connectAccount(
+                  {
+                    hostId: input.options.host,
+                    directory: input.options.directory,
+                    adoptLegacyAllocations:
+                      input.options["adopt-legacy-allocations"],
+                  },
+                  context.signal,
+                );
+                return {
+                  exitCode: 0,
+                  stdout: input.options.json
+                    ? JSON.stringify(result)
+                    : result.message,
+                };
+              });
+            },
+          }),
           "account inspect": cliCommand({
             summary:
               "Check authenticated sandbox listing without allocating compute",
@@ -302,7 +414,7 @@ export function createVercelSandboxPlugin(transport: typeof fetch) {
                   ?.status;
           if (state !== "stopped")
             throw new SafeError(
-              "Vercel compute termination is unresolved and unconfirmed. Retain the machine record and original account settings; inspect the recorded session in Vercel or contact Vercel support, then retry cleanup. A missing name or session does not prove compute has stopped.",
+              "Vercel compute termination is unresolved and unconfirmed. Retain the machine record and original CLI connection; inspect the recorded session in Vercel or contact Vercel support, then retry cleanup. A missing name or session does not prove compute has stopped.",
             );
         }
         intent = { phase: "deleting", resource };
@@ -350,7 +462,8 @@ export function createVercelSandboxPlugin(transport: typeof fetch) {
       inputs: launchInputsSchema,
       async availability() {
         try {
-          await currentCredentials();
+          const result = await inspectAccount();
+          if (!result.available) throw new SafeError(result.message);
           return { status: "available" };
         } catch (error) {
           return { status: "setup-required", message: safeMessage(error) };
@@ -360,7 +473,7 @@ export function createVercelSandboxPlugin(transport: typeof fetch) {
         try {
           launchInputsSchema.parse(inputs);
           const raw = await settings.get();
-          resolveCredentials(raw);
+          await currentConnection();
           resolveLaunchDefaults(raw);
           return { action: "accept" };
         } catch (error) {
@@ -379,7 +492,6 @@ export function createVercelSandboxPlugin(transport: typeof fetch) {
             lifetime.signal.throwIfAborted();
             context.signal.throwIfAborted();
             const raw = await settings.get();
-            const current = resolveCredentials(raw);
             const inputs = launchInputsSchema.parse(context.inputs);
             let intent = await allocations.get(context.key);
             if (intent?.phase === "removed") intent = null;
@@ -391,6 +503,7 @@ export function createVercelSandboxPlugin(transport: typeof fetch) {
                 "Vercel machine cleanup is pending. Retry cleanup before launching with this creation key.",
               );
             if (!intent) {
+              const current = await currentConnection();
               const defaults = resolveLaunchDefaults(raw);
               intent = {
                 phase: "prepared",
@@ -404,14 +517,14 @@ export function createVercelSandboxPlugin(transport: typeof fetch) {
                   expiresAt: null,
                   teamId: current.teamId,
                   projectId: current.projectId,
+                  connection: current,
                   inputs: { ...defaults, ...inputs },
                 },
               };
               await saveIntent(intent, context.signal);
             }
             let resource = allocations.parse(intent.resource);
-            assertScope(resource, current);
-            const client = createVercelClient(current, transport);
+            const client = await clientFor(resource);
             context.report.step("Checking Vercel allocation");
             let sandbox = await client.get(
               resource.sandboxName,
@@ -448,7 +561,7 @@ export function createVercelSandboxPlugin(transport: typeof fetch) {
                 );
                 if (!sandbox)
                   throw new SafeError(
-                    "Vercel allocation submission is unresolved. Cleanup will keep checking the durable sandbox name; retain the original account settings.",
+                    "Vercel allocation submission is unresolved. Cleanup will keep checking the durable sandbox name; retain the original CLI connection.",
                   );
               }
             }
@@ -467,7 +580,7 @@ export function createVercelSandboxPlugin(transport: typeof fetch) {
             context.report.step("Installing BB on Vercel compute");
             const { hostId } = await bb.experimental_machines.bootstrap({
               key: context.key,
-              executor: sandboxExecutor(sandbox),
+              executor: sandbox.executor,
               report: context.report,
               signal: operationSignal(context.signal, 15 * 60_000),
             });
@@ -514,11 +627,6 @@ export function createVercelSandboxPlugin(transport: typeof fetch) {
         }
       },
     });
-    try {
-      await currentCredentials();
-    } catch (error) {
-      bb.status.needsConfiguration(safeMessage(error));
-    }
   };
 }
-export default createVercelSandboxPlugin(globalThis.fetch);
+export default createVercelSandboxPlugin();
