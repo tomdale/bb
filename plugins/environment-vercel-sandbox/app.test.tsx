@@ -398,6 +398,7 @@ describe("settings section", () => {
     hostId: string | null;
     directory: string | null;
     accountId: string | null;
+    accountName: string | null;
     teamId: string | null;
     projectId: string | null;
     legacyAllocations: {
@@ -414,6 +415,7 @@ describe("settings section", () => {
     hostId: null,
     directory: null,
     accountId: null,
+    accountName: null,
     teamId: null,
     projectId: null,
     legacyAllocations: null,
@@ -426,6 +428,7 @@ describe("settings section", () => {
     hostId: "host-mac",
     directory: "/Users/me/vercel-bb",
     accountId: "user_abc",
+    accountName: "tom",
     teamId: "team_abc",
     projectId: "prj_def",
     legacyAllocations: null,
@@ -435,6 +438,10 @@ describe("settings section", () => {
   const LEGACY = { count: 2, teamId: "team_abc", projectId: "prj_def" };
 
   const TOKEN_SHAPED = /eyJ|vca_|Bearer|token=/i;
+
+  function safeError(message: string) {
+    return Object.assign(new Error(message), { code: "handler_error" });
+  }
 
   function settingsSlot() {
     const section = app.settingsSections[0];
@@ -503,7 +510,7 @@ describe("settings section", () => {
       .getByText("Linked folder", { selector: "dt" })
       .closest("dl");
     expect(details?.textContent).toContain("/Users/me/vercel-bb");
-    expect(details?.textContent).toContain("user_abc");
+    expect(details?.textContent).toContain("tom (user_abc)");
     expect(details?.textContent).toContain("team_abc");
     expect(details?.textContent).toContain("prj_def");
     expect(
@@ -525,6 +532,10 @@ describe("settings section", () => {
     ).toBeTruthy();
     expect(document.body.textContent).not.toMatch(TOKEN_SHAPED);
     expect(slot.queryByLabelText(/token/i)).toBeNull();
+    expect(
+      slot.getByText(/Any access token saved by an earlier version/)
+        .textContent,
+    ).toContain("revoke it in Vercel");
   });
 
   it("guides terminal sign-in and linking when nothing is connected", async () => {
@@ -539,6 +550,7 @@ describe("settings section", () => {
       .map((item) => item.textContent);
     expect(steps[0]).toContain("vc login");
     expect(steps[0]).toContain("same OS user that runs BB");
+    expect(steps[0]).toContain("58.3.0 or later");
     expect(steps[1]).toContain("vc link --cwd /absolute/path/to/folder");
     fireEvent.change(slot.getByLabelText("Linked folder"), {
       target: { value: "/Users/me/My App" },
@@ -579,6 +591,7 @@ describe("settings section", () => {
           hostId: "host-linux",
           directory: "/srv/vercel-bb",
           adoptLegacyAllocations: false,
+          expectedLegacyIdentity: null,
         },
       },
     ]);
@@ -598,15 +611,14 @@ describe("settings section", () => {
     expect(slot.getByRole("button", { name: "Reconnect" })).toBeTruthy();
   });
 
-  it("shows the backend's reason when a connection doesn't match the linked project", async () => {
+  it("shows the server's safe reason when connecting is refused", async () => {
     const slot = renderSettings({
       "account.inspect": () => NOT_CONNECTED,
-      "account.connect": () => ({
-        ...CONNECTED,
-        available: false,
-        message:
-          "The folder is linked to a different project than existing sandboxes use.",
-      }),
+      "account.connect": () => {
+        throw safeError(
+          "Link an existing Vercel project in the selected directory with vc link, then reconnect.",
+        );
+      },
     });
     await slot.findByText(/Not connected/);
     fireEvent.change(slot.getByLabelText("Linked folder"), {
@@ -619,11 +631,10 @@ describe("settings section", () => {
     fireEvent.click(
       slot.getByRole("button", { name: "Connect linked project" }),
     );
-    const alert = await slot.findByRole("alert");
+    const alert = await slot.findByText(/Couldn't connect/);
     expect(alert.textContent).toContain(
-      "linked to a different project than existing sandboxes use",
+      "Link an existing Vercel project in the selected directory with vc link",
     );
-    expect(alert.textContent).toContain("Fix it on Tom's MacBook");
   });
 
   it("replaces a failed connect call with generic next steps and rechecks", async () => {
@@ -634,7 +645,7 @@ describe("settings section", () => {
         return NOT_CONNECTED;
       },
       "account.connect": () => {
-        throw new Error("vc stderr: Bearer eyJsecret");
+        throw safeError("vc stderr: Bearer eyJsecret");
       },
     });
     await slot.findByText(/Not connected/);
@@ -669,32 +680,44 @@ describe("settings section", () => {
     ).toBe(false);
   });
 
-  it("refuses relative folders, a missing machine, and offline machines before connecting", async () => {
+  it("refuses relative folders, a missing machine, and offline machines and focuses the problem", async () => {
     const slot = renderSettings({
       "account.inspect": () => NOT_CONNECTED,
       "account.connect": () => CONNECTED,
     });
     await slot.findByText(/Not connected/);
     const folder = slot.getByLabelText("Linked folder");
+    const connect = () =>
+      fireEvent.submit(
+        slot.getByRole("form", { name: "Connect the Vercel CLI" }),
+      );
+    const describedText = (element: Element) =>
+      (element.getAttribute("aria-describedby") ?? "")
+        .split(" ")
+        .map((id) => document.getElementById(id)?.textContent ?? "")
+        .join(" ");
     fireEvent.change(folder, { target: { value: "projects/app" } });
+    connect();
+    const trigger = slot.getByRole("button", { name: /Machine/ });
+    expect(document.activeElement).toBe(trigger);
+    expect(describedText(trigger)).toContain(
+      "Choose the machine where you ran vc login and vc link.",
+    );
+    openMenu(trigger);
     fireEvent.click(
-      slot.getByRole("button", { name: "Connect linked project" }),
+      await slot.findByRole("menuitemradio", { name: /Build box/ }),
     );
+    connect();
+    expect(document.activeElement).toBe(folder);
     expect(folder.getAttribute("aria-invalid")).toBe("true");
-    const describedBy = folder.getAttribute("aria-describedby") ?? "";
-    expect(document.getElementById(describedBy)?.textContent).toContain(
-      "Use an absolute path",
-    );
-    expect(
-      slot.getByText("Choose the machine where you ran vc login and vc link."),
-    ).toBeTruthy();
+    expect(describedText(folder)).toContain("Use an absolute path");
     fireEvent.change(folder, { target: { value: "/Users/me/app" } });
     openMenu(slot.getByRole("button", { name: /Machine/ }));
     fireEvent.click(await slot.findByRole("menuitemradio", { name: /Studio/ }));
-    expect(slot.getByText(/Studio is offline/)).toBeTruthy();
-    fireEvent.click(
-      slot.getByRole("button", { name: "Connect linked project" }),
-    );
+    connect();
+    const offlineTrigger = slot.getByRole("button", { name: /Machine Studio/ });
+    expect(document.activeElement).toBe(offlineTrigger);
+    expect(describedText(offlineTrigger)).toContain("Studio is offline");
     expect(connectCalls(slot)).toEqual([]);
   });
 
@@ -801,7 +824,7 @@ describe("settings section", () => {
       slot.getByText(/BB recorded 2 earlier sandboxes in/).textContent,
     ).toContain("team_abc / prj_def");
     const consent = slot.getByRole("checkbox", {
-      name: "Let user_abc on Tom's MacBook manage and clean up these 2 earlier sandboxes",
+      name: "Let tom (user_abc) on Tom's MacBook manage and clean up these 2 earlier sandboxes",
     });
     expect(consent.getAttribute("aria-checked")).toBe("false");
     const describedBy = consent.getAttribute("aria-describedby") ?? "";
@@ -820,6 +843,7 @@ describe("settings section", () => {
         hostId: "host-mac",
         directory: "/Users/me/vercel-bb",
         adoptLegacyAllocations: false,
+        expectedLegacyIdentity: null,
       },
     ]);
     await act(async () => {
@@ -846,15 +870,67 @@ describe("settings section", () => {
         name: "Use this account for 2 earlier sandboxes",
       }),
     );
-    await slot.findByText("BB now manages 2 earlier sandboxes with user_abc.");
+    await slot.findByText(
+      "BB now manages 2 earlier sandboxes with tom (user_abc).",
+    );
     expect(connectCalls(slot).map((call) => call.input)).toEqual([
       {
         hostId: "host-mac",
         directory: "/Users/me/vercel-bb",
         adoptLegacyAllocations: true,
+        expectedLegacyIdentity: {
+          accountId: "user_abc",
+          teamId: "team_abc",
+          projectId: "prj_def",
+          count: 2,
+        },
       },
     ]);
     expect(slot.queryByRole("checkbox")).toBeNull();
+  });
+
+  it("drops consent and old notes when the connection changes to another account", async () => {
+    let inspects = 0;
+    const slot = renderSettings({
+      "account.inspect": () => {
+        inspects += 1;
+        return { ...CONNECTED, legacyAllocations: LEGACY };
+      },
+      "account.connect": (input: { adoptLegacyAllocations: boolean }) => {
+        if (input.adoptLegacyAllocations) throw safeError("Interrupted.");
+        return {
+          ...CONNECTED,
+          accountId: "user_other",
+          accountName: "sam",
+          legacyAllocations: LEGACY,
+        };
+      },
+    });
+    fireEvent.click(
+      await slot.findByRole("checkbox", { name: /manage and clean up/ }),
+    );
+    fireEvent.click(slot.getByRole("button", { name: /Use this account/ }));
+    await slot.findByText(/Some may already use this account/);
+    await waitFor(() => expect(inspects).toBe(2));
+    fireEvent.click(
+      await slot.findByRole("checkbox", { name: /Let tom \(user_abc\)/ }),
+    );
+    expect(
+      slot
+        .getByRole("checkbox", { name: /Let tom \(user_abc\)/ })
+        .getAttribute("aria-checked"),
+    ).toBe("true");
+    fireEvent.click(slot.getByRole("button", { name: "Reconnect" }));
+    const consent = await slot.findByRole("checkbox", {
+      name: /Let sam \(user_other\) on Tom's MacBook/,
+    });
+    expect(consent.getAttribute("aria-checked")).toBe("false");
+    expect(slot.queryByText(/Some may already use this account/)).toBeNull();
+    expect(
+      slot
+        .getByRole("button", { name: /Use this account/ })
+        .hasAttribute("disabled"),
+    ).toBe(true);
   });
 
   it("disables adoption while the connection is broken", async () => {
@@ -884,8 +960,8 @@ describe("settings section", () => {
           : recheck.promise;
       },
       "account.connect": () => {
-        throw new Error(
-          "Connection update was not confirmed after 1 confirmed allocation bindings. Bearer eyJsecret",
+        throw safeError(
+          "CLI migration was interrupted after 1 confirmed allocation bindings. The default connection was not changed.",
         );
       },
     });
@@ -911,7 +987,7 @@ describe("settings section", () => {
     expect(slot.getByText(/Some may already use this account/)).toBeTruthy();
     expect(slot.getByText(/BB recorded 1 earlier sandbox in/)).toBeTruthy();
     const consent = slot.getByRole("checkbox", {
-      name: "Let user_abc on Tom's MacBook manage and clean up these 1 earlier sandbox",
+      name: "Let tom (user_abc) on Tom's MacBook manage and clean up these 1 earlier sandbox",
     });
     expect(consent.getAttribute("aria-checked")).toBe("false");
     expect(
@@ -919,8 +995,9 @@ describe("settings section", () => {
         .getByRole("button", { name: "Use this account for 1 earlier sandbox" })
         .hasAttribute("disabled"),
     ).toBe(true);
-    expect(document.body.textContent).not.toMatch(TOKEN_SHAPED);
-    expect(document.body.textContent).not.toContain("confirmed allocation");
+    expect(
+      slot.getByText(/CLI migration was interrupted after 1 confirmed/),
+    ).toBeTruthy();
   });
 
   it("offers no retry when the recheck after a failed adoption fails", async () => {

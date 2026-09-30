@@ -6,6 +6,7 @@ import {
   useState,
   type FormEvent,
   type ReactNode,
+  type RefObject,
 } from "react";
 import {
   definePluginApp,
@@ -546,11 +547,39 @@ type AccountHost = { id: string; name: string; online: boolean };
 type ConnectState =
   | { status: "idle" }
   | { status: "connecting" }
-  | { status: "failed" };
+  | { status: "failed"; reason: string | null };
 
 const LINK_PATH_PLACEHOLDER = "/absolute/path/to/folder";
+const MIN_VC_VERSION = "58.3.0";
 const CONNECT_FAILED_MESSAGE =
   "Couldn't connect. Check that the machine is online and that vc login and vc link finished there as the OS user that runs BB, then try again.";
+const TOKEN_SHAPED = /eyJ[\w-]{8,}|\bvca_|\bbearer\s|token\s*[=:]/i;
+
+function serverReason(error: unknown): string | null {
+  if (!(error instanceof Error)) return null;
+  if (Reflect.get(error, "code") !== "handler_error") return null;
+  const message = error.message.trim();
+  if (
+    message === "" ||
+    message.length > 500 ||
+    /[\r\n]/.test(message) ||
+    TOKEN_SHAPED.test(message)
+  ) {
+    return null;
+  }
+  return message;
+}
+
+function accountLabel(accountName: string | null, accountId: string): string {
+  return accountName === null ? accountId : `${accountName} (${accountId})`;
+}
+
+function FailureReason({ reason }: { reason: string | null }) {
+  if (reason === null) return null;
+  return (
+    <span className="block break-words text-muted-foreground">{reason}</span>
+  );
+}
 
 function isAbsolutePath(path: string): boolean {
   return path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path);
@@ -600,7 +629,14 @@ function ConnectionDetails({
   const rows = [
     { term: "Machine", value: machineName, mono: false },
     { term: "Linked folder", value: account.directory, mono: true },
-    { term: "Vercel account", value: account.accountId, mono: true },
+    {
+      term: "Vercel account",
+      value:
+        account.accountId === null
+          ? null
+          : accountLabel(account.accountName, account.accountId),
+      mono: true,
+    },
     { term: "Team", value: account.teamId, mono: true },
     { term: "Project", value: account.projectId, mono: true },
   ].filter(
@@ -716,12 +752,16 @@ function ConnectionStatus({
 
 function MachineField({
   labelId,
+  describedById,
+  triggerRef,
   hosts,
   hostId,
   onRetry,
   onChoose,
 }: {
   labelId: string;
+  describedById: string | undefined;
+  triggerRef: RefObject<HTMLButtonElement | null>;
   hosts: Load<AccountHost[]>;
   hostId: string | null;
   onRetry: () => void;
@@ -763,10 +803,12 @@ function MachineField({
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button
+          ref={triggerRef}
           type="button"
           variant="outline"
           size="sm"
           aria-labelledby={`${labelId} ${labelId}-value`}
+          aria-describedby={describedById}
           className="w-full min-w-0 justify-between sm:w-72"
         >
           <span id={`${labelId}-value`} className="min-w-0 truncate">
@@ -819,6 +861,9 @@ function ConnectForm({
   const machineLabelId = `${idPrefix}-machine`;
   const directoryId = `${idPrefix}-directory`;
   const directoryErrorId = `${idPrefix}-directory-error`;
+  const hostProblemId = `${idPrefix}-machine-problem`;
+  const machineTriggerRef = useRef<HTMLButtonElement>(null);
+  const directoryRef = useRef<HTMLInputElement>(null);
   const [hostChoice, setHostChoice] = useState<string | null>(null);
   const [directoryDraft, setDirectoryDraft] = useState<string | null>(null);
   const [attempted, setAttempted] = useState(false);
@@ -858,12 +903,13 @@ function ConnectForm({
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setAttempted(true);
-    if (
-      connecting ||
-      selectedHost === null ||
-      !selectedHost.online ||
-      directoryError !== null
-    ) {
+    if (connecting) return;
+    if (selectedHost === null || !selectedHost.online) {
+      machineTriggerRef.current?.focus();
+      return;
+    }
+    if (directoryError !== null) {
+      directoryRef.current?.focus();
       return;
     }
     setHostChoice(selectedHost.id);
@@ -874,6 +920,7 @@ function ConnectForm({
         hostId: selectedHost.id,
         directory: trimmed,
         adoptLegacyAllocations: false,
+        expectedLegacyIdentity: null,
       })
       .then(
         (result) => {
@@ -881,9 +928,9 @@ function ConnectForm({
           setConnect({ status: "idle" });
           onConnected(result);
         },
-        () => {
+        (error: unknown) => {
           if (!mounted.current) return;
-          setConnect({ status: "failed" });
+          setConnect({ status: "failed", reason: serverReason(error) });
           reinspect();
         },
       );
@@ -903,9 +950,10 @@ function ConnectForm({
       <ol className="list-decimal space-y-1.5 pl-4 text-xs leading-relaxed text-muted-foreground">
         <li>
           On the machine BB should use, open a terminal as the same OS user that
-          runs BB there, run{" "}
-          <code className="font-mono text-foreground">vc login</code>, and
-          finish Vercel's sign-in in your browser.
+          runs BB there. Check that the Vercel CLI is {MIN_VC_VERSION} or later
+          (<code className="font-mono text-foreground">vc --version</code>),
+          then run <code className="font-mono text-foreground">vc login</code>{" "}
+          and finish Vercel's sign-in in your browser.
         </li>
         <li>
           In the same terminal, link a folder to an existing Vercel project:{" "}
@@ -922,6 +970,8 @@ function ConnectForm({
         </Label>
         <MachineField
           labelId={machineLabelId}
+          describedById={hostProblem === null ? undefined : hostProblemId}
+          triggerRef={machineTriggerRef}
           hosts={hosts}
           hostId={hostId}
           onRetry={retryHosts}
@@ -931,7 +981,9 @@ function ConnectForm({
           }}
         />
         {hostProblem === null ? null : (
-          <p className="text-xs text-warning-text">{hostProblem}</p>
+          <p id={hostProblemId} className="text-xs text-warning-text">
+            {hostProblem}
+          </p>
         )}
       </div>
 
@@ -940,6 +992,7 @@ function ConnectForm({
           Linked folder
         </Label>
         <Input
+          ref={directoryRef}
           id={directoryId}
           value={directory}
           placeholder={LINK_PATH_PLACEHOLDER}
@@ -979,17 +1032,21 @@ function ConnectForm({
         {connect.status === "failed" ? (
           <p role="alert" className="text-xs text-destructive-text">
             {CONNECT_FAILED_MESSAGE}
+            <FailureReason reason={connect.reason} />
           </p>
         ) : null}
       </div>
 
       <p className="text-xs leading-relaxed text-muted-foreground">
-        Your Vercel sign-in stays in the CLI on that machine. BB saves only the
-        machine, the folder, and the account, team, and project IDs, and asks
-        the CLI for a short-lived token for each operation. If you sign in as a
-        different Vercel user or link the folder to another project, connect
-        again. A new connection applies to new sandboxes; existing sandboxes
-        keep the one they started with.
+        Your Vercel sign-in stays in the CLI on that machine. For a CLI
+        connection, BB saves only the machine, the folder, and the account,
+        team, and project IDs, and asks the CLI for a short-lived token for each
+        operation. Any access token saved by an earlier version of this plugin
+        stays in BB's plugin settings until someone removes it; revoke it in
+        Vercel if you no longer use it. If you sign in as a different Vercel
+        user or link the folder to another project, connect again. A new
+        connection applies to new sandboxes; existing sandboxes keep the one
+        they started with.
       </p>
     </form>
   );
@@ -997,21 +1054,25 @@ function ConnectForm({
 
 type AdoptState =
   | { status: "idle" }
-  | { status: "adopting" }
-  | { status: "failed" }
-  | { status: "adopted"; count: number; accountId: string | null };
+  | { status: "adopting"; identity: string }
+  | { status: "failed"; identity: string; reason: string | null }
+  | { status: "adopted"; identity: string; count: number; account: string };
 
 function pluralSandboxes(count: number): string {
   return `${count} earlier sandbox${count === 1 ? "" : "es"}`;
 }
 
-function AdoptedNote({
-  count,
-  accountId,
-}: {
-  count: number;
-  accountId: string | null;
-}) {
+function connectionIdentity(account: AccountStatus): string {
+  return JSON.stringify([
+    account.hostId,
+    account.directory,
+    account.accountId,
+    account.teamId,
+    account.projectId,
+  ]);
+}
+
+function AdoptedNote({ count, account }: { count: number; account: string }) {
   return (
     <p role="status" className="flex items-start gap-2 text-xs text-foreground">
       <Icon
@@ -1019,8 +1080,23 @@ function AdoptedNote({
         className="mt-0.5 size-3.5 shrink-0 text-success"
       />
       <span className="min-w-0 break-words">
-        BB now manages {pluralSandboxes(count)} with{" "}
-        {accountId ?? "this Vercel account"}.
+        BB now manages {pluralSandboxes(count)} with {account}.
+      </span>
+    </p>
+  );
+}
+
+function PartialAdoptionAlert({ reason }: { reason: string | null }) {
+  return (
+    <p
+      role="alert"
+      className="flex items-start gap-2 text-xs text-destructive-text"
+    >
+      <Icon name="AlertCircle" className="mt-0.5 size-3.5 shrink-0" />
+      <span className="min-w-0 break-words">
+        Couldn't finish updating the earlier sandboxes. Some may already use
+        this account; BB rechecks which still need one before you try again.
+        <FailureReason reason={reason} />
       </span>
     </p>
   );
@@ -1039,8 +1115,8 @@ function LegacyAllocations({
 }) {
   const rpc = useRpc<Contract>();
   const consentId = useId();
-  const [consent, setConsent] = useState(false);
-  const [adopt, setAdopt] = useState<AdoptState>({ status: "idle" });
+  const [consentFor, setConsentFor] = useState<string | null>(null);
+  const [adoptState, setAdopt] = useState<AdoptState>({ status: "idle" });
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -1049,24 +1125,30 @@ function LegacyAllocations({
     };
   }, []);
   const account = state.status === "ready" ? state.data : null;
+  const identity = account === null ? null : connectionIdentity(account);
+  const adopt: AdoptState =
+    adoptState.status === "idle" ||
+    identity === null ||
+    adoptState.identity === identity
+      ? adoptState
+      : { status: "idle" };
   const legacy = account?.legacyAllocations ?? null;
   const remaining = legacy !== null && legacy.count > 0 ? legacy : null;
-  const failed = adopt.status === "failed";
 
   if (account === null || remaining === null) {
     if (adopt.status === "adopted") {
       return (
         <section className="space-y-2">
           <SettingsHeading title="Earlier sandboxes" />
-          <AdoptedNote count={adopt.count} accountId={adopt.accountId} />
+          <AdoptedNote count={adopt.count} account={adopt.account} />
         </section>
       );
     }
-    if (!failed) return null;
+    if (adopt.status !== "failed") return null;
     return (
       <section className="space-y-2">
         <SettingsHeading title="Earlier sandboxes" />
-        <PartialAdoptionAlert />
+        <PartialAdoptionAlert reason={adopt.reason} />
         {state.status === "pending" ? (
           <p role="status" className="text-xs text-muted-foreground">
             Checking which earlier sandboxes still need an account…
@@ -1085,46 +1167,64 @@ function LegacyAllocations({
     );
   }
 
-  const { hostId, directory } = account;
+  const { hostId, directory, accountId } = account;
   const machineName = hostId === null ? "" : hostLabel(hosts, hostId);
+  const who =
+    accountId === null
+      ? "the signed-in Vercel account"
+      : accountLabel(account.accountName, accountId);
+  const offerKey = JSON.stringify([identity, remaining]);
+  const consent = consentFor === offerKey;
   const canAdopt =
     account.available &&
     hostId !== null &&
     directory !== null &&
+    accountId !== null &&
     adopt.status !== "adopting";
   const submit = () => {
-    if (!canAdopt || !consent) return;
-    setAdopt({ status: "adopting" });
+    if (!canAdopt || !consent || identity === null) return;
+    setAdopt({ status: "adopting", identity });
     rpc
       .call("account.connect", {
         hostId,
         directory,
         adoptLegacyAllocations: true,
+        expectedLegacyIdentity: {
+          accountId,
+          teamId: remaining.teamId,
+          projectId: remaining.projectId,
+          count: remaining.count,
+        },
       })
       .then(
         (result) => {
           if (!mounted.current) return;
-          setConsent(false);
+          setConsentFor(null);
           setAdopt({
             status: "adopted",
+            identity: connectionIdentity(result),
             count: result.adoptedAllocations,
-            accountId: result.accountId,
+            account:
+              result.accountId === null
+                ? who
+                : accountLabel(result.accountName, result.accountId),
           });
           onConnected(result);
         },
-        () => {
+        (error: unknown) => {
           if (!mounted.current) return;
-          setConsent(false);
-          setAdopt({ status: "failed" });
+          setConsentFor(null);
+          setAdopt({ status: "failed", identity, reason: serverReason(error) });
           reinspect();
         },
       );
   };
-  const who = account.accountId ?? "the signed-in Vercel account";
   return (
     <section className="space-y-2">
       <SettingsHeading title="Earlier sandboxes" />
-      {failed ? <PartialAdoptionAlert /> : null}
+      {adopt.status === "failed" ? (
+        <PartialAdoptionAlert reason={adopt.reason} />
+      ) : null}
       <p className="text-xs leading-relaxed text-foreground">
         BB recorded {pluralSandboxes(remaining.count)} in{" "}
         <span className="font-mono">
@@ -1144,7 +1244,9 @@ function LegacyAllocations({
           checked={consent}
           disabled={!canAdopt}
           aria-describedby={`${consentId}-note`}
-          onCheckedChange={(checked) => setConsent(checked === true)}
+          onCheckedChange={(checked) =>
+            setConsentFor(checked === true ? offerKey : null)
+          }
           className="mt-0.5"
         />
         <div className="min-w-0 space-y-1">
@@ -1157,8 +1259,9 @@ function LegacyAllocations({
             className="text-xs leading-relaxed text-muted-foreground"
           >
             This is your authorization, not a record of who created them. BB
-            can't check that from its old records. Once set, reconnecting
-            doesn't change it.
+            can't check that from its old records. BB refuses the change if the
+            CLI's account, project, or the number of sandboxes no longer
+            matches. Once set, reconnecting doesn't change it.
           </p>
         </div>
       </div>
@@ -1179,25 +1282,15 @@ function LegacyAllocations({
             : `Use this account for ${pluralSandboxes(remaining.count)}`}
         </Button>
         {adopt.status === "adopted" ? (
-          <AdoptedNote count={adopt.count} accountId={adopt.accountId} />
+          <AdoptedNote count={adopt.count} account={adopt.account} />
         ) : null}
       </div>
+      <p className="text-xs leading-relaxed text-muted-foreground">
+        If these sandboxes were created with an access token saved in an earlier
+        version of this plugin, that token is still in BB's plugin settings.
+        Remove it there and revoke it in Vercel once you no longer need it.
+      </p>
     </section>
-  );
-}
-
-function PartialAdoptionAlert() {
-  return (
-    <p
-      role="alert"
-      className="flex items-start gap-2 text-xs text-destructive-text"
-    >
-      <Icon name="AlertCircle" className="mt-0.5 size-3.5 shrink-0" />
-      <span className="min-w-0 break-words">
-        Couldn't finish updating the earlier sandboxes. Some may already use
-        this account; BB rechecks which still need one before you try again.
-      </span>
-    </p>
   );
 }
 
