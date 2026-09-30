@@ -525,6 +525,7 @@ describe("collectPluginAppRegistrations", () => {
         id: "summarize",
         title: "Summarize",
         icon: "Zap",
+        experimental_roles: ["assistant"],
         run,
       });
       app.composer.customize({
@@ -600,7 +601,13 @@ describe("collectPluginAppRegistrations", () => {
       { id: "inline-vis", component: Component },
     ]);
     expect(registrations.messageActions).toEqual([
-      { id: "summarize", title: "Summarize", icon: "Zap", run },
+      {
+        id: "summarize",
+        title: "Summarize",
+        icon: "Zap",
+        experimental_roles: ["assistant"],
+        run,
+      },
     ]);
     expect(registrations.composerCustomizations).toEqual([
       {
@@ -843,6 +850,32 @@ describe("collectPluginAppRegistrations", () => {
           });
         }),
       /duplicate id "a"/,
+    ],
+    [
+      "empty message action roles",
+      () =>
+        definePluginApp((app) => {
+          app.slots.messageAction({
+            id: "filtered",
+            title: "Filtered",
+            experimental_roles: [],
+            run: () => {},
+          });
+        }),
+      /experimental_roles.*user and\/or assistant/,
+    ],
+    [
+      "unknown message action role",
+      () =>
+        definePluginApp((app) => {
+          app.slots.messageAction({
+            id: "filtered",
+            title: "Filtered",
+            experimental_roles: ["tool" as never],
+            run: () => {},
+          });
+        }),
+      /experimental_roles.*user and\/or assistant/,
     ],
     [
       "sidebar footer action missing run",

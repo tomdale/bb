@@ -171,6 +171,7 @@ const BB_PLUGIN_API_KEYS = [
   "server",
   "hosts",
   "experimental_aiServices",
+  "experimental_resolveAiGatewayApiKey",
   "experimental_hooks",
   "experimental_environments",
   "experimental_machines",
@@ -397,7 +398,13 @@ const FRONTEND_SLOT_PROP_FIELDS = {
     "experimental_Original",
   ],
   messageDirective: ["attributes", "source", "message", "openWorkspaceFile"],
-  messageAction: ["threadId", "message", "selectedText", "openPanel", "composer"],
+  messageAction: [
+    "threadId",
+    "message",
+    "selectedText",
+    "openPanel",
+    "composer",
+  ],
   commandPaletteAction: ["threadId", "projectId", "openPanel"],
   experimental_providerIcon: ["providerKind", "providerId", "icon"],
   experimental_timelineRenderer: [
@@ -469,6 +476,7 @@ const MESSAGE_ACTION_REGISTRATION_FIELDS = [
   "id",
   "title",
   "icon",
+  "experimental_roles",
   "run",
 ] as const satisfies readonly (keyof PluginMessageActionRegistration)[];
 
@@ -592,6 +600,15 @@ describe("bb-plugin-authoring skill", () => {
     for (const name of FRONTEND_RUNTIME_EXPORT_NAMES) {
       expect(skill, `${name} is not documented in the skill`).toContain(name);
     }
+  });
+
+  it("documents the experimental Vercel AI Gateway key accessor", () => {
+    const documented = readReference("backend-foundation.md").replace(
+      /\s+/g,
+      " ",
+    );
+    expect(documented).toContain("experimental_resolveAiGatewayApiKey");
+    expect(documented).toContain("not a general machine-secret API");
   });
 
   it("warns that environment provider inputs are persisted configuration, not credentials", () => {

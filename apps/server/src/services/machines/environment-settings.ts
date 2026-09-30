@@ -8,6 +8,23 @@ import type { HostDaemonContributedEnvEntry } from "@bb/host-daemon-contract";
 
 export { replaceMachineEnvironment } from "./environment-storage.js";
 
+export async function readEffectiveMachineEnvironmentVariable(
+  db: DbConnection,
+  dataDir: string,
+  name: string,
+  projectId: string | null,
+): Promise<string | undefined> {
+  const project = readMachineEnvironment(db, projectId).find(
+    (row) => row.name === name,
+  );
+  const row =
+    project ??
+    readMachineEnvironment(db, null).find((entry) => entry.name === name);
+  return row === undefined
+    ? undefined
+    : decryptMachineEnvironment(dataDir, row);
+}
+
 export async function resolveUserMachineEnvironment(
   db: DbConnection,
   dataDir: string,

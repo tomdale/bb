@@ -846,12 +846,31 @@ export function collectPluginAppRegistrations(
         if (typeof registration.run !== "function") {
           throw new Error(`${kind}: "run" must be a function`);
         }
+        if (
+          registration.experimental_roles !== undefined &&
+          (typeof registration.experimental_roles !== "object" ||
+            registration.experimental_roles === null ||
+            !Array.isArray(registration.experimental_roles) ||
+            registration.experimental_roles.length === 0 ||
+            registration.experimental_roles.some(
+              (role) => role !== "user" && role !== "assistant",
+            ))
+        ) {
+          throw new Error(
+            `${kind}: "experimental_roles" must contain user and/or assistant`,
+          );
+        }
         collected.messageActions.push({
           id,
           title: requireNonEmptyString(kind, "title", registration.title),
           ...(registration.icon !== undefined
             ? {
                 icon: requireNonEmptyString(kind, "icon", registration.icon),
+              }
+            : {}),
+          ...(registration.experimental_roles !== undefined
+            ? {
+                experimental_roles: registration.experimental_roles,
               }
             : {}),
           run: registration.run,

@@ -107,6 +107,15 @@ to the browser. `experimental_set` accepts only the fields defined by that
 handle, accepts `null` to unset one, fires `onChange`, and returns the handle's
 effective values.
 
+`bb.experimental_resolveAiGatewayApiKey` is a narrowly scoped experimental
+exception for the first-party Read Aloud plugin: only plugin id `tts` can read
+`AI_GATEWAY_API_KEY`, either globally for configuration status or for an
+explicit thread. Thread scope is resolved on the server and reads that thread's
+project override before the global setting; callers cannot choose a project or
+machine. It returns only to plugin server code. BB plugins are trusted code, so
+this accessor must not be exposed from an HTTP response, frontend bundle, or
+logs. It is not a general machine-secret API.
+
 ### bb.storage
 
 - `bb.storage.kv` — namespaced JSON key-value rows in bb.db:

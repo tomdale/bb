@@ -94,6 +94,29 @@ describe("fixtures", () => {
 });
 
 describe("server", () => {
+  it("restricts the AI Gateway key accessor to the TTS plugin and its fixed scope", async () => {
+    const denied = createFakePluginHost({ pluginId: "other-plugin" });
+    await expect(
+      denied.bb.experimental_resolveAiGatewayApiKey({ scope: "global" }),
+    ).rejects.toThrow("only available to the tts plugin");
+    await denied.harness.lifecycle.dispose();
+
+    const tts = createFakePluginHost({
+      pluginId: "tts",
+      experimental_resolveAiGatewayApiKey: (scope) =>
+        scope.scope === "thread" ? `key:${scope.threadId}` : "global-key",
+    });
+    await expect(
+      tts.bb.experimental_resolveAiGatewayApiKey({ scope: "global" }),
+    ).resolves.toBe("global-key");
+    await expect(
+      tts.bb.experimental_resolveAiGatewayApiKey({
+        scope: "thread",
+        threadId: "thread-1",
+      }),
+    ).resolves.toBe("key:thread-1");
+    await tts.harness.lifecycle.dispose();
+  });
   it("serves the configured public app URL and defaults to null", () => {
     const configured = createFakePluginHost({
       appUrl: "https://bb.example.test",

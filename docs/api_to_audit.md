@@ -2486,6 +2486,16 @@ place of a whole sidebar would strand the user) plus one toast.
    focus order, and the mobile close behavior when a plugin owns the markup —
    `onNavigate` is currently the plugin's responsibility to call.
 
+## `PluginMessageActionRegistration.experimental_roles`
+
+**What it does.** Restricts one `messageAction` slot to user messages, assistant messages, or both. Omission preserves existing user-and-assistant behavior; an empty or invalid role list is rejected. The timeline omits the action entirely for excluded roles.
+
+**Audit before stabilizing.**
+
+1. Confirm the supported role vocabulary and whether future message types should be included.
+2. Verify desktop and compact/mobile action bars consistently filter excluded roles.
+3. Decide whether the property should remain an experimental opt-in or become a stable registration field.
+
 ## AI services (`bb.experimental_aiServices.register`)
 
 **Reshaped (2026-09-22).** The host contract (`@get-bb/plugin-sdk/ai-services`),
@@ -3509,6 +3519,30 @@ no provider polling. Validate concurrent resume/removal, failure reporting,
 long-running caller behavior, and the scope of supported states before
 stabilizing this API. Exposed as `bb machine reconcile`.
 
+## `BbPluginApi.experimental_resolveAiGatewayApiKey`
+
+Reads only the fixed `AI_GATEWAY_API_KEY` machine-environment variable, for
+`tts` and no other plugin. `{scope: "global"}` resolves the global value for
+configuration status. `{scope: "thread", threadId}` resolves that existing,
+non-deleted thread on the server, obtains its project id, then returns that
+project's override or the global value. An empty project value remains the
+project's effective setting and is treated as unconfigured by Read Aloud; it
+does not fall through to global. The caller cannot supply a project id or
+machine id. Saved values are decrypted only on the server and
+must not be logged or sent to frontend code; BB plugins are trusted server-side
+code and this experimental capability is intentionally narrow. BB currently
+uses a single-owner local-server trust model: plugin HTTP `local` auth checks
+trusted/local Origin and mutation content type, not per-user or per-project
+membership. `requirePublicThread` proves existence and non-deletion only. A
+future multi-user/project-isolated deployment must add caller-to-project
+authorization before permitting this secret-backed operation.
+
+Stabilization requires a product-level capability registration rather than a
+plugin-id allowlist, explicit policy for projectless threads, authorization
+coverage for public and machine-authenticated callers, tests for encrypted
+value isolation and project/global empty-value behavior, and a review of
+whether additional first-party consumers need fixed-variable access.
+
 ## Lifecycle ownership on thread creation
 
 `bb.sdk.threads.spawn` and `bb.sdk.threads.fork` accept `lifecycleOwnerThreadId`;
@@ -3583,4 +3617,3 @@ the legacy section or the general thread list, unpinned. The composer sends
 this placement with normal and scheduled creation. Audit pinned groups, custom sections, project/machine groups,
 route transitions, draft recovery, and third-party sidebar compatibility
 before stabilizing this option.
-

@@ -756,21 +756,27 @@ function buildRowPluginMessageActions(args: {
   if (timelineThreadId === undefined || slots.length === 0) {
     return undefined;
   }
-  return slots.map((slot) => ({
-    key: `${slot.pluginId}/${slot.id}/${slot.generation}`,
-    pluginId: slot.pluginId,
-    icon: slot.icon ?? null,
-    label: slot.title,
-    onSelect: () =>
-      runPluginMessageAction({
-        slot,
-        threadId: timelineThreadId,
-        message,
-        selectedText,
-        openThreadPanel,
-        composerHost,
-      }),
-  }));
+  return slots
+    .filter(
+      (slot) =>
+        slot.experimental_roles === undefined ||
+        slot.experimental_roles.includes(message.role),
+    )
+    .map((slot) => ({
+      key: `${slot.pluginId}/${slot.id}/${slot.generation}`,
+      pluginId: slot.pluginId,
+      icon: slot.icon ?? null,
+      label: slot.title,
+      onSelect: () =>
+        runPluginMessageAction({
+          slot,
+          threadId: timelineThreadId,
+          message,
+          selectedText,
+          openThreadPanel,
+          composerHost,
+        }),
+    }));
 }
 
 function buildRowConsumerMessageActions(args: {
