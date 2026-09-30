@@ -455,9 +455,9 @@ describe("expiry indicator", () => {
     };
   }
 
-  function machine(overrides: Record<string, unknown>) {
+  function machine(overrides: Record<string, unknown>, summary = "running") {
     return {
-      summary: "running",
+      summary,
       values: {
         state: "running",
         sandboxName: "bb-host-1",
@@ -546,7 +546,7 @@ describe("expiry indicator", () => {
     expect(trigger.className).toContain("text-warning-text");
   });
 
-  it("confirms a stopped read before declaring the files lost", async () => {
+  it("reports an ended session only after a second read and keeps Refresh", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const inspect = vi.fn(() => machine({ state: "stopped" }));
     const slot = renderSlot(headerSlot(), props, {
@@ -565,8 +565,68 @@ describe("expiry indicator", () => {
     });
     expect(inspect).toHaveBeenCalledTimes(2);
     openMenu(trigger);
-    await slot.findByText(/has stopped and its files are gone/);
-    expect(slot.queryByRole("menuitem", { name: /Refresh|Retry/ })).toBeNull();
+    await slot.findByText(/session has ended\. BB keeps no snapshot/);
+    expect(slot.queryByText(/files are gone/)).toBeNull();
+    expect(slot.getByRole("menuitem", { name: "Refresh" })).toBeTruthy();
+  });
+
+  it("never treats repeated missing reads as a confirmed stop", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const inspect = vi.fn(() =>
+      machine(
+        { state: "missing", expiresAt: Date.now() + 60 * 60_000 },
+        "Compute termination unresolved; retry cleanup after checking the Vercel dashboard.",
+      ),
+    );
+    const slot = renderSlot(headerSlot(), props, {
+      sdk: sdkFor(PROVIDER_ID) as never,
+      rpc: { "machine.inspect": inspect },
+    });
+    const trigger = await slot.findByRole("button", {
+      name: "Vercel sandbox: status unknown",
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    expect(inspect).toHaveBeenCalledTimes(1);
+    openMenu(trigger);
+    await slot.findByText(/It may still be running/);
+    expect(slot.getByText(/Compute termination unresolved/)).toBeTruthy();
+    fireEvent.click(slot.getByRole("menuitem", { name: "Refresh" }));
+    await waitFor(() => {
+      expect(inspect.mock.calls.length).toBeGreaterThanOrEqual(3);
+    });
+    expect(
+      slot.getByRole("button", {
+        name: "Vercel sandbox: status unknown",
+        hidden: true,
+      }),
+    ).toBeTruthy();
+    expect(slot.queryByText(/files are gone|session has ended/)).toBeNull();
+  });
+
+  it("observes Vercel at the deadline instead of inferring a stop from the clock", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const expiresAt = Date.now() + 2_000;
+    const inspect = vi.fn(() => machine({ expiresAt }));
+    const slot = renderSlot(headerSlot(), props, {
+      sdk: sdkFor(PROVIDER_ID) as never,
+      rpc: { "machine.inspect": inspect },
+    });
+    await slot.findByRole("button", {
+      name: "Vercel sandbox: less than a minute left",
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_500);
+    });
+    const trigger = await slot.findByRole("button", {
+      name: "Vercel sandbox: time limit reached, awaiting Vercel status",
+    });
+    expect(inspect).toHaveBeenCalledTimes(2);
+    openMenu(trigger);
+    await slot.findByText(/Waiting for Vercel to report/);
+    expect(slot.queryByText(/stopped|files are gone/i)).toBeNull();
+    expect(slot.getByRole("menuitem", { name: "Refresh" })).toBeTruthy();
   });
 
   it("recovers when a stale stopped read is followed by a running one", async () => {
@@ -610,7 +670,7 @@ describe("expiry indicator", () => {
       name: "Vercel sandbox: removed",
     });
     openMenu(trigger);
-    await slot.findByText(/was removed and its files are gone/);
+    await slot.findByText(/BB removed this sandbox machine/);
     expect(slot.queryByRole("menuitem")).toBeNull();
   });
 

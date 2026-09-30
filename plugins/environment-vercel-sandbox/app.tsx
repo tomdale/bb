@@ -754,12 +754,12 @@ function formatRemaining(ms: number): { short: string; spoken: string } {
   };
 }
 
-const STOPPED_STATES = new Set<MachineStatus["state"]>([
+const ENDED_STATES = new Set<MachineStatus["state"]>([
   "stopped",
   "failed",
   "aborted",
-  "missing",
 ]);
+const DEADLINE_OBSERVATION_DELAY_MS = 1_000;
 
 type ExpiryView = {
   tone: "muted" | "warning" | "destructive";
@@ -772,7 +772,7 @@ type ExpiryView = {
 function expiryView(
   resolution: HostResolution,
   inspection: Load<MachineStatus>,
-  stopConfirmed: boolean,
+  endConfirmed: boolean,
   now: number,
 ): ExpiryView | null {
   if (resolution.kind === "creating") {
@@ -800,7 +800,7 @@ function expiryView(
       label: "Removed",
       spoken: "removed",
       detail:
-        "This sandbox machine was removed and its files are gone. Start a new thread to continue.",
+        "BB removed this sandbox machine. It can't be restored; start a new thread to continue.",
       final: true,
     };
   }
@@ -824,23 +824,31 @@ function expiryView(
     };
   }
   const machine = inspection.data;
-  const expired = machine.expiresAt !== null && machine.expiresAt <= now;
-  if (expired || (STOPPED_STATES.has(machine.state) && stopConfirmed)) {
-    return {
-      tone: "destructive",
-      label: "Stopped",
-      spoken: "stopped",
-      detail:
-        "This sandbox has stopped and its files are gone. Start a new thread to continue.",
-      final: true,
-    };
+  if (ENDED_STATES.has(machine.state)) {
+    return endConfirmed
+      ? {
+          tone: "destructive",
+          label: "Stopped",
+          spoken: "stopped",
+          detail:
+            "Vercel reports this sandbox's session has ended. BB keeps no snapshot, so it can't restore the sandbox; start a new thread to continue.",
+          final: false,
+        }
+      : {
+          tone: "warning",
+          label: "Checking",
+          spoken: "confirming whether it stopped",
+          detail: "Vercel reported this sandbox as stopped. Confirming…",
+          final: false,
+        };
   }
-  if (STOPPED_STATES.has(machine.state)) {
+  if (machine.state === "missing") {
     return {
       tone: "warning",
-      label: "Checking",
-      spoken: "confirming whether it stopped",
-      detail: "Vercel reported this sandbox as stopped. Confirming…",
+      label: "Unknown",
+      spoken: "status unknown",
+      detail:
+        "Vercel can't find this sandbox right now. It may still be running while Vercel updates its records, or it may have stopped. BB can't tell whether its files are still there.",
       final: false,
     };
   }
@@ -860,6 +868,16 @@ function expiryView(
       spoken: "stopping",
       detail:
         "The sandbox is stopping. Uncommitted files will be lost when it stops.",
+      final: false,
+    };
+  }
+  if (machine.expiresAt !== null && machine.expiresAt <= now) {
+    return {
+      tone: "warning",
+      label: "Time limit reached",
+      spoken: "time limit reached, awaiting Vercel status",
+      detail:
+        "The time limit has passed. Waiting for Vercel to report the sandbox's state; uncommitted files will be lost when it stops.",
       final: false,
     };
   }
@@ -900,7 +918,8 @@ function VercelExpiryIndicator({
     hostId: string;
     observedAt: number;
     value: Load<MachineStatus>;
-    stoppedReads: number;
+    summary: string | null;
+    endedReads: number;
   } | null>(null);
   useEffect(() => {
     if (hostId === null) return;
@@ -908,13 +927,14 @@ function VercelExpiryIndicator({
     rpc.call("machine.inspect", { hostId }).then(
       (result) => {
         if (!active) return;
-        const stopped = STOPPED_STATES.has(result.values.state);
+        const ended = ENDED_STATES.has(result.values.state);
         setInspection((previous) => ({
           hostId,
           observedAt: Date.now(),
           value: { status: "ready", data: result.values },
-          stoppedReads: stopped
-            ? (previous?.hostId === hostId ? previous.stoppedReads : 0) + 1
+          summary: result.summary,
+          endedReads: ended
+            ? (previous?.hostId === hostId ? previous.endedReads : 0) + 1
             : 0,
         }));
       },
@@ -924,7 +944,8 @@ function VercelExpiryIndicator({
           hostId,
           observedAt: Date.now(),
           value: { status: "error" },
-          stoppedReads: previous?.hostId === hostId ? previous.stoppedReads : 0,
+          summary: null,
+          endedReads: previous?.hostId === hostId ? previous.endedReads : 0,
         }));
       },
     );
@@ -935,15 +956,29 @@ function VercelExpiryIndicator({
   const current =
     inspection !== null && inspection.hostId === hostId ? inspection : null;
   const machine: Load<MachineStatus> = current?.value ?? { status: "pending" };
-  const awaitingStopConfirmation = current?.stoppedReads === 1;
+  const awaitingEndConfirmation = current?.endedReads === 1;
   useEffect(() => {
-    if (!awaitingStopConfirmation) return;
+    if (!awaitingEndConfirmation) return;
     const timer = setTimeout(
       () => setConfirmKey((value) => value + 1),
       STOP_CONFIRM_MS,
     );
     return () => clearTimeout(timer);
-  }, [awaitingStopConfirmation]);
+  }, [awaitingEndConfirmation]);
+  const deadline =
+    machine.status === "ready" && !ENDED_STATES.has(machine.data.state)
+      ? machine.data.expiresAt
+      : null;
+  const observedAt = current?.observedAt ?? null;
+  useEffect(() => {
+    if (deadline === null || observedAt === null || observedAt > deadline)
+      return;
+    const timer = setTimeout(
+      () => setConfirmKey((value) => value + 1),
+      Math.max(0, deadline - Date.now()) + DEADLINE_OBSERVATION_DELAY_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [deadline, observedAt]);
   const counting =
     machine.status === "ready" &&
     machine.data.state === "running" &&
@@ -953,7 +988,7 @@ function VercelExpiryIndicator({
   const view = expiryView(
     resolution,
     machine,
-    (current?.stoppedReads ?? 0) >= 2,
+    (current?.endedReads ?? 0) >= 2,
     now,
   );
   if (view === null) return null;
@@ -970,6 +1005,10 @@ function VercelExpiryIndicator({
           size: sizeLabel(machine.data.vcpus, machine.data.memoryMiB),
           name: machine.data.sandboxName,
         }
+      : null;
+  const guidance =
+    machine.status === "ready" && machine.data.state === "missing"
+      ? (current?.summary ?? null)
       : null;
   return (
     <DropdownMenu
@@ -1011,6 +1050,11 @@ function VercelExpiryIndicator({
         >
           {view.detail}
         </p>
+        {guidance === null || guidance === "" ? null : (
+          <p className="max-w-72 whitespace-normal px-2 pb-1.5 text-xs leading-relaxed text-muted-foreground">
+            {guidance}
+          </p>
+        )}
         {details === null ? null : (
           <p className="flex max-w-72 flex-col gap-0.5 px-2 pb-1.5 text-xs text-muted-foreground">
             <span>{details.size}</span>
