@@ -89,6 +89,17 @@ hostId, providerId, projectId, parentThreadId, groupBy })`.
 - Input sent while a turn is starting stays queued with
   `waitingOn.kind: "turn-starting"`. The `turn/started` event wakes it and
   steers it into that turn. Do not resend it.
+- `bb thread provider-action [id] --action <provider-action-id> --request-id UUID`
+  invokes an action defined and allowlisted by the thread's provider. The target
+  must already have a live idle session; this command never wakes a stopped
+  runtime or starts an agent turn. Generate a UUID for a new operation and reuse
+  that same UUID and action for retries. Providers must make each action
+  idempotent by request UUID: after an uncertain transport failure, a retry may
+  reach the provider again. BB records generic pending and completed
+  `system/provider-action` events; the completed event's sequence is the replay
+  boundary. The SDK and `--json` return `{ result, boundarySequence }`. Pending
+  operations block turn dispatch until a retry completes them. The event store
+  and provider store are not one atomic transaction.
 - If the target thread is awaiting user interaction (an open question or
   approval), `bb thread tell` cannot interrupt it. The message joins the
   thread's queue with `waitingOn.kind: "interaction"` and dispatches once the

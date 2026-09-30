@@ -1,5 +1,11 @@
 # APIs To Audit
 
+## `sdk.threads.experimental_providerAction`
+
+`experimental_providerAction({ threadId, action, requestId })` invokes an action identifier defined and allowlisted by the thread's provider. BB core validates the bounded action name and UUID, resolves the provider from the stored thread, requires an already-live idle session, and never wakes a stopped runtime. Providers advertise support during bridge initialization and own the action allowlist and meaning. The provider contract requires idempotency by request UUID: after an uncertain transport failure, a caller retries with the same UUID and action; BB persists a generic pending `system/provider-action` event and leaves it pending until retry succeeds. A completed UUID returns its original JSON result and event sequence; reusing the UUID for another action conflicts. Pending operations block turn admission and queued dispatch. The response is `{ result, boundarySequence }`, where the completed event sequence is the replay boundary after host events are flushed. Provider state and BB's event store are not committed in one cross-store atomic transaction. The CLI exposes the same generic operation through `bb thread provider-action [id] --action <provider-action-id> --request-id UUID`.
+
+Before stabilization, audit provider capability negotiation and allowlist enforcement, idempotent retries after process/server restart, concurrent turn/action admission, event-flush ordering before the replay boundary, bounded result validation, and explicit recovery UX for pending operations.
+
 ## `app.commands.register`
 
 `app.commands.register` requires SDK 0.4.91; `defaultShortcut` and keyboard
@@ -3583,4 +3589,3 @@ the legacy section or the general thread list, unpinned. The composer sends
 this placement with normal and scheduled creation. Audit pinned groups, custom sections, project/machine groups,
 route transitions, draft recovery, and third-party sidebar compatibility
 before stabilizing this option.
-

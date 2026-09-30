@@ -1,11 +1,6 @@
 #!/usr/bin/env node
 
-import {
-  existsSync,
-  mkdirSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -37,6 +32,8 @@ import {
   threadResumeParamsSchema,
   threadStartParamsSchema,
   threadStopParamsSchema,
+  threadProviderActionParamsSchema,
+  threadProviderActionSupportParamsSchema,
   turnStartParamsSchema,
   turnSteerParamsSchema,
   type BridgeToolCallRequest,
@@ -121,6 +118,14 @@ const piCommandSchema = z.discriminatedUnion("method", [
   z.object({
     method: z.literal("thread/stop"),
     params: threadStopParamsSchema,
+  }),
+  z.object({
+    method: z.literal("thread/provider/actions"),
+    params: threadProviderActionSupportParamsSchema,
+  }),
+  z.object({
+    method: z.literal("thread/provider/action"),
+    params: threadProviderActionParamsSchema,
   }),
   z.object({
     method: z.literal("thread/discard"),
@@ -438,6 +443,7 @@ function createOnExtensionUiRequest(
   return (request) => {
     const threadSession = getCurrentThreadSession(args);
     if (!threadSession || threadSession.closing) return;
+    if (threadSession.session.handleTodoResetNotification(request)) return;
     extensionUi.handle({
       scope: threadSession,
       request,
@@ -522,6 +528,7 @@ async function handleRequest(
           threadArchive: false,
           threadRename: false,
           threadGoalClear: false,
+          threadProviderAction: true,
           fork: "checkpoint",
           approvalEnforcedBy: "runtime",
           grammarVersions: [THREAD_DELTA_GRAMMAR_V3, THREAD_DELTA_GRAMMAR_V3],
@@ -579,6 +586,50 @@ async function handleRequest(
     case "thread/stop":
       await handleThreadStop(request.id, request.params);
       break;
+    case "thread/provider/actions": {
+      const threadSession = sessions.get(request.params.threadId);
+      const available =
+        threadSession !== undefined &&
+        !threadSession.closing &&
+        threadSession.providerThreadId === request.params.providerThreadId &&
+        (await threadSession.session.supportsTodoReset());
+      sendResult(request.id, {
+        actions: available ? ["pi-todo.reset"] : [],
+      });
+      break;
+    }
+    case "thread/provider/action": {
+      if (request.params.action !== "pi-todo.reset") {
+        sendError(request.id, -32602, "Unsupported Pi provider action");
+        break;
+      }
+      const threadSession = sessions.get(request.params.threadId);
+      if (
+        !threadSession ||
+        threadSession.closing ||
+        threadSession.providerThreadId !== request.params.providerThreadId
+      ) {
+        sendError(
+          request.id,
+          -32000,
+          "No matching live Pi session for provider action",
+        );
+        break;
+      }
+      try {
+        const result = await threadSession.session.resetTodo(
+          request.params.requestId,
+        );
+        sendResult(request.id, result);
+      } catch (error) {
+        sendError(
+          request.id,
+          -32000,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+      break;
+    }
     case "thread/discard":
       sendResult(request.id, await handleThreadDiscard(request.params));
       break;
@@ -875,7 +926,9 @@ async function handleThreadConstruction(
     threadId: providerThreadId,
   });
   const relocate = piSessionNeedsRelocation(sourceFile, params.cwd);
-  const nextProviderThreadId = relocate ? `pi_${randomUUID()}` : providerThreadId;
+  const nextProviderThreadId = relocate
+    ? `pi_${randomUUID()}`
+    : providerThreadId;
   const targetFile = resolvePiSessionFilePath({
     env: process.env,
     threadId: nextProviderThreadId,

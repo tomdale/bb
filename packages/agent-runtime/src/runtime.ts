@@ -4,6 +4,7 @@ import { z } from "zod";
 import {
   normalizeProviderThreadNameEvent,
   toProviderExternalThreadName,
+  jsonValueSchema,
 } from "@bb/domain";
 import type { DynamicTool, InstructionMode, ThreadEvent } from "@bb/domain";
 import type { AdapterCommand } from "./provider-adapter.js";
@@ -15,6 +16,7 @@ import {
   providerUsageResultSchema,
   ThreadEventGrammar,
   threadIdentityResultSchema,
+  threadProviderActionSupportResultSchema,
 } from "@bb/provider-bridge-protocol";
 import {
   JsonRpcResponseError,
@@ -303,6 +305,7 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
   }, options.turnStartWatchdog?.intervalMs ?? 15_000);
   turnStartWatchdogTimer.unref?.();
   const threadOperationCounts = new Map<string, number>();
+  const threadsRunningProviderAction = new Set<string>();
   const stagedThreadRewinds = new Map<string, StagedThreadRewind>();
   const suppressedThreadEventIds = new Set<string>();
   const threadGoalState = new RuntimeThreadGoalState();
@@ -787,6 +790,7 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
 
   function assertThreadCanStartTurn(threadId: string): void {
     if (
+      threadsRunningProviderAction.has(threadId) ||
       turnState.getActiveTurnId(threadId) !== null ||
       pendingTurnStarts.has(threadId)
     ) {
@@ -2255,6 +2259,85 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
       });
     },
 
+    async listThreadProviderActions({ threadId }) {
+      return runThreadOperation({
+        threadId,
+        work: async () => {
+          const providerId =
+            threadIdentityRegistry.resolveProviderForThread(threadId);
+          if (
+            turnState.getActiveTurnId(threadId) !== null ||
+            pendingTurnStarts.has(threadId)
+          ) {
+            throw new Error(
+              "Provider action discovery requires an idle thread",
+            );
+          }
+          const proc = requireProviderProcessForThread(threadId);
+          const command: AdapterCommand = {
+            type: "thread/provider/actions",
+            threadId,
+            providerThreadId: requireProviderThreadId(threadId),
+          };
+          const plan = requireProviderRequestPlan({
+            commandType: command.type,
+            plan: proc.adapter.buildCommandPlan(command),
+            providerId,
+          });
+          const result = await sendCommand({
+            proc,
+            message: plan,
+            resultSchema: threadProviderActionSupportResultSchema,
+          });
+          return result.actions;
+        },
+      });
+    },
+
+    async runThreadProviderAction({ threadId, action, requestId }) {
+      return runThreadOperation({
+        threadId,
+        work: async () => {
+          if (threadsRunningProviderAction.has(threadId)) {
+            throw new Error(`Provider action ${action} is already running`);
+          }
+          threadsRunningProviderAction.add(threadId);
+          try {
+            const providerId =
+              threadIdentityRegistry.resolveProviderForThread(threadId);
+            if (
+              turnState.getActiveTurnId(threadId) !== null ||
+              pendingTurnStarts.has(threadId)
+            ) {
+              throw new Error(
+                `Provider action ${action} requires an idle thread`,
+              );
+            }
+            const proc = requireProviderProcessForThread(threadId);
+            const adapterCommand: AdapterCommand = {
+              type: "thread/provider/action",
+              threadId,
+              providerThreadId: requireProviderThreadId(threadId),
+              action,
+              requestId,
+            };
+            const cmd = requireProviderRequestPlan({
+              commandType: adapterCommand.type,
+              plan: proc.adapter.buildCommandPlan(adapterCommand),
+              providerId,
+            });
+            return await sendCommand({
+              proc,
+              message: cmd,
+              resultSchema: jsonValueSchema,
+            });
+          } finally {
+            threadsRunningProviderAction.delete(threadId);
+          }
+        },
+      });
+    },
+
     async clearThreadGoal({ threadId }) {
       return runThreadOperation({
         threadId,
@@ -2580,6 +2663,7 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
       idleProviderSessionSinceMsByThreadId.clear();
       pendingTurnStarts.clear();
       threadOperationCounts.clear();
+      threadsRunningProviderAction.clear();
       threadGoalState.clear();
       turnState.clear();
       backgroundWorkState.clear();

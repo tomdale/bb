@@ -50,6 +50,7 @@ import type {
 import { ApiError, TurnStartGuardError } from "../../errors.js";
 import type { AppDeps } from "../../types.js";
 import { parseStoredEventPayload } from "./thread-data.js";
+import { getProviderActionState } from "./provider-action.js";
 import type { DbNotifier, DbQueryConnection, DbTransaction } from "@bb/db";
 import type { AppendStoredThreadEventArgs as AppendThreadEventArgs } from "@bb/db";
 
@@ -537,6 +538,13 @@ export function appendPreparedClientTurnRequestedEventWithNotificationInTransact
   db: DbTransaction,
   args: PreparedClientTurnRequestedEventArgs,
 ): AppendedClientTurnRequestWithNotification {
+  if (getProviderActionState(db, args.threadId).pending !== null) {
+    throw new ApiError(
+      409,
+      "invalid_request",
+      "A provider action is pending; retry it before sending another turn",
+    );
+  }
   const result = appendThreadEventInTransactionWithAttention(
     db,
     buildClientTurnRequestedEventArgs(args),

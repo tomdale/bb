@@ -363,6 +363,12 @@ export function createFakeRuntime() {
       providerSessionsByThreadId.delete(args.threadId);
       return { providerCheckpointId: null };
     },
+    async listThreadProviderActions() {
+      return ["generic.action"];
+    },
+    async runThreadProviderAction() {
+      return { nextId: 2 };
+    },
     async clearThreadGoal() {
       return { cleared: true };
     },

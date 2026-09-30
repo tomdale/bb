@@ -68,7 +68,10 @@ import {
 import { validatePromptAttachmentReferences } from "../projects/attachments.js";
 import { resolvePluginMentionContextInputs } from "../plugins/plugin-mentions.js";
 import { clearThreadContext } from "./thread-context-clear.js";
-import { withThreadSendGuard } from "./thread-context-mutation-guard.js";
+import {
+  withThreadOperationGuard,
+  withThreadSendGuard,
+} from "./thread-context-mutation-guard.js";
 import {
   prependDeferredFirstTurnContext,
   requireDeferredFirstTurnContextCurrent,
@@ -471,8 +474,10 @@ export async function sendThreadMessage(
     });
     return;
   }
-  return withThreadSendGuard(args.thread.id, () =>
-    sendThreadMessageWithoutContextClear(deps, args),
+  return withThreadOperationGuard(args.thread.id, () =>
+    withThreadSendGuard(args.thread.id, () =>
+      sendThreadMessageWithoutContextClear(deps, args),
+    ),
   );
 }
 

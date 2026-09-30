@@ -119,6 +119,27 @@ export interface PiRpcSessionState {
   isStreaming: boolean;
   isCompacting: boolean;
   sessionFile?: string;
+  sessionId?: string;
+  pendingMessageCount?: number;
+}
+
+function isTodoResetCommandAvailable(value: unknown): boolean {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    !("commands" in value) ||
+    !Array.isArray(value.commands)
+  )
+    return false;
+  return value.commands.some(
+    (command: unknown) =>
+      command !== null &&
+      typeof command === "object" &&
+      "name" in command &&
+      command.name === "todo-clear-bridge" &&
+      "source" in command &&
+      command.source === "extension",
+  );
 }
 
 export class PiRpcSession {
@@ -137,6 +158,11 @@ export class PiRpcSession {
   private terminalSteerSettlement: Promise<void> | null = null;
   private readonly pendingRunSettlements: PendingRunSettlement[] = [];
   private readonly channelReplies = new Map<string, ChannelReply>();
+  private pendingTodoReset: {
+    requestId: string;
+    resolve: (nextId: number) => void;
+    reject: (error: Error) => void;
+  } | null = null;
   private nextChannelRequestId = 0;
   private lastKnownLeafId: string | null = null;
   private readonly agentEndLeafReports: (string | null)[] = [];
@@ -322,6 +348,113 @@ export class PiRpcSession {
     const state = (data ?? {}) as PiRpcSessionState;
     this.liveModel = state.model;
     return state;
+  }
+
+  async supportsTodoReset(): Promise<boolean> {
+    const child = this.child;
+    if (
+      !child ||
+      child.exited ||
+      this.closed ||
+      this.isProcessing ||
+      this.isCompacting
+    ) {
+      return false;
+    }
+    const state = await this.getState();
+    if (
+      this.child !== child ||
+      this.isProcessing ||
+      this.isCompacting ||
+      state.isStreaming ||
+      state.isCompacting ||
+      (state.pendingMessageCount ?? 0) > 0 ||
+      !state.sessionId ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        state.sessionId,
+      )
+    ) {
+      return false;
+    }
+    return isTodoResetCommandAvailable(
+      await child.requestOk({ type: "get_commands" }),
+    );
+  }
+
+  async resetTodo(requestId: string): Promise<{ nextId: number }> {
+    if (this.pendingTodoReset) {
+      throw new Error("Pi Todo reset is already in progress");
+    }
+    const child = this.requireChild();
+    const state = await this.getState();
+    if (
+      this.child !== child ||
+      this.isProcessing ||
+      this.isCompacting ||
+      state.isStreaming ||
+      state.isCompacting ||
+      (state.pendingMessageCount ?? 0) > 0 ||
+      !state.sessionId ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        state.sessionId,
+      )
+    ) {
+      throw new Error("Pi Todo reset requires an idle live Pi session");
+    }
+    const commands = await child.requestOk({ type: "get_commands" });
+    if (!isTodoResetCommandAvailable(commands)) {
+      throw new Error("Pi Todo reset extension is unavailable in this session");
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const completion = new Promise<number>((resolve, reject) => {
+      this.pendingTodoReset = { requestId, resolve, reject };
+      timer = setTimeout(
+        () => reject(new Error("Pi Todo reset confirmation timed out")),
+        10_000,
+      );
+      timer.unref?.();
+    });
+    void completion.catch(() => undefined);
+    try {
+      await child.requestOk(
+        {
+          type: "prompt",
+          message: `/todo-clear-bridge ${state.sessionId} ${requestId}`,
+        },
+        10_000,
+      );
+      const nextId = await completion;
+      if (this.child !== child) {
+        throw new Error("Pi session changed during Todo reset");
+      }
+      return { nextId };
+    } finally {
+      if (timer) clearTimeout(timer);
+      this.pendingTodoReset = null;
+    }
+  }
+
+  handleTodoResetNotification(request: Record<string, unknown>): boolean {
+    const pending = this.pendingTodoReset;
+    if (
+      !pending ||
+      request.method !== "notify" ||
+      typeof request.message !== "string"
+    )
+      return false;
+    const prefix = `pi-todo-clear-bridge:v1:${pending.requestId}:`;
+    if (!request.message.startsWith(prefix)) return false;
+    const result = request.message.slice(prefix.length);
+    const match = /^ok:([1-9][0-9]*)$/.exec(result);
+    const nextId = match ? Number(match[1]) : NaN;
+    if (match && Number.isSafeInteger(nextId)) pending.resolve(nextId);
+    else if (/^error:(session|busy|empty|write)$/.test(result))
+      pending.reject(new Error(`Pi Todo reset failed: ${result.slice(6)}`));
+    else
+      pending.reject(
+        new Error("Pi Todo reset returned an invalid confirmation"),
+      );
+    return true;
   }
 
   prompt(text: string, images?: ImageContent[]): PiInputDispatch {
@@ -757,6 +890,8 @@ export class PiRpcSession {
   }
 
   private handleExit(info: PiRpcChildExitInfo): void {
+    this.pendingTodoReset?.reject(new PiRpcChildExitedError(info));
+    this.pendingTodoReset = null;
     this.ready.reject(new PiRpcChildExitedError(info));
     for (const [, reply] of this.channelReplies) {
       reply.reject(new PiRpcChildExitedError(info));

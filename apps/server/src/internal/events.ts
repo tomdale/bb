@@ -264,6 +264,7 @@ function resolveProviderIdentifiers(event: HostDaemonEventEnvelope["event"]): {
     case "system/manager/user_message":
     case "system/thread/interrupted":
     case "system/operation":
+    case "system/provider-action":
     case "system/interaction/lifecycle":
     case "system/permissionGrant/lifecycle":
     case "system/userQuestion/lifecycle":

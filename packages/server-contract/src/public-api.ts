@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { androidAppPrepareRequestSchema } from "./api/system.js";
 import {
   machineEnvironmentSetSchema,
@@ -59,6 +60,7 @@ import type {
   ResolvedThreadExecutionOptions,
   ThreadEventRow,
   ThreadQueuedMessage,
+  JsonValue,
 } from "@bb/domain";
 import {
   appSettingsUpdateSchema,
@@ -1484,6 +1486,23 @@ export const publicApiRoutes = {
       method: "post",
       request: noRequest<PathId>(),
       response: jsonResponse<{ ok: true }>(),
+    }),
+    experimental_providerAction: defineRoute({
+      path: "/threads/:id/provider-action",
+      method: "post",
+      request: jsonRequest<PathId, { action: string; requestId: string }>(
+        z
+          .object({
+            action: z
+              .string()
+              .min(1)
+              .max(128)
+              .regex(/^[a-z][a-z0-9.-]*$/u),
+            requestId: z.string().uuid(),
+          })
+          .strict(),
+      ),
+      response: jsonResponse<{ result: JsonValue; boundarySequence: number }>(),
     }),
     open: defineRoute({
       path: "/threads/:id/open",

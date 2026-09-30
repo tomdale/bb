@@ -243,6 +243,10 @@ function createFakeRuntime() {
       providerCheckpointId: null,
     })),
     clearThreadGoal: vi.fn(async () => ({ cleared: true })),
+    listThreadProviderActions: vi.fn(async () => ["generic.action"]),
+    runThreadProviderAction: vi.fn(async () => ({ accepted: true })),
+
+
     renameThread: vi.fn(async (_args: RenameThreadArgs) => undefined),
     archiveThread: vi.fn(async () => undefined),
     unarchiveThread: vi.fn(async () => undefined),

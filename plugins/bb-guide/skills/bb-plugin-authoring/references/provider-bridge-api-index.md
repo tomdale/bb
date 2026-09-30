@@ -181,6 +181,7 @@ Context breakdowns are optional snapshots on `contextWindow` deltas:
 - `threadEventSearchModeSchema`
 - `threadForkParamsSchema`
 - `threadGoalClearParamsSchema`
+- `threadProviderActionParamsSchema`
 - `threadIdentityEnvelopeSchema`
 - `threadNameSetParamsSchema`
 - `threadResumeParamsSchema`

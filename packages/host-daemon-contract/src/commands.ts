@@ -379,6 +379,22 @@ const threadGoalClearCommandSchema = hostDaemonThreadTargetSchema
   })
   .strict();
 
+const threadProviderActionsCommandSchema = hostDaemonThreadTargetSchema
+  .extend({ type: z.literal("thread.provider.actions") })
+  .strict();
+
+const threadProviderActionCommandSchema = hostDaemonThreadTargetSchema
+  .extend({
+    type: z.literal("thread.provider.action"),
+    action: z
+      .string()
+      .min(1)
+      .max(128)
+      .regex(/^[a-z][a-z0-9.-]*$/u),
+    requestId: z.string().uuid(),
+  })
+  .strict();
+
 const threadPlanCancelCommandSchema = hostDaemonThreadTargetSchema
   .extend({
     type: z.literal("thread.plan.cancel"),
@@ -1503,6 +1519,42 @@ export const hostDaemonCommandRegistry = {
     type: "thread.goal.clear",
     schema: threadGoalClearCommandSchema,
     resultSchema: z.object({ cleared: z.boolean() }).strict(),
+    transport: "settled",
+    retryable: false,
+    flushEventsBeforeResult: true,
+    envLane: "read",
+  }),
+  "thread.provider.actions": defineHostDaemonCommandDescriptor({
+    type: "thread.provider.actions",
+    schema: threadProviderActionsCommandSchema,
+    resultSchema: z
+      .object({
+        actions: z
+          .array(
+            z
+              .string()
+              .min(1)
+              .max(128)
+              .regex(/^[a-z][a-z0-9.-]*$/u),
+          )
+          .max(128),
+      })
+      .strict(),
+    transport: "settled",
+    retryable: false,
+    flushEventsBeforeResult: false,
+    envLane: "read",
+  }),
+  "thread.provider.action": defineHostDaemonCommandDescriptor({
+    type: "thread.provider.action",
+    schema: threadProviderActionCommandSchema,
+    resultSchema: jsonValueSchema.refine((value) => {
+      const serialized = JSON.stringify(value);
+      return (
+        serialized !== undefined &&
+        new TextEncoder().encode(serialized).byteLength <= 16 * 1024
+      );
+    }, "Provider action result must be bounded JSON"),
     transport: "settled",
     retryable: false,
     flushEventsBeforeResult: true,

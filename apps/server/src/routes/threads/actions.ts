@@ -4,6 +4,7 @@ import {
   getEnvironment,
   getQueuedThreadMessage,
   getThread,
+  getActiveStoredTurnId,
   listActiveVisiblePinnedThreadRootsWithPendingInteractionState,
   pinThread,
   reorderPinnedThread,
@@ -26,6 +27,7 @@ import {
 import type { Hono } from "hono";
 import {
   createStandaloneBuiltinCompactCommandInput,
+  threadScope,
   type Thread,
   type ThreadQueuedMessage,
 } from "@bb/domain";
@@ -61,7 +63,15 @@ import {
   dispatchThreadUnarchiveCommand,
   prepareTurnSubmitCommandPayload,
 } from "../../services/threads/thread-commands.js";
-import { getLastProviderThreadId } from "../../services/threads/thread-events.js";
+import {
+  appendThreadEvent,
+  appendThreadEventInTransaction,
+  getLastProviderThreadId,
+} from "../../services/threads/thread-events.js";
+import { getProviderActionState } from "../../services/threads/provider-action.js";
+import { createAsyncDeduper } from "../../services/lib/async-deduper.js";
+import { withThreadProviderActionGuard } from "../../services/threads/thread-context-mutation-guard.js";
+import { requestQueuedMessageDispatch } from "../../services/threads/queued-message-dispatch.js";
 import { stopThreadForCurrentState } from "../../services/threads/thread-lifecycle.js";
 import {
   buildThreadStatusChangeMetadata,
@@ -229,6 +239,11 @@ function assertPinnedThreadOrderResult(
       );
   }
 }
+
+const runProviderActionLocked = createAsyncDeduper<
+  string,
+  { result: import("@bb/domain").JsonValue; boundarySequence: number }
+>();
 
 export function registerThreadActionRoutes(app: Hono, deps: AppDeps): void {
   const { post, patch, del } = typedRoutes<PublicApiSchema>(app, {
@@ -435,6 +450,187 @@ export function registerThreadActionRoutes(app: Hono, deps: AppDeps): void {
       );
     }
     return context.json({ ok: true });
+  });
+
+  post(routes.experimental_providerAction, async (context, payload) => {
+    const threadId = context.req.param("id");
+    const response = await runProviderActionLocked.run(
+      `${threadId}:${payload.requestId}`,
+      () =>
+        withThreadProviderActionGuard(threadId, async () => {
+          const thread = requirePublicThread(deps.db, threadId);
+          const requestId = payload.requestId;
+          const previous = getProviderActionState(deps.db, thread.id);
+          const completed = previous.completed.get(requestId);
+          if (completed !== undefined) {
+            if (completed.action !== payload.action) {
+              throw new ApiError(
+                409,
+                "invalid_request",
+                "requestId was already used for a different provider action",
+              );
+            }
+            return {
+              result: completed.result,
+              boundarySequence: completed.boundarySequence,
+            };
+          }
+          if (
+            previous.pending !== null &&
+            previous.pending.requestId !== requestId
+          ) {
+            throw new ApiError(
+              409,
+              "invalid_request",
+              "A provider action is pending; retry with its requestId",
+            );
+          }
+          if (
+            previous.pending !== null &&
+            previous.pending.action !== payload.action
+          ) {
+            throw new ApiError(
+              409,
+              "invalid_request",
+              "Retry action does not match the pending provider action",
+            );
+          }
+          const environment = requireThreadHostCommandEnvironment({
+            db: deps.db,
+            thread,
+          });
+          requireConnectedHostSession(deps, environment.hostId);
+          if (thread.status !== "idle") {
+            throw new ApiError(
+              409,
+              "invalid_request",
+              "Provider actions require a live idle thread",
+            );
+          }
+          if (previous.pending === null) {
+            const support = await runLiveHostCommand(deps, {
+              command: {
+                type: "thread.provider.actions",
+                environmentId: environment.id,
+                threadId: thread.id,
+              },
+              hostId: environment.hostId,
+              timeoutMs: LIVE_DAEMON_COMMAND_TIMEOUT_MS,
+              preserveOnHostUnavailable: true,
+            });
+            if (!support.actions.includes(payload.action)) {
+              throw new ApiError(
+                400,
+                "invalid_request",
+                "The provider does not allow this action",
+              );
+            }
+            const statusAtAdmission = getThread(deps.db, thread.id);
+            if (
+              statusAtAdmission === null ||
+              statusAtAdmission.deletedAt !== null ||
+              statusAtAdmission.status !== "idle"
+            ) {
+              throw new ApiError(
+                409,
+                "invalid_request",
+                "Provider actions require a live idle thread",
+              );
+            }
+            deps.db.transaction(
+              (tx) => {
+                const latestThread = getThread(tx, thread.id);
+                if (
+                  latestThread === null ||
+                  latestThread.deletedAt !== null ||
+                  latestThread.status !== "idle" ||
+                  getActiveStoredTurnId(tx, thread.id) !== null
+                ) {
+                  throw new ApiError(
+                    409,
+                    "invalid_request",
+                    "Provider actions require a live idle thread",
+                  );
+                }
+                const latest = getProviderActionState(tx, thread.id);
+                if (latest.completed.has(requestId)) return;
+                if (
+                  latest.pending !== null &&
+                  latest.pending.requestId !== requestId
+                ) {
+                  throw new ApiError(
+                    409,
+                    "invalid_request",
+                    "A provider action is pending; retry with its requestId",
+                  );
+                }
+                if (
+                  latest.pending !== null &&
+                  latest.pending.action !== payload.action
+                ) {
+                  throw new ApiError(
+                    409,
+                    "invalid_request",
+                    "Retry action does not match the pending provider action",
+                  );
+                }
+                appendThreadEventInTransaction(tx, {
+                  threadId: thread.id,
+                  environmentId: thread.environmentId,
+                  type: "system/provider-action",
+                  scope: threadScope(),
+                  data: {
+                    action: payload.action,
+                    requestId,
+                    status: "pending",
+                  },
+                });
+              },
+              { behavior: "immediate" },
+            );
+            deps.hub.notifyThread(thread.id, ["events-appended"]);
+          }
+          const result = await runLiveHostCommand(deps, {
+            command: {
+              type: "thread.provider.action",
+              environmentId: environment.id,
+              threadId: thread.id,
+              action: payload.action,
+              requestId,
+            },
+            hostId: environment.hostId,
+            timeoutMs: LIVE_DAEMON_COMMAND_TIMEOUT_MS,
+            preserveOnHostUnavailable: true,
+          });
+          const alreadyCompleted = getProviderActionState(
+            deps.db,
+            thread.id,
+          ).completed.get(requestId);
+          const boundarySequence = alreadyCompleted
+            ? alreadyCompleted.boundarySequence
+            : appendThreadEvent(
+                { db: deps.db, hub: deps.hub },
+                {
+                  threadId: thread.id,
+                  environmentId: thread.environmentId,
+                  type: "system/provider-action",
+                  scope: threadScope(),
+                  data: {
+                    action: payload.action,
+                    requestId,
+                    status: "completed" as const,
+                    result: result as import("@bb/domain").JsonValue,
+                  },
+                },
+              );
+          requestQueuedMessageDispatch(deps, {
+            kind: "thread-ready",
+            threadId: thread.id,
+          });
+          return { result, boundarySequence };
+        }),
+    );
+    return context.json(response);
   });
 
   post(routes.clearGoal, async (context) => {

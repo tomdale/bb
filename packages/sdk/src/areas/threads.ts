@@ -554,6 +554,9 @@ export interface ThreadsArea {
   cancelPlan(args: ThreadActionArgs): Promise<ThreadBannerActionResult>;
   clearContext(args: ThreadActionArgs): Promise<ThreadBannerActionResult>;
   clearGoal(args: ThreadActionArgs): Promise<ThreadBannerActionResult>;
+  experimental_providerAction(
+    args: ThreadActionArgs & { action: string; requestId: string },
+  ): Promise<{ result: JsonValue; boundarySequence: number }>;
   conversationOutline(
     args: ThreadStatusArgs,
   ): Promise<ThreadConversationOutlineResult>;
@@ -1360,6 +1363,14 @@ export function createThreadsArea(args: CreateSdkAreaArgs): ThreadsArea {
         }),
       );
       return { ok: true };
+    },
+    async experimental_providerAction(input) {
+      return transport.readJson(
+        transport.api.v1.threads[":id"]["provider-action"].$post({
+          param: { id: input.threadId },
+          json: { action: input.action, requestId: input.requestId },
+        }),
+      );
     },
     async clearGoal(input) {
       await transport.readVoid(

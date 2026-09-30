@@ -1158,6 +1158,7 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
           "Read nullable threadStorageRootPath with sdk.hosts.get from the latest daemon session, even offline or without live threads; null before the first reported session",
           "Explicitly clean up unused provider-managed environments with sdk.environments.experimental_cleanup, overriding retention/keep policy and backoff; live threads prevent cleanup, already-removed environments succeed, and lifecycle fields report completion",
           "Read recorded context usage with sdk.threads.context({ threadId }); usage is null when unavailable, and its snapshot is present only when the latest measurement includes a breakdown",
+          "Invoke a provider-owned action on an already-live idle thread with sdk.threads.experimental_providerAction({ threadId, action, requestId }); the provider allowlists and defines action semantics, retries reuse the UUID, and the generic JSON result includes a durable event replay boundary",
           "Reach the same operations the [bb CLI](cli) and the bb UI use",
           "Have the threads it creates attributed back to the plugin",
           "Read the server's loopback URL, public app URL, and data directory when it needs server facts",
@@ -1170,6 +1171,7 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
           "EnvironmentsArea.experimental_cleanup",
           "PluginsArea.experimental_getSafeMode",
           "PluginsArea.experimental_setSafeMode",
+          "ThreadsArea.experimental_providerAction",
         ],
         firstParty: [
           "Automations",

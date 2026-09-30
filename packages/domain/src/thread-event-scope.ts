@@ -206,6 +206,11 @@ const threadEventScopeDefinitionByType = {
     rationale:
       "Thread-management operations use thread scope outside provider turns; tool-owned operations use turn scope so the operation stays with the tool call that caused it.",
   },
+  "system/provider-action": {
+    policy: "thread",
+    rationale:
+      "Provider actions are recorded as thread-scoped operation boundaries.",
+  },
   "system/interaction/lifecycle": {
     policy: "thread-or-turn",
     rationale:

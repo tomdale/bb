@@ -28,6 +28,7 @@ export const systemEventTypeValues = [
   "system/manager/user_message",
   "system/thread/interrupted",
   "system/operation",
+  "system/provider-action",
   "system/interaction/lifecycle",
   "system/permissionGrant/lifecycle",
   "system/userQuestion/lifecycle",
@@ -240,6 +241,34 @@ export const systemOperationEventDataSchema = z.object({
   operationId: z.string(),
   metadata: z.record(z.string(), jsonValueSchema).optional(),
 });
+
+const providerActionResultSchema = jsonValueSchema.refine((value) => {
+  const serialized = JSON.stringify(value);
+  return (
+    serialized !== undefined &&
+    new TextEncoder().encode(serialized).byteLength <= 16 * 1024
+  );
+}, "Provider action result must be bounded JSON");
+
+export const systemProviderActionEventDataSchema = z
+  .object({
+    action: z
+      .string()
+      .min(1)
+      .max(128)
+      .regex(/^[a-z][a-z0-9.-]*$/u),
+    requestId: z.string().uuid(),
+    status: z.enum(["pending", "completed"]),
+    result: providerActionResultSchema.optional(),
+  })
+  .superRefine((event, ctx) => {
+    if ((event.status === "completed") !== (event.result !== undefined)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Only a completed provider action has a result",
+      });
+    }
+  });
 
 export const systemInteractionLifecycleEventDataSchema = z.object({
   interaction: interactionLifecycleSchema,

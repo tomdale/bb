@@ -265,6 +265,12 @@ function createFakeRuntime(): AgentRuntime {
     async stopThread() {
       return { providerCheckpointId: null };
     },
+    async listThreadProviderActions() {
+      return ["generic.action"];
+    },
+    async runThreadProviderAction() {
+      return { nextId: 2 };
+    },
     async clearThreadGoal() {
       return { cleared: true };
     },

@@ -6,6 +6,7 @@ import {
   systemPermissionGrantLifecycleEventDataSchema,
   systemLegacyUserMessageEventDataSchema,
   systemOperationEventDataSchema,
+  systemProviderActionEventDataSchema,
   systemProviderTurnWatchdogEventDataSchema,
   systemThreadProvisioningEventDataSchema,
   systemUserQuestionLifecycleEventDataSchema,
@@ -757,6 +758,12 @@ const unscopedSystemEventSchema = z.discriminatedUnion("type", [
       threadId: z.string(),
     })
     .merge(systemOperationEventDataSchema),
+  z
+    .object({
+      type: z.literal("system/provider-action"),
+      threadId: z.string(),
+    })
+    .merge(systemProviderActionEventDataSchema),
   z
     .object({
       type: z.literal("system/interaction/lifecycle"),

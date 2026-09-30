@@ -5,6 +5,7 @@ import type {
   DynamicTool,
   InstructionMode,
   JsonObject,
+  JsonValue,
   PendingInteractionCreate,
   PendingInteractionResolution,
   PromptInput,
@@ -267,6 +268,12 @@ interface ClearThreadGoalArgs {
   threadId: string;
 }
 
+interface ThreadProviderActionArgs {
+  threadId: string;
+  action: string;
+  requestId: string;
+}
+
 interface ArchiveThreadArgs {
   bridgeLaunch: AgentRuntimeBridgeLaunch;
   providerId: string;
@@ -317,6 +324,10 @@ export interface AgentRuntime {
   stopThread(args: StopThreadArgs): Promise<StopThreadResult>;
 
   clearThreadGoal(args: ClearThreadGoalArgs): Promise<{ cleared: boolean }>;
+
+  listThreadProviderActions(args: { threadId: string }): Promise<string[]>;
+
+  runThreadProviderAction(args: ThreadProviderActionArgs): Promise<JsonValue>;
 
   renameThread(args: RenameThreadArgs): Promise<void>;
 
