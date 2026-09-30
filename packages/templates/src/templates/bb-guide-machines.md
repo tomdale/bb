@@ -501,7 +501,9 @@ run `vc login` and `vc link --cwd /absolute/directory`, then connect with
 --json`. Check `bb vercel-sandbox account inspect --json`. Authentication stays on
 that machine; recorded allocations pin the original account and linked scope.
 Matching records without CLI identity require explicit
-`account connect --adopt-legacy-allocations` consent after inspecting their count.
+`account connect --adopt-legacy-allocations --expected-account ACCOUNT
+--expected-team TEAM --expected-project PROJECT --expected-count COUNT` consent
+with the same host/directory and IDs/count from inspection.
 Create with `bb machine create --provider vercel-sandbox --inputs
 '{"vcpus":2,"timeoutMinutes":30}' --json`, or spawn with
 `--environment-provider vercel-sandbox --machine-inputs` for a project checkout.

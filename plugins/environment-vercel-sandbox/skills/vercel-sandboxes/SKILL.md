@@ -32,7 +32,9 @@ team, and project. Connect affects future launches; retries and cleanup use the
 recorded connection. Restore its original CLI login and project link if they change.
 Allocations recorded without CLI identity require explicit migration consent:
 inspect the matching unbound count, verify you have authority for their recorded
-team/project, then connect with `--adopt-legacy-allocations`. This authorizes the
+team/project, then connect the same host/directory with `--adopt-legacy-allocations
+--expected-account ACCOUNT --expected-team TEAM --expected-project PROJECT
+--expected-count COUNT`, using the inspected IDs and positive count. This authorizes the
 currently verified CLI account once; historical account identity is unavailable.
 Ordinary connect leaves these allocations unbound. Confirmed bindings persist and
 cannot be reassigned by reconnect. An interrupted migration reports its confirmed
@@ -78,8 +80,11 @@ requires operator investigation.
 
 CLI commands have typed RPC equivalents in `vercelRpcContract` (`rpc.ts`):
 `account.inspect` and `launch.options` take `{}`, `machine.inspect` takes `{hostId}`,
-and `account.connect` takes `{hostId,directory,adoptLegacyAllocations?}` with adoption
-defaulting to false. Inspect/connect return sanitized connection IDs, availability,
+and `account.connect` takes
+`{hostId,directory,adoptLegacyAllocations?,expectedLegacyIdentity?}`. Adoption defaults
+to false. Adoption requires `expectedLegacyIdentity:{accountId,teamId,projectId,count}`
+from inspection; ordinary connect uses null. Inspect/connect return sanitized
+connection IDs, nullable display-only `accountName` username, availability,
 unbound matching allocation count, and confirmed adoption count. Call
 `sdk.plugins.callRpc` with plugin ID `environment-vercel-sandbox` and the matching
 output schema. Core SDK launches use

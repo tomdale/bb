@@ -45,7 +45,9 @@ Vercel Sandbox connection and launch commands are documented in
 the selected persistent machine's CLI login and linked project, then saves the
 future allocation connection. Run `vc login` and `vc link` on that machine first.
 Matching recorded allocations without CLI identity require explicit
-`--adopt-legacy-allocations` consent; inspect/connect report matching unbound and
+`--adopt-legacy-allocations --expected-account ACCOUNT --expected-team TEAM
+--expected-project PROJECT --expected-count COUNT` consent with the IDs/count
+from inspection; inspect/connect report matching unbound and
 confirmed adopted counts. `bb vercel-sandbox account inspect [--json]` checks CLI
 identity, linked scope, OIDC authentication, and scoped listing
 without allocation. `bb vercel-sandbox launch options [--json]` reads defaults

@@ -967,7 +967,9 @@ enrolled machine, run `vc login` and `vc link --cwd /absolute/directory`, then
 [--json]`. The CLI owns OAuth/OIDC on that machine. Plugin settings retain
 `defaultVcpus` (2) and `defaultTimeoutMinutes` (30). Existing allocations pin their
 original connection; records without CLI identity require explicit
-`account connect --adopt-legacy-allocations` consent for the matching scope. `bb vercel-sandbox account inspect
+`account connect --adopt-legacy-allocations --expected-account ACCOUNT
+--expected-team TEAM --expected-project PROJECT --expected-count COUNT` consent
+with the same host/directory and IDs/count from inspection. `bb vercel-sandbox account inspect
 [--json]` checks authenticated listing without allocating compute; successful
 listing does not prove create permission or plan capacity. `bb vercel-sandbox
 launch options [--json]` reads launch defaults, and `bb vercel-sandbox machine
