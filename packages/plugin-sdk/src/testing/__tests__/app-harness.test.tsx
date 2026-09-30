@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import { useEffect, useState } from "react";
-import { cleanup, fireEvent, render, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  within,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import type {
@@ -8,6 +14,7 @@ import type {
   PluginComposerScope,
   PluginMessageDirectiveProps,
   PluginNavPanelProps,
+  NewThreadRequest,
   ExperimentalPluginFixedTabReference,
 } from "../../app-contract.js";
 import {
@@ -23,6 +30,7 @@ const {
   definePluginApp,
   experimental_FileLink: FileLink,
   UrlLink: UrlLink,
+  experimental_NewThreadComposer: NewThreadComposer,
   experimental_ProviderModelPicker: ProviderModelPicker,
   experimental_PermissionModePicker: PermissionModePicker,
   experimental_useAppPanel,
@@ -537,6 +545,83 @@ function NavigationProbe({ id }: { id: string }) {
     </button>
   );
 }
+
+describe("new-thread composer test runtime", () => {
+  it("enforces submit labels, disabled state, guard, stale draft checks, and default props", async () => {
+    const submitted: NewThreadRequest[] = [];
+    const gate: { resolve?: (value: boolean) => void } = {};
+    const root = render(
+      <NewThreadComposer
+        initialPrompt="first"
+        experimental_submitLabel="Create workstream"
+        experimental_onBeforeSubmit={async () =>
+          new Promise<boolean>((resolve) => {
+            gate.resolve = resolve;
+          })
+        }
+        onSubmit={(request) => {
+          submitted.push(request);
+        }}
+      />,
+    );
+    const input = root.getByTestId("bb-new-thread-composer-input");
+    const button = root.getByRole("button", { name: "Create workstream" });
+    fireEvent.click(button);
+    fireEvent.change(input, { target: { value: "newer" } });
+    await act(async () => {
+      gate.resolve?.(true);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(submitted).toHaveLength(0);
+    expect((input as HTMLTextAreaElement).value).toBe("newer");
+
+    root.rerender(
+      <NewThreadComposer
+        initialPrompt="first"
+        experimental_submitLabel="Send message"
+        experimental_submitDisabled
+        experimental_placementVisibility="hidden"
+        experimental_executionControlsVisibility="hidden"
+        onSubmit={(request) => {
+          submitted.push(request);
+        }}
+      />,
+    );
+    expect(
+      root
+        .getByTestId("bb-new-thread-composer")
+        .getAttribute("data-placement-visibility"),
+    ).toBe("hidden");
+    expect(
+      root
+        .getByTestId("bb-new-thread-composer")
+        .getAttribute("data-execution-controls-visibility"),
+    ).toBe("hidden");
+    expect(
+      (root.getByRole("button", { name: "Send message" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    fireEvent.click(root.getByRole("button", { name: "Send message" }));
+    expect(submitted).toHaveLength(0);
+
+    root.rerender(
+      <NewThreadComposer
+        initialPrompt="first"
+        onSubmit={(request) => {
+          submitted.push(request);
+        }}
+      />,
+    );
+    expect(
+      (root.getByRole("button", { name: "Start thread" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+    fireEvent.click(root.getByRole("button", { name: "Start thread" }));
+    await vi.waitFor(() => expect(submitted).toHaveLength(1));
+    root.unmount();
+  });
+});
 
 describe("sidebar navigation test runtime", () => {
   it("reports configured items and records every action", () => {

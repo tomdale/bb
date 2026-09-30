@@ -2485,7 +2485,9 @@ export interface PluginComposerApi {
    * Rejects when the composer refused to submit — a scope with no submit
    * pipeline (a queued-message editor, a side chat), an empty draft, or a
    * composer that is not ready (still loading its execution defaults, missing
-   * an environment). The rejection's message is safe to show to the user.
+   * an environment), a plugin pre-submit guard returned `false` or rejected,
+   * or the draft changed while that guard was pending. The rejection's message
+   * is safe to show to the user.
    * Failures of the underlying request are reported by bb's own submit error
    * handling and restore the draft, exactly as an interactive failure does.
    *
@@ -2940,6 +2942,18 @@ export interface NewThreadComposerProps {
    * user typed.
    */
   onSubmit: (request: NewThreadRequest) => void | Promise<void>;
+  /** Overrides the visible native submit caption and its accessible name. Experimental: see docs/api_to_audit.md. */
+  experimental_submitLabel?: string;
+  /** Disables native click, touch, Enter, and programmatic submission in addition to host validation. Experimental: see docs/api_to_audit.md. */
+  experimental_submitDisabled?: boolean;
+  /** Runs against the current request before draft clearing or `onSubmit`; return false or reject to preserve the draft and block submission. Programmatic `experimental_submit` rejects when blocked. Experimental: see docs/api_to_audit.md. */
+  experimental_onBeforeSubmit?: (
+    request: NewThreadRequest,
+  ) => boolean | void | Promise<boolean | void>;
+  /** Hides the native project/environment placement row while retaining permission controls. Experimental: see docs/api_to_audit.md. */
+  experimental_placementVisibility?: "visible" | "hidden";
+  /** Hides provider, model, reasoning, service-tier, and permission controls while retaining the prompt and its native capabilities. Experimental: see docs/api_to_audit.md. */
+  experimental_executionControlsVisibility?: "visible" | "hidden";
 }
 
 /**

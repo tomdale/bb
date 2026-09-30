@@ -27,6 +27,7 @@ export function ComposerEditorSlot({
   scrollContainerRef,
   inputLocked,
   isCompactLayout,
+  compactActionsInFlow = false,
   minHeight,
   layout,
   resolveMentionLink,
@@ -35,6 +36,7 @@ export function ComposerEditorSlot({
   scrollContainerRef: RefObject<HTMLDivElement | null>;
   inputLocked: boolean;
   isCompactLayout: boolean;
+  compactActionsInFlow?: boolean;
   minHeight: number;
   layout: ComposerEditorLayout;
   resolveMentionLink: PromptMentionLinkResolver | undefined;
@@ -49,6 +51,7 @@ export function ComposerEditorSlot({
         COARSE_POINTER_TEXT_BASE_CLASS,
         "leading-relaxed",
         isCompactLayout && "h-12 overflow-hidden pb-0 pr-14 pt-0",
+        isCompactLayout && compactActionsInFlow && "pr-2",
       )}
       style={{
         minHeight: isCompactLayout ? "48px" : `${minHeight}px`,

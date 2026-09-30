@@ -25,6 +25,11 @@ export function PluginNewThreadComposer({
   className,
   draftKey,
   onSubmit,
+  experimental_submitLabel,
+  experimental_submitDisabled,
+  experimental_onBeforeSubmit,
+  experimental_placementVisibility,
+  experimental_executionControlsVisibility,
 }: PluginComposerProps) {
   const pluginId = useContext(PluginContext);
   const [pickedProjectId, setPickedProjectId] = useState<string | null>(
@@ -67,6 +72,13 @@ export function PluginNewThreadComposer({
       resetKey={defaultProjectId ?? null}
       focusRequest={focusRequest}
       onSubmit={handleSubmit}
+      experimental_submitLabel={experimental_submitLabel}
+      experimental_submitDisabled={experimental_submitDisabled}
+      experimental_onBeforeSubmit={experimental_onBeforeSubmit}
+      experimental_placementVisibility={experimental_placementVisibility}
+      experimental_executionControlsVisibility={
+        experimental_executionControlsVisibility
+      }
     >
       {({ renderPromptBox }) => (
         <div

@@ -129,6 +129,9 @@ interface NewThreadPromptBoxUIProps {
   isSubmitting: boolean;
   disabled: boolean;
   disabledReason?: string;
+  submitLabel?: string;
+  placementVisibility?: "visible" | "hidden";
+  executionControlsVisibility?: "visible" | "hidden";
   autoFocus?: boolean;
   pluginComposerHost?: PluginComposerHost | null;
   textEffects?: readonly ComposerTextEffectSource[];
@@ -162,6 +165,9 @@ export const NewThreadPromptBoxUI = memo(function NewThreadPromptBoxUI({
   isSubmitting,
   disabled,
   disabledReason,
+  submitLabel,
+  placementVisibility = "visible",
+  executionControlsVisibility = "visible",
   autoFocus,
   pluginComposerHost,
   textEffects,
@@ -219,6 +225,9 @@ export const NewThreadPromptBoxUI = memo(function NewThreadPromptBoxUI({
           isSubmitting={isSubmitting}
           disabled={disabled}
           disabledReason={disabledReason}
+          submitLabel={submitLabel}
+          placementVisibility={placementVisibility}
+          executionControlsVisibility={executionControlsVisibility}
           autoFocus={autoFocus}
           textEffects={textEffects}
           placeholder={placeholderOverride}
@@ -257,6 +266,9 @@ const DefaultNewThreadComposer = memo(function DefaultNewThreadComposer({
   isSubmitting,
   disabled,
   disabledReason,
+  submitLabel,
+  placementVisibility,
+  executionControlsVisibility,
   autoFocus,
   textEffects,
   placeholder: placeholderOverride,
@@ -320,51 +332,62 @@ const DefaultNewThreadComposer = memo(function DefaultNewThreadComposer({
           isSubmitting,
           disabled,
           disabledReason,
-          title: submitTitle,
+          ...(submitLabel === undefined
+            ? {}
+            : { label: submitLabel, showLabelInCompact: true }),
+          title: submitLabel ?? submitTitle,
         }}
         autoFocus={autoFocus}
         editorLayout="root-compose"
         minHeight={NEW_THREAD_PROMPT_BOX_MIN_HEIGHT}
         placeholder={placeholder}
         header={modeConfig.header}
-        footerStart={<ExecutionControls {...execution} />}
+        footerStart={
+          executionControlsVisibility === "hidden" ? undefined : (
+            <ExecutionControls {...execution} />
+          )
+        }
       />
       <div className="mt-1 flex select-none items-center justify-between gap-2 px-3.5">
-        <div className="flex min-w-0 flex-1 items-center gap-1">
-          {project ? (
-            <ProjectSelector
-              projects={project.projects}
-              value={project.value}
-              onChange={project.onChange}
-              allowNoProject={project.allowNoProject ?? false}
-              createProject={project.createProject}
-              disabled={project.disabled}
-              isLoading={project.isLoading}
-              showChevronWhenDisabled={project.showChevronWhenDisabled}
-              className="shrink-0"
+        {placementVisibility === "visible" ? (
+          <div className="flex min-w-0 flex-1 items-center gap-1">
+            {project ? (
+              <ProjectSelector
+                projects={project.projects}
+                value={project.value}
+                onChange={project.onChange}
+                allowNoProject={project.allowNoProject ?? false}
+                createProject={project.createProject}
+                disabled={project.disabled}
+                isLoading={project.isLoading}
+                showChevronWhenDisabled={project.showChevronWhenDisabled}
+                className="shrink-0"
+              />
+            ) : null}
+            <EnvironmentSlot
+              projectless={project?.value === null}
+              environment={modeConfig.environment}
+              worktree={modeConfig.worktree}
+              environmentProviderInputsSlot={
+                modeConfig.environmentProviderInputsSlot
+              }
+              machineProviderInputsSlot={modeConfig.machineProviderInputsSlot}
             />
-          ) : null}
-          <EnvironmentSlot
-            projectless={project?.value === null}
-            environment={modeConfig.environment}
-            worktree={modeConfig.worktree}
-            environmentProviderInputsSlot={
-              modeConfig.environmentProviderInputsSlot
-            }
-            machineProviderInputsSlot={modeConfig.machineProviderInputsSlot}
-          />
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <PermissionModePicker
-            value={modeConfig.permission.value}
-            options={modeConfig.permission.options}
-            onChange={modeConfig.permission.onChange}
-            supported={modeConfig.permission.supported}
-            disabled={permissionPickerDisabledByPlanMode}
-            showChevronWhenDisabled={permissionPickerDisabledByPlanMode}
-            displayOverride={permissionDisplayOverride}
-          />
-        </div>
+          </div>
+        ) : null}
+        {executionControlsVisibility === "visible" ? (
+          <div className="flex shrink-0 items-center gap-2">
+            <PermissionModePicker
+              value={modeConfig.permission.value}
+              options={modeConfig.permission.options}
+              onChange={modeConfig.permission.onChange}
+              supported={modeConfig.permission.supported}
+              disabled={permissionPickerDisabledByPlanMode}
+              showChevronWhenDisabled={permissionPickerDisabledByPlanMode}
+              displayOverride={permissionDisplayOverride}
+            />
+          </div>
+        ) : null}
       </div>
     </div>
   );
