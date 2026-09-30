@@ -1764,6 +1764,11 @@ export interface PluginMessageActionRegistration {
   title: string;
   icon?: BbIconName;
   /**
+   * Message roles that show this action. Omitted means user and assistant.
+   * Experimental: see docs/api_to_audit.md.
+   */
+  experimental_roles?: readonly ("user" | "assistant")[];
+  /**
    * Runs when the user activates the action. Errors (sync or async) are
    * contained and logged; they never break the timeline.
    */

@@ -259,6 +259,7 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
           "Show the action’s explicit icon in both menus, with plugin branding as the fallback for omitted or unknown names",
           "Open one of the plugin's own [side-panel tabs](thread-panel) with what it received",
           "Write into the composer of the message's thread through the same composer handle useComposer() returns",
+          "Restrict an action to user or assistant messages with the experimental_roles filter",
         ],
         apiSymbols: [
           "PluginMessageActionRegistration",
@@ -648,12 +649,14 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
           "Render multi-line text with `experimental_multiline`",
           "Mark a text field secret: bb stores it in a protected file on the server and never sends it to the browser",
           "Read values from server code, update them with `experimental_set`, or read non-secret values from plugin UI with `useSettings()`",
+          "For the first-party Read aloud plugin only, `bb.experimental_resolveAiGatewayApiKey` reads the fixed AI_GATEWAY_API_KEY value for global status or a server-resolved thread scope; it is not a general secret accessor",
         ],
         apiSymbols: [
           "PluginSettings",
           "PluginSettingsHandle",
           "PluginSettingDescriptor",
           "PluginSettingsState",
+          "BbPluginApi.experimental_resolveAiGatewayApiKey",
         ],
         firstParty: [
           "Custom instructions",

@@ -41,6 +41,12 @@ export function runPluginMessageAction({
   openThreadPanel,
   composerHost,
 }: RunPluginMessageActionArgs): void {
+  if (
+    slot.experimental_roles !== undefined &&
+    !slot.experimental_roles.includes(message.role)
+  ) {
+    return;
+  }
   const context: PluginMessageActionContext = {
     threadId,
     message,

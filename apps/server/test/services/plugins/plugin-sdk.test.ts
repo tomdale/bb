@@ -622,6 +622,130 @@ describe("plugin bb.sdk against a running server", () => {
     }
   });
 
+  it("resolves only TTS AI Gateway machine secrets from the server-scoped thread", async () => {
+    const server = await startTestServer();
+    const workDir = await mkdtemp(join(tmpdir(), "bb-plugin-env-key-"));
+    try {
+      const { host } = seedHostSession(server.deps);
+      seedPrimaryHost(server.deps, host.id);
+      const { project } = seedProjectWithSource(server.deps, {
+        hostId: host.id,
+      });
+      const { project: otherProject } = seedProjectWithSource(server.deps, {
+        hostId: host.id,
+      });
+      const environment = seedEnvironment(server.deps, {
+        hostId: host.id,
+        projectId: project.id,
+      });
+      const otherEnvironment = seedEnvironment(server.deps, {
+        hostId: host.id,
+        projectId: otherProject.id,
+      });
+      const thread = createThread(server.db, server.deps.hub, {
+        projectId: project.id,
+        environmentId: environment.id,
+        providerId: "codex",
+        status: "idle",
+      });
+      const otherThread = createThread(server.db, server.deps.hub, {
+        projectId: otherProject.id,
+        environmentId: otherEnvironment.id,
+        providerId: "codex",
+        status: "idle",
+      });
+      const { replaceMachineEnvironment } =
+        await import("../../../src/services/machines/environment-settings.js");
+      await replaceMachineEnvironment(server.db, server.config.dataDir, {
+        variables: [
+          { name: "AI_GATEWAY_API_KEY", value: "global-test-key", note: null },
+        ],
+      });
+      await replaceMachineEnvironment(
+        server.db,
+        server.config.dataDir,
+        {
+          variables: [
+            {
+              name: "AI_GATEWAY_API_KEY",
+              value: "project-test-key",
+              note: null,
+            },
+          ],
+        },
+        project.id,
+      );
+      server.pluginService.bindSdk({ baseUrl: server.baseUrl });
+      const ownerRoot = await writePlugin(workDir, {
+        name: "bb-plugin-tts",
+        serverSource: `export default function plugin() {}`,
+      });
+      const otherRoot = await writePlugin(workDir, {
+        name: "bb-plugin-secret-reader",
+        serverSource: `export default function plugin() {}`,
+      });
+      await server.pluginService.installPath(ownerRoot);
+      await server.pluginService.installPath(otherRoot);
+      const owner = requireApi(server.pluginService, "tts");
+      const other = requireApi(server.pluginService, "secret-reader");
+
+      await expect(
+        owner.experimental_resolveAiGatewayApiKey({
+          scope: "thread",
+          threadId: thread.id,
+        }),
+      ).resolves.toBe("project-test-key");
+      await expect(
+        owner.experimental_resolveAiGatewayApiKey({
+          scope: "thread",
+          threadId: otherThread.id,
+        }),
+      ).resolves.toBe("global-test-key");
+      await expect(
+        owner.experimental_resolveAiGatewayApiKey({ scope: "global" }),
+      ).resolves.toBe("global-test-key");
+      await replaceMachineEnvironment(
+        server.db,
+        server.config.dataDir,
+        {
+          variables: [
+            {
+              name: "AI_GATEWAY_API_KEY",
+              value: "",
+              note: null,
+            },
+          ],
+        },
+        project.id,
+      );
+      await expect(
+        owner.experimental_resolveAiGatewayApiKey({
+          scope: "thread",
+          threadId: thread.id,
+        }),
+      ).resolves.toBe("");
+      await expect(
+        other.experimental_resolveAiGatewayApiKey({ scope: "global" }),
+      ).rejects.toThrow("only available to the tts plugin");
+      await expect(
+        owner.experimental_resolveAiGatewayApiKey({
+          scope: "thread",
+          threadId: "missing-thread",
+        }),
+      ).rejects.toThrow("Thread not found");
+      await expect(
+        owner.experimental_resolveAiGatewayApiKey({
+          scope: "thread",
+          threadId: thread.id,
+        }),
+      ).resolves.not.toBe("global-test-key");
+    } finally {
+      await server.pluginService.stop();
+      await rm(workDir, { recursive: true, force: true });
+      await server.close();
+    }
+  });
+
   it("covers live plugin metadata routes, namespace validation, and lifecycle guards", async () => {
     const server = await startTestServer();
     const workDir = await mkdtemp(join(tmpdir(), "bb-plugin-metadata-live-"));

@@ -553,6 +553,9 @@ export interface CreateFakePluginHostOptions {
   experimental_callHostRpc?: (
     call: ExperimentalFakeHostRpcCall,
   ) => unknown | Promise<unknown>;
+  experimental_resolveAiGatewayApiKey?: (
+    scope: { scope: "global" } | { scope: "thread"; threadId: string },
+  ) => string | undefined | Promise<string | undefined>;
 }
 
 export interface FakePluginHost {
@@ -1513,6 +1516,15 @@ function createFakePluginHostInternal(
     experimental_hooks,
     experimental_environments,
     experimental_machines,
+    async experimental_resolveAiGatewayApiKey(scope) {
+      assertLive();
+      if (pluginId !== "tts") {
+        throw new Error(
+          "Vercel AI Gateway environment access is only available to the tts plugin",
+        );
+      }
+      return options.experimental_resolveAiGatewayApiKey?.(scope);
+    },
     experimental_serverAccess: {
       register(declaration) {
         assertLive();

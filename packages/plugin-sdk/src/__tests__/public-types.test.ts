@@ -16,6 +16,7 @@ type ExpectedBbPluginApiKey =
   | "cli"
   | "events"
   | "experimental_aiServices"
+  | "experimental_resolveAiGatewayApiKey"
   | "experimental_environments"
   | "experimental_hooks"
   | "experimental_machines"

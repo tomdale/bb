@@ -17,6 +17,7 @@ import {
   deletePluginKvValue,
   getPluginKvValue,
   getHost,
+  getProject,
   listPluginKvKeys,
   setPluginKvValue,
   type DbConnection,
@@ -93,6 +94,7 @@ import {
   runPluginStorageMigrations,
   isStandardSchema,
   aiServiceAlreadyRegisteredMessage,
+  resolveAiGatewayProjectId,
   pluginHookAlreadyRegisteredMessage,
   storePluginHook,
   validateBackgroundServiceRegistration,
@@ -133,6 +135,8 @@ import {
   readPluginSettingsValues,
   writePluginSettingsUpdate,
 } from "./plugin-settings.js";
+import { requirePublicThread } from "../lib/entity-lookup.js";
+import { readEffectiveMachineEnvironmentVariable } from "../machines/environment-settings.js";
 
 export type {
   BbPluginApi,
@@ -986,6 +990,35 @@ export function createPluginApi(options: {
     },
   };
 
+  async function experimental_resolveAiGatewayApiKey(
+    scope: { scope: "global" } | { scope: "thread"; threadId: string },
+  ): Promise<string | undefined> {
+    assertLive();
+    if (pluginId !== "tts") {
+      throw new Error(
+        "Vercel AI Gateway environment access is only available to the tts plugin",
+      );
+    }
+    const projectId = resolveAiGatewayProjectId({
+      pluginId,
+      scope,
+      readThread(threadId) {
+        const thread = requirePublicThread(db, threadId);
+        const project = getProject(db, thread.projectId);
+        if (!project || project.deletedAt !== null) {
+          throw new Error("Thread not found");
+        }
+        return { projectId: thread.projectId };
+      },
+    });
+    return readEffectiveMachineEnvironmentVariable(
+      db,
+      dataDir,
+      "AI_GATEWAY_API_KEY",
+      projectId,
+    );
+  }
+
   const status: PluginStatusApi = {
     needsConfiguration(message) {
       assertLive();
@@ -1337,6 +1370,7 @@ export function createPluginApi(options: {
     experimental_machines,
     experimental_serverAccess,
     status,
+    experimental_resolveAiGatewayApiKey,
     server,
     hosts,
     experimental_aiServices,

@@ -1175,7 +1175,13 @@ describe("ThreadTimelineRows actions", () => {
     setPluginSlotRegistrations(
       "demo",
       messageActionRegistrationSet([
-        { id: "summarize", title: "Summarize", icon: "Zap", run },
+        {
+          id: "summarize",
+          title: "Summarize",
+          icon: "Zap",
+          experimental_roles: ["assistant"],
+          run,
+        },
       ]),
     );
     const onOpenPluginPanel = vi.fn().mockReturnValue(true);
@@ -1207,7 +1213,7 @@ describe("ThreadTimelineRows actions", () => {
     const userRow = container.querySelector(
       '[data-timeline-row-id="user_row"]',
     );
-    expect(userRow?.querySelector('[aria-label="Summarize"]')).not.toBeNull();
+    expect(userRow?.querySelector('[aria-label="Summarize"]')).toBeNull();
 
     const assistantRow = container.querySelector(
       '[data-timeline-row-id="assistant_row"]',

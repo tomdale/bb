@@ -24,6 +24,30 @@ import {
   type ProviderNativeRoots,
 } from "@bb/domain";
 import { PLUGIN_CLI_OUTPUT_MAX_BYTES } from "../backend-contract.js";
+
+export function resolveAiGatewayProjectId(args: {
+  pluginId: string;
+  scope: { scope: "global" } | { scope: "thread"; threadId: string };
+  readThread: (threadId: string) => { projectId: string } | null;
+}): string | null {
+  if (args.pluginId !== "tts") {
+    throw new Error(
+      "Vercel AI Gateway environment access is only available to the tts plugin",
+    );
+  }
+  if (args.scope.scope === "global") return null;
+  if (
+    typeof args.scope.threadId !== "string" ||
+    args.scope.threadId.length === 0
+  ) {
+    throw new Error(
+      "threadId is required for Vercel AI Gateway environment access",
+    );
+  }
+  const thread = args.readThread(args.scope.threadId);
+  if (thread === null) throw new Error("Thread not found");
+  return thread.projectId;
+}
 import type {
   PluginAgentToolContext,
   PluginRowPresentation,
@@ -2392,9 +2416,7 @@ export interface NormalizedPluginEnvironmentProvider {
     PluginEnvironmentProviderDeclaration["experimental_existingPath"]
   > | null;
   create: PluginEnvironmentProviderDeclaration["create"];
-  restore: NonNullable<
-    PluginEnvironmentProviderDeclaration["restore"]
-  > | null;
+  restore: NonNullable<PluginEnvironmentProviderDeclaration["restore"]> | null;
   remove: PluginEnvironmentProviderDeclaration["remove"];
   policy: import("../environment-provider.js").PluginEnvironmentProviderPolicy;
 }

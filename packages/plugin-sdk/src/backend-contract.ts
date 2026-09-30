@@ -2114,6 +2114,17 @@ export interface BbPluginApi {
    */
   readonly experimental_aiServices: PluginAiServices;
   /**
+   * Read the Vercel AI Gateway key from BB machine environment settings.
+   * Available only to the `tts` plugin and only for this fixed variable. A
+   * thread scope resolves its project override before the global value; the
+   * global scope is for configuration status. Thread IDs are resolved by the
+   * server, never trusted from a caller as project identity. The value is
+   * server-only and must never be returned to a client or logged.
+   */
+  experimental_resolveAiGatewayApiKey(
+    args: { scope: "global" } | { scope: "thread"; threadId: string },
+  ): Promise<string | undefined>;
+  /**
    * The full BB SDK, bound to this server over loopback (design §4.1).
    * Bind-gated: reading this before the host binds the SDK throws. The real
    * server binds it before loading plugins, so it is available from the
