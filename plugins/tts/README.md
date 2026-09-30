@@ -3,7 +3,12 @@
 Read aloud adds an action to each assistant response in the chat timeline.
 Choose **Read response aloud / stop playback** to open the inline player beneath
 that response and request speech. The player shows preparation, live audio
-levels with playback progress, pause/resume, and stop controls. Clicking the
+levels with playback progress, pause/resume, and stop controls. Click or drag the
+waveform to seek, or focus it and use Left/Right (5% steps), Home, and End. The
+whole-response timeline estimates phrase lengths from their character counts;
+seeking within a phrase maps the estimated position to that phrase's audio offset.
+Fetched phrase audio is cached for the playback session so revisiting a phrase
+is immediate. Clicking the
 action for the active response again also stops it. It is intentionally
 unavailable on user messages, and it reads assistant text only—not tool output
 or hidden execution data. On BB versions whose timeline does not expose the
@@ -80,4 +85,5 @@ Markdown is reduced to readable prose, including headings, links, inline/fenced
 code, lists, quotes and tables. The response text action doesn't include tool
 cards and related non-conversation output. Audio is requested only on activation
 and uses revocable in-memory object URLs; stopping, completion, errors, and
-component teardown cancel outstanding requests and release playback resources.
+component teardown cancel outstanding requests and release playback resources,
+including cached phrase audio.
