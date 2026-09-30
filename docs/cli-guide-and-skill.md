@@ -38,3 +38,13 @@ Modal connection and machine commands are documented in [modal-sandboxes](../plu
 `--environment-provider`; a composition rejects separate machine selectors.
 
 Modal image debugging uses `bb modal image build`, `bb modal sandbox run`, `bb modal sandbox exec ID [--json] -- COMMAND...`, and `bb modal sandbox stop ID`. Debug compute expires after 30 minutes and skips BB enrollment and project setup. See the plugin skill for output limits and typed RPC equivalents.
+
+Vercel Sandbox connection and launch commands are documented in
+[vercel-sandboxes](../plugins/environment-vercel-sandbox/skills/vercel-sandboxes/SKILL.md).
+`bb vercel-sandbox account inspect [--json]` checks authenticated scoped listing
+without allocation. `bb vercel-sandbox launch options [--json]` reads defaults
+and provider limits. `bb vercel-sandbox machine inspect HOST [--json]` reads owned
+vendor state and expiry without starting stopped compute. Core `bb machine create
+--provider vercel-sandbox --inputs JSON` and `bb thread spawn
+--environment-provider vercel-sandbox --machine-inputs JSON` launch disposable
+machines; core machine removal and retry-cleanup handle retirement.

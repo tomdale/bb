@@ -493,3 +493,15 @@ providers do not implicitly choose an environment.
 `bb machine show` includes `threadStorageRootPath` from the latest daemon session
 without waking the machine. It works offline and with no live threads; the path
 is null before the first session. Reading details does not create directories.
+
+Vercel Sandbox machines use provider `vercel-sandbox` from the optional BB
+Official `environment-vercel-sandbox` plugin. Configure its secret token and
+canonical team/project IDs, then check `bb vercel-sandbox account inspect --json`.
+Create with `bb machine create --provider vercel-sandbox --inputs
+'{"vcpus":2,"timeoutMinutes":30}' --json`, or spawn with
+`--environment-provider vercel-sandbox --machine-inputs` for a project checkout.
+`bb vercel-sandbox launch options --json` shows defaults and provider maxima;
+Vercel account plan limits apply. `bb vercel-sandbox machine inspect HOST --json`
+reads vendor state and expiry without starting compute. Machines are disposable:
+save files to Git before expiry or `bb machine remove HOST --yes`. Missing
+compute fails recovery, and uncertain allocation stays pending cleanup.

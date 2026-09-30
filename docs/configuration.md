@@ -1868,3 +1868,23 @@ Publish updates with **Mobile Android (EAS)**, profile `preview`, **publish** on
 
 The publishing workflow verifies the signed APK and publishes both the checksum-named
 asset and the stable `bb-android.apk` alias, then `latest.json`.
+
+## Vercel Sandbox machines
+
+The optional BB Official `environment-vercel-sandbox` plugin registers machine
+and composed environment provider `vercel-sandbox`. Plugin settings are secret
+`token`, canonical `teamId` (`team_…`), canonical `projectId` (`prj_…`),
+`defaultVcpus` (2), and `defaultTimeoutMinutes` (30). Configure core machine server
+access so cloud compute can reach the BB server. Runtime credentials remain in
+core machine environment settings.
+
+Inputs accept 1 vCPU or an even integer count up to 32 and lifetime 5–1440 minutes; Vercel account plan
+limits apply. Memory is 2048 MiB per vCPU. The plugin uses the mutable universal
+image and nonpersistent compute. Save important work to Git before expiry or
+removal. `bb vercel-sandbox account inspect --json` checks authenticated listing
+without allocation and does not establish create permission or available spend.
+Use `bb vercel-sandbox launch options --json` for defaults and
+`bb vercel-sandbox machine inspect HOST --json` for vendor state and expiry.
+See [vercel-sandboxes](../plugins/environment-vercel-sandbox/skills/vercel-sandboxes/SKILL.md)
+and the [plugin README](../plugins/environment-vercel-sandbox/README.md) for
+launch, ownership, recovery, and cleanup contracts.

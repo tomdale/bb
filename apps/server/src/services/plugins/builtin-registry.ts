@@ -204,6 +204,11 @@ export const BUILTIN_PLUGINS = [
 
 export const OFFICIAL_PLUGINS = [
   {
+    name: "environment-vercel-sandbox",
+    pluginId: "environment-vercel-sandbox",
+    defaultEnabled: true,
+  },
+  {
     name: "environment-modal-sandbox",
     pluginId: "environment-modal-sandbox",
     defaultEnabled: true,

@@ -74,6 +74,7 @@ describe("builtin server artifacts", () => {
     { pluginDir: "environment-git-worktree" },
     { pluginDir: "environment-personal-workspace" },
     { pluginDir: "environment-modal-sandbox" },
+    { pluginDir: "environment-vercel-sandbox" },
   ])(
     "inlines the environment-provider runtime into the $pluginDir server entry",
     async ({ pluginDir }) => {
@@ -84,7 +85,9 @@ describe("builtin server artifacts", () => {
       await cp(source, root, {
         recursive: true,
         filter: (path) =>
-          !["node_modules", "dist", ".bundled-runtime"].includes(basename(path)),
+          !["node_modules", "dist", ".bundled-runtime"].includes(
+            basename(path),
+          ),
       });
       await symlink(
         join(source, "node_modules"),
