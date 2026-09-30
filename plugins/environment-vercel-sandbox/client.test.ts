@@ -2,7 +2,7 @@ import { gunzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { createVercelClient, sandboxExecutor } from "./client.js";
-import { resolveSettings } from "./configuration.js";
+import { resolveCredentials } from "./configuration.js";
 import { vendorTransport } from "./vendor-test-transport.js";
 
 async function execFixture(
@@ -74,17 +74,15 @@ async function execFixture(
     }
     throw new Error(`Unexpected vendor execution path ${url.pathname}`);
   };
-  const settings = resolveSettings({
+  const settings = resolveCredentials({
     token: "secret-token",
     teamId: "team_test",
     projectId: "prj_test",
-    defaultVcpus: 2,
-    defaultTimeoutMinutes: 30,
   });
   const sandbox = await createVercelClient(settings, transport).create(
     "bb-exec-test",
     {},
-    settings.defaults,
+    { vcpus: 2, timeoutMinutes: 30 },
     new AbortController().signal,
   );
   return {

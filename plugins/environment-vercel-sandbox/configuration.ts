@@ -67,18 +67,14 @@ export const SETTING_DESCRIPTORS = {
       "Whole number from 5 to 1440. Vercel account plan limits apply. Expiry discards uncommitted files.",
   },
 } as const;
-export type Settings = z.infer<typeof scopeSchema> & {
-  token: string;
-  defaults: z.infer<typeof resolvedInputsSchema>;
-};
+export type Credentials = z.infer<typeof scopeSchema> & { token: string };
+export type LaunchInputs = z.infer<typeof resolvedInputsSchema>;
 export class SafeError extends Error {}
-export function resolveSettings(raw: {
+export function resolveCredentials(raw: {
   token?: string;
   teamId?: string;
   projectId?: string;
-  defaultVcpus: number;
-  defaultTimeoutMinutes: number;
-}): Settings {
+}): Credentials {
   const token = raw.token?.trim();
   if (!token || token.length > 4096 || /\s/.test(token))
     throw new SafeError(
@@ -96,6 +92,12 @@ export function resolveSettings(raw: {
     throw new SafeError(
       "Set canonical Vercel team_ and prj_ IDs in the plugin settings.",
     );
+  return { ...scope.data, token };
+}
+export function resolveLaunchDefaults(raw: {
+  defaultVcpus: number;
+  defaultTimeoutMinutes: number;
+}): LaunchInputs {
   const defaults = resolvedInputsSchema.safeParse({
     vcpus: raw.defaultVcpus,
     timeoutMinutes: raw.defaultTimeoutMinutes,
@@ -104,7 +106,7 @@ export function resolveSettings(raw: {
     throw new SafeError(
       "Default vCPUs must be 1 or an even count up to 32 and lifetime must be 5–1440 whole minutes.",
     );
-  return { ...scope.data, token, defaults: defaults.data };
+  return defaults.data;
 }
 export function safeMessage(error: unknown): string {
   return error instanceof SafeError

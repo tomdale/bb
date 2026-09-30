@@ -2,7 +2,11 @@ import { Sandbox } from "@vercel/sandbox";
 import type { MachineExecutor } from "@get-bb/plugin-sdk";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import { SafeError, type Settings } from "./configuration.js";
+import {
+  SafeError,
+  type Credentials,
+  type LaunchInputs,
+} from "./configuration.js";
 import { IMAGE } from "./provider-id.js";
 import { z } from "zod";
 import type { Resource } from "./allocations.js";
@@ -26,7 +30,7 @@ function notFound(error: unknown): boolean {
 }
 
 export function createVercelClient(
-  settings: Settings,
+  settings: Credentials,
   transport: typeof fetch,
 ) {
   const scopedFetch: typeof fetch = async (input, init) => {
@@ -149,7 +153,7 @@ export function createVercelClient(
     async create(
       name: string,
       tags: Record<string, string>,
-      inputs: Settings["defaults"],
+      inputs: LaunchInputs,
       signal: AbortSignal,
     ) {
       return Sandbox.create({

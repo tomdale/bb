@@ -6,7 +6,7 @@ import {
   scopeSchema,
   SafeError,
 } from "./configuration.js";
-import type { Settings } from "./configuration.js";
+import type { Credentials } from "./configuration.js";
 import type { Sandbox } from "@vercel/sandbox";
 import { PROVIDER_ID } from "./provider-id.js";
 
@@ -94,7 +94,7 @@ export async function allocationStore(bb: Pick<BbPluginApi, "storage">) {
     },
   };
 }
-export function assertScope(resource: Resource, settings: Settings) {
+export function assertScope(resource: Resource, settings: Credentials) {
   if (
     resource.teamId !== settings.teamId ||
     resource.projectId !== settings.projectId

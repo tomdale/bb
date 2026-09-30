@@ -19,8 +19,8 @@ import { createVercelClient, sandboxExecutor } from "./client.js";
 import {
   allowedVcpus,
   launchInputsSchema,
-  resolvedInputsSchema,
-  resolveSettings,
+  resolveCredentials,
+  resolveLaunchDefaults,
   SafeError,
   safeMessage,
   SETTING_DESCRIPTORS,
@@ -34,7 +34,8 @@ export function createVercelSandboxPlugin(transport: typeof fetch) {
     const allocations = await allocationStore(bb);
     const lifetime = new AbortController();
     bb.onDispose(() => lifetime.abort());
-    const currentSettings = async () => resolveSettings(await settings.get());
+    const currentCredentials = async () =>
+      resolveCredentials(await settings.get());
     const operationSignal = (signal?: AbortSignal, timeoutMs = 30_000) =>
       AbortSignal.any([
         lifetime.signal,
@@ -42,23 +43,16 @@ export function createVercelSandboxPlugin(transport: typeof fetch) {
         ...(signal ? [signal] : []),
       ]);
     const clientFor = async (resource?: Resource) => {
-      const current = await currentSettings();
+      const current = await currentCredentials();
       if (resource) assertScope(resource, current);
       return createVercelClient(current, transport);
     };
     const launchOptions = async () => {
       const raw = await settings.get();
-      const defaults = resolvedInputsSchema.safeParse({
-        vcpus: raw.defaultVcpus,
-        timeoutMinutes: raw.defaultTimeoutMinutes,
-      });
-      if (!defaults.success)
-        throw new SafeError(
-          "Default vCPUs must be 1 or an even count up to 32 and lifetime must be 5–1440 whole minutes.",
-        );
+      const defaults = resolveLaunchDefaults(raw);
       return {
         image: IMAGE,
-        defaultInputs: defaults.data,
+        defaultInputs: defaults,
         limits: {
           minVcpus: 1,
           maxVcpus: 32,
@@ -73,7 +67,7 @@ export function createVercelSandboxPlugin(transport: typeof fetch) {
       let teamId: string | null = null;
       let projectId: string | null = null;
       try {
-        const current = await currentSettings();
+        const current = await currentCredentials();
         teamId = current.teamId;
         projectId = current.projectId;
         await createVercelClient(current, transport).inspectAccount(
@@ -356,7 +350,7 @@ export function createVercelSandboxPlugin(transport: typeof fetch) {
       inputs: launchInputsSchema,
       async availability() {
         try {
-          await currentSettings();
+          await currentCredentials();
           return { status: "available" };
         } catch (error) {
           return { status: "setup-required", message: safeMessage(error) };
@@ -365,7 +359,9 @@ export function createVercelSandboxPlugin(transport: typeof fetch) {
       async validate({ inputs }) {
         try {
           launchInputsSchema.parse(inputs);
-          await currentSettings();
+          const raw = await settings.get();
+          resolveCredentials(raw);
+          resolveLaunchDefaults(raw);
           return { action: "accept" };
         } catch (error) {
           return {
@@ -382,7 +378,8 @@ export function createVercelSandboxPlugin(transport: typeof fetch) {
           try {
             lifetime.signal.throwIfAborted();
             context.signal.throwIfAborted();
-            const current = await currentSettings();
+            const raw = await settings.get();
+            const current = resolveCredentials(raw);
             const inputs = launchInputsSchema.parse(context.inputs);
             let intent = await allocations.get(context.key);
             if (intent?.phase === "removed") intent = null;
@@ -394,6 +391,7 @@ export function createVercelSandboxPlugin(transport: typeof fetch) {
                 "Vercel machine cleanup is pending. Retry cleanup before launching with this creation key.",
               );
             if (!intent) {
+              const defaults = resolveLaunchDefaults(raw);
               intent = {
                 phase: "prepared",
                 resource: {
@@ -406,7 +404,7 @@ export function createVercelSandboxPlugin(transport: typeof fetch) {
                   expiresAt: null,
                   teamId: current.teamId,
                   projectId: current.projectId,
-                  inputs: { ...current.defaults, ...inputs },
+                  inputs: { ...defaults, ...inputs },
                 },
               };
               await saveIntent(intent, context.signal);
@@ -517,7 +515,7 @@ export function createVercelSandboxPlugin(transport: typeof fetch) {
       },
     });
     try {
-      await currentSettings();
+      await currentCredentials();
     } catch (error) {
       bb.status.needsConfiguration(safeMessage(error));
     }

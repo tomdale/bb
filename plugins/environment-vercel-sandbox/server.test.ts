@@ -75,6 +75,55 @@ async function setup(
 }
 
 describe("Vercel machine allocation", () => {
+  it.each([
+    ["defaultVcpus", 3],
+    ["defaultTimeoutMinutes", 4],
+  ] as const)(
+    "keeps existing machines inspectable, recoverable, and removable after invalid launch defaults %s=%s",
+    async (name, value) => {
+      const test = await setup();
+      expect(await test.machine.create(test.context)).toMatchObject({
+        status: "created",
+      });
+      const resource = resourceSchema.parse(test.stored);
+      await test.harness.behavior.setSettings({ [name]: value });
+      expect(
+        await test.harness.behavior.callRpc("machine.inspect", {
+          hostId: "host_vercel",
+        }),
+      ).toMatchObject({
+        values: { state: "running", sessionId: resource.sessionId },
+      });
+      expect(
+        await test.harness.behavior.callRpc("account.inspect", {}),
+      ).toMatchObject({ available: true });
+      expect(
+        await test.machine.create({ ...test.context, attempt: 2 }),
+      ).toMatchObject({ status: "created", resource });
+      expect(test.vendor.allocationCount).toBe(1);
+      const beforeNewLaunch = test.vendor.requests.length;
+      expect(
+        await test.machine.create({ ...test.context, key: "new-machine-key" }),
+      ).toMatchObject({
+        status: "failed",
+        message: expect.stringContaining("Default vCPUs"),
+      });
+      expect(test.vendor.requests).toHaveLength(beforeNewLaunch);
+      expect(
+        await test.machine.remove({
+          hostId: "host_vercel",
+          resource,
+          signal: test.context.signal,
+          report,
+        }),
+      ).toEqual({ status: "removed" });
+      expect(test.vendor.sessions.get(resource.sessionId!)?.status).toBe(
+        "stopped",
+      );
+      expect(test.vendor.allocations.size).toBe(0);
+    },
+  );
+
   it.each([401, 403, 404, 422])(
     "recovers allocation accepted before a %s create response rather than discarding intent",
     async (status) => {
