@@ -1,5 +1,11 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { PROVIDER_ID } from "./provider-id.js";
@@ -386,107 +392,383 @@ describe("launch inputs control", () => {
 });
 
 describe("settings section", () => {
+  type Account = {
+    available: boolean;
+    message: string;
+    hostId: string | null;
+    directory: string | null;
+    accountId: string | null;
+    teamId: string | null;
+    projectId: string | null;
+  };
+
+  const NOT_CONNECTED: Account = {
+    available: false,
+    message: "Run vc login and vc link on a machine, then connect it.",
+    hostId: null,
+    directory: null,
+    accountId: null,
+    teamId: null,
+    projectId: null,
+  };
+
+  const CONNECTED: Account = {
+    available: true,
+    message: "Connected",
+    hostId: "host-mac",
+    directory: "/Users/me/vercel-bb",
+    accountId: "user_abc",
+    teamId: "team_abc",
+    projectId: "prj_def",
+  };
+
+  const TOKEN_SHAPED = /eyJ|vca_|Bearer|token=/i;
+
   function settingsSlot() {
     const section = app.settingsSections[0];
     if (section === undefined) throw new Error("settings not registered");
     return section;
   }
 
-  it("reports a reachable scope without claiming launch entitlement", async () => {
-    const slot = renderSlot(
+  function host(
+    id: string,
+    name: string,
+    overrides: Record<string, unknown> = {},
+  ) {
+    return {
+      id,
+      name,
+      type: "persistent",
+      status: "connected",
+      machineProviderId: null,
+      lifecycle: { phase: "active", teardown: null },
+      ...overrides,
+    };
+  }
+
+  const HOSTS = [
+    host("host-mac", "Tom's MacBook"),
+    host("host-studio", "Studio", { status: "disconnected" }),
+    host("host-linux", "Build box"),
+    host("host-sandbox", "vercel-sandbox-1", {
+      type: "ephemeral",
+      machineProviderId: PROVIDER_ID,
+    }),
+    host("host-gone", "Old laptop", {
+      lifecycle: { phase: "destroyed", teardown: null },
+    }),
+  ];
+
+  function renderSettings(
+    rpc: Record<string, (input: never) => unknown>,
+    hostsList: () => unknown = () => HOSTS,
+  ) {
+    return renderSlot(
       settingsSlot(),
       {},
       {
-        rpc: {
-          "account.inspect": () => ({
-            available: true,
-            message: "Authenticated",
-            teamId: "team_abc",
-            projectId: "prj_def",
-          }),
-          "launch.options": () => LAUNCH_OPTIONS,
-        },
+        rpc: { "launch.options": () => LAUNCH_OPTIONS, ...rpc } as never,
+        sdk: { hosts: { list: hostsList } } as never,
       },
     );
+  }
+
+  function connectCalls(slot: ReturnType<typeof renderSettings>) {
+    return slot.inspection.rpcCalls.filter(
+      (call) => call.method === "account.connect",
+    );
+  }
+
+  it("names the machine and linked project without claiming launch entitlement", async () => {
+    const slot = renderSettings({ "account.inspect": () => CONNECTED });
     await slot.findByText(
-      /The token can list sandboxes in team_abc \/ prj_def/,
+      "Connected. New sandboxes use the Vercel CLI on Tom's MacBook.",
     );
     expect(
       slot.getByText(/doesn't confirm your plan's sandbox limits/),
     ).toBeTruthy();
+    const details = slot
+      .getByText("Linked folder", { selector: "dt" })
+      .closest("dl");
+    expect(details?.textContent).toContain("/Users/me/vercel-bb");
+    expect(details?.textContent).toContain("user_abc");
+    expect(details?.textContent).toContain("team_abc");
+    expect(details?.textContent).toContain("prj_def");
+    expect(
+      slot.getByRole("heading", { name: "Change connection" }),
+    ).toBeTruthy();
+    expect(
+      (slot.getByLabelText("Linked folder") as HTMLInputElement).value,
+    ).toBe("/Users/me/vercel-bb");
+    expect(
+      slot.getByRole("button", { name: /Machine Tom's MacBook/ }),
+    ).toBeTruthy();
+    expect(slot.getByRole("button", { name: "Reconnect" })).toBeTruthy();
     expect(slot.getByText("2 vCPU · 4 GiB")).toBeTruthy();
     expect(slot.getByText("30 min")).toBeTruthy();
     expect(slot.getByText("1–32 vCPU, 5 min–24 h")).toBeTruthy();
-    expect(slot.getByText("vercel/sandbox/universal:latest")).toBeTruthy();
     expect(slot.getByText(/stops for good at its time limit/)).toBeTruthy();
     expect(
       slot.getByText(/Vercel bills your team while a sandbox runs/),
     ).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(TOKEN_SHAPED);
+    expect(slot.queryByLabelText(/token/i)).toBeNull();
   });
 
-  it("shows a pending check, the backend's unavailable message, and re-checks", async () => {
-    const first = deferred<{
-      available: boolean;
-      message: string;
-      teamId: string | null;
-      projectId: string | null;
-    }>();
-    let calls = 0;
-    const slot = renderSlot(
-      settingsSlot(),
-      {},
+  it("guides terminal sign-in and linking when nothing is connected", async () => {
+    const slot = renderSettings({ "account.inspect": () => NOT_CONNECTED });
+    await slot.findByText(/Not connected/);
+    expect(slot.getByText(NOT_CONNECTED.message)).toBeTruthy();
+    expect(slot.getByRole("heading", { name: "Set up" })).toBeTruthy();
+    const steps = within(
+      slot.getByRole("form", { name: "Connect the Vercel CLI" }),
+    )
+      .getAllByRole("listitem")
+      .map((item) => item.textContent);
+    expect(steps[0]).toContain("vc login");
+    expect(steps[1]).toContain("vc link --cwd /absolute/path/to/folder");
+    fireEvent.change(slot.getByLabelText("Linked folder"), {
+      target: { value: "/Users/me/My App" },
+    });
+    expect(slot.getByText("vc link --cwd '/Users/me/My App'")).toBeTruthy();
+    expect(
+      slot.getByRole("button", { name: "Connect linked project" }),
+    ).toBeTruthy();
+  });
+
+  it("lists only enrolled machines and connects the chosen machine and folder", async () => {
+    const pending = deferred<Account>();
+    const slot = renderSettings({
+      "account.inspect": () => NOT_CONNECTED,
+      "account.connect": () => pending.promise,
+    });
+    const trigger = await slot.findByRole("button", {
+      name: /Machine Choose a machine/,
+    });
+    openMenu(trigger);
+    const choices = (await slot.findAllByRole("menuitemradio")).map(
+      (item) => item.textContent,
+    );
+    expect(choices).toEqual(["Tom's MacBook", "StudioOffline", "Build box"]);
+    fireEvent.click(slot.getByRole("menuitemradio", { name: /Build box/ }));
+    fireEvent.change(slot.getByLabelText("Linked folder"), {
+      target: { value: "  /srv/vercel-bb  " },
+    });
+    fireEvent.click(
+      slot.getByRole("button", { name: "Connect linked project" }),
+    );
+    const busy = await slot.findByRole("button", { name: "Connecting…" });
+    expect(busy.hasAttribute("disabled")).toBe(true);
+    expect(connectCalls(slot)).toEqual([
       {
-        rpc: {
-          "account.inspect": () => {
-            calls += 1;
-            return calls === 1
-              ? first.promise
-              : {
-                  available: true,
-                  message: "ok",
-                  teamId: "team_a",
-                  projectId: "prj_b",
-                };
-          },
-          "launch.options": () => LAUNCH_OPTIONS,
+        method: "account.connect",
+        input: { hostId: "host-linux", directory: "/srv/vercel-bb" },
+      },
+    ]);
+    await act(async () => {
+      pending.resolve({
+        ...CONNECTED,
+        hostId: "host-linux",
+        directory: "/srv/vercel-bb",
+      });
+      await pending.promise;
+    });
+    expect(
+      slot.getByText(
+        "Connected. New sandboxes use the Vercel CLI on Build box.",
+      ),
+    ).toBeTruthy();
+    expect(slot.getByRole("button", { name: "Reconnect" })).toBeTruthy();
+  });
+
+  it("shows the backend's reason when a connection doesn't match the linked project", async () => {
+    const slot = renderSettings({
+      "account.inspect": () => NOT_CONNECTED,
+      "account.connect": () => ({
+        ...CONNECTED,
+        available: false,
+        message:
+          "The folder is linked to a different project than existing sandboxes use.",
+      }),
+    });
+    await slot.findByText(/Not connected/);
+    fireEvent.change(slot.getByLabelText("Linked folder"), {
+      target: { value: "/Users/me/other" },
+    });
+    openMenu(slot.getByRole("button", { name: /Machine/ }));
+    fireEvent.click(
+      await slot.findByRole("menuitemradio", { name: /Tom's MacBook/ }),
+    );
+    fireEvent.click(
+      slot.getByRole("button", { name: "Connect linked project" }),
+    );
+    const alert = await slot.findByRole("alert");
+    expect(alert.textContent).toContain(
+      "linked to a different project than existing sandboxes use",
+    );
+    expect(alert.textContent).toContain("Fix it on Tom's MacBook");
+  });
+
+  it("replaces a failed connect call with generic next steps", async () => {
+    const slot = renderSettings({
+      "account.inspect": () => NOT_CONNECTED,
+      "account.connect": () => {
+        throw new Error("vc stderr: Bearer eyJsecret");
+      },
+    });
+    await slot.findByText(/Not connected/);
+    openMenu(slot.getByRole("button", { name: /Machine/ }));
+    fireEvent.click(
+      await slot.findByRole("menuitemradio", { name: /Tom's MacBook/ }),
+    );
+    fireEvent.change(slot.getByLabelText("Linked folder"), {
+      target: { value: "/Users/me/app" },
+    });
+    fireEvent.click(
+      slot.getByRole("button", { name: "Connect linked project" }),
+    );
+    const alert = await slot.findByRole("alert");
+    expect(alert.textContent).toContain(
+      "Check that the machine is online and that vc login and vc link finished there",
+    );
+    expect(document.body.textContent).not.toMatch(TOKEN_SHAPED);
+    expect(
+      slot
+        .getByRole("button", { name: "Connect linked project" })
+        .hasAttribute("disabled"),
+    ).toBe(false);
+  });
+
+  it("refuses relative folders, a missing machine, and offline machines before connecting", async () => {
+    const slot = renderSettings({
+      "account.inspect": () => NOT_CONNECTED,
+      "account.connect": () => CONNECTED,
+    });
+    await slot.findByText(/Not connected/);
+    const folder = slot.getByLabelText("Linked folder");
+    fireEvent.change(folder, { target: { value: "projects/app" } });
+    fireEvent.click(
+      slot.getByRole("button", { name: "Connect linked project" }),
+    );
+    expect(folder.getAttribute("aria-invalid")).toBe("true");
+    const describedBy = folder.getAttribute("aria-describedby") ?? "";
+    expect(document.getElementById(describedBy)?.textContent).toContain(
+      "Use an absolute path",
+    );
+    expect(
+      slot.getByText("Choose the machine where you ran vc login and vc link."),
+    ).toBeTruthy();
+    fireEvent.change(folder, { target: { value: "/Users/me/app" } });
+    openMenu(slot.getByRole("button", { name: /Machine/ }));
+    fireEvent.click(await slot.findByRole("menuitemradio", { name: /Studio/ }));
+    expect(slot.getByText(/Studio is offline/)).toBeTruthy();
+    fireEvent.click(
+      slot.getByRole("button", { name: "Connect linked project" }),
+    );
+    expect(connectCalls(slot)).toEqual([]);
+  });
+
+  it("reports a broken pinned connection and re-checks without reconnecting", async () => {
+    const first = deferred<Account>();
+    let calls = 0;
+    let hostLists = 0;
+    const slot = renderSettings(
+      {
+        "account.inspect": () => {
+          calls += 1;
+          return calls === 1 ? first.promise : CONNECTED;
         },
+      },
+      () => {
+        hostLists += 1;
+        return HOSTS;
       },
     );
     expect(slot.getByText("Checking the Vercel connection…")).toBeTruthy();
-    const button = slot.getByRole("button", { name: "Check again" });
-    expect(button.hasAttribute("disabled")).toBe(true);
+    expect(
+      slot
+        .getByRole("button", { name: "Check again" })
+        .hasAttribute("disabled"),
+    ).toBe(true);
     await act(async () => {
       first.resolve({
+        ...CONNECTED,
         available: false,
-        message: "Set a valid Vercel access token in the plugin settings.",
-        teamId: null,
-        projectId: null,
+        message:
+          "The Vercel CLI on this machine is signed in as a different user. Sign in again or reconnect.",
       });
       await first.promise;
     });
+    const alert = slot.getByRole("alert");
+    expect(alert.textContent).toContain("signed in as a different user");
     expect(
-      slot.getByText("Set a valid Vercel access token in the plugin settings."),
-    ).toBeTruthy();
+      slot.getByText("Linked folder", { selector: "dt" }).closest("dl")
+        ?.textContent,
+    ).toContain("prj_def");
     fireEvent.click(slot.getByRole("button", { name: "Check again" }));
-    await slot.findByText(/The token can list sandboxes in team_a \/ prj_b/);
+    await slot.findByText(
+      "Connected. New sandboxes use the Vercel CLI on Tom's MacBook.",
+    );
     expect(calls).toBe(2);
+    expect(hostLists).toBe(2);
+    expect(connectCalls(slot)).toEqual([]);
+    expect(slot.inspection.navigateCalls).toEqual([]);
+  });
+
+  it("keeps a connect result when an older check lands afterwards", async () => {
+    const recheck = deferred<Account>();
+    let calls = 0;
+    const slot = renderSettings({
+      "account.inspect": () => {
+        calls += 1;
+        return calls === 1 ? NOT_CONNECTED : recheck.promise;
+      },
+      "account.connect": () => CONNECTED,
+    });
+    await slot.findByText(/Not connected/);
+    fireEvent.click(slot.getByRole("button", { name: "Check again" }));
+    openMenu(await slot.findByRole("button", { name: /Machine/ }));
+    fireEvent.click(
+      await slot.findByRole("menuitemradio", { name: /Tom's MacBook/ }),
+    );
+    fireEvent.change(slot.getByLabelText("Linked folder"), {
+      target: { value: "/Users/me/vercel-bb" },
+    });
+    fireEvent.click(
+      slot.getByRole("button", { name: "Connect linked project" }),
+    );
+    await slot.findByText(/Connected. New sandboxes use/);
+    await act(async () => {
+      recheck.resolve(NOT_CONNECTED);
+      await recheck.promise;
+    });
+    expect(slot.getByText(/Connected. New sandboxes use/)).toBeTruthy();
+  });
+
+  it("recovers when the machine list fails to load", async () => {
+    let lists = 0;
+    const slot = renderSettings(
+      { "account.inspect": () => NOT_CONNECTED },
+      () => {
+        lists += 1;
+        if (lists === 1) throw new Error("offline");
+        return HOSTS;
+      },
+    );
+    await slot.findByText("Couldn't load your machines.");
+    fireEvent.click(slot.getByRole("button", { name: "Retry" }));
+    await slot.findByRole("button", { name: /Machine Choose a machine/ });
   });
 
   it("replaces RPC failures with generic copy", async () => {
-    const slot = renderSlot(
-      settingsSlot(),
-      {},
-      {
-        rpc: {
-          "account.inspect": () => {
-            throw new Error("raw vendor body with token xyz");
-          },
-          "launch.options": () => {
-            throw new Error("raw");
-          },
-        },
+    const slot = renderSettings({
+      "account.inspect": () => {
+        throw new Error("raw vendor body with token xyz");
       },
-    );
+      "launch.options": () => {
+        throw new Error("raw");
+      },
+    });
     await slot.findByText(/Couldn't check the Vercel connection/);
     await slot.findByText("Couldn't load launch defaults.");
     expect(slot.queryByText(/xyz/)).toBeNull();

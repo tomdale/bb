@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useId, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 import {
   definePluginApp,
   useRpc,
@@ -11,6 +19,8 @@ import {
 } from "@get-bb/plugin-sdk/app";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import {
   COARSE_POINTER_COMPACT_ICON_SIZE_CLASS,
@@ -181,37 +191,43 @@ function choiceList(
   return [...values].sort((left, right) => left - right);
 }
 
-function useRpcLoad<T>(request: () => Promise<T>): {
+function useLoad<T>(request: () => Promise<T>): {
   state: Load<T>;
   retry: () => void;
+  replace: (data: T) => void;
 } {
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<Load<T>>({ status: "pending" });
+  const generation = useRef(0);
   useEffect(() => {
-    let active = true;
+    const current = ++generation.current;
     request().then(
       (data) => {
-        if (active) setState({ status: "ready", data });
+        if (generation.current === current) setState({ status: "ready", data });
       },
       () => {
-        if (active) setState({ status: "error" });
+        if (generation.current === current) setState({ status: "error" });
       },
     );
     return () => {
-      active = false;
+      if (generation.current === current) generation.current += 1;
     };
   }, [request, attempt]);
   const retry = useCallback(() => {
     setState({ status: "pending" });
     setAttempt((current) => current + 1);
   }, []);
-  return { state, retry };
+  const replace = useCallback((data: T) => {
+    generation.current += 1;
+    setState({ status: "ready", data });
+  }, []);
+  return { state, retry, replace };
 }
 
 function useLaunchOptions() {
   const rpc = useRpc<Contract>();
   const request = useCallback(() => rpc.call("launch.options", {}), [rpc]);
-  return useRpcLoad(request);
+  return useLoad(request);
 }
 
 function MenuChoice({
@@ -524,7 +540,98 @@ function SettingsHeading({
   );
 }
 
-function ConnectionStatus({ state }: { state: Load<AccountStatus> }) {
+type AccountHost = { id: string; name: string; online: boolean };
+
+type ConnectState =
+  | { status: "idle" }
+  | { status: "connecting" }
+  | { status: "failed" };
+
+const LINK_PATH_PLACEHOLDER = "/absolute/path/to/folder";
+const CONNECT_FAILED_MESSAGE =
+  "Couldn't connect. Check that the machine is online and that vc login and vc link finished there, then try again.";
+
+function isAbsolutePath(path: string): boolean {
+  return path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path);
+}
+
+function shellArgument(value: string): string {
+  return /^[\w@%+=:,./-]+$/.test(value)
+    ? value
+    : `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function useAccountHosts() {
+  const sdk = useSdk();
+  const request = useCallback(async (): Promise<AccountHost[]> => {
+    const hosts = await sdk.hosts.list({ type: "persistent" });
+    return hosts
+      .filter(
+        (host) =>
+          host.machineProviderId === null &&
+          host.lifecycle.phase !== "removing" &&
+          host.lifecycle.phase !== "destroyed",
+      )
+      .map((host) => ({
+        id: host.id,
+        name: host.name,
+        online: host.status === "connected",
+      }));
+  }, [sdk]);
+  return useLoad(request);
+}
+
+function hostLabel(hosts: Load<AccountHost[]>, hostId: string): string {
+  const host =
+    hosts.status === "ready"
+      ? hosts.data.find((candidate) => candidate.id === hostId)
+      : undefined;
+  return host?.name ?? hostId;
+}
+
+function ConnectionDetails({
+  account,
+  machineName,
+}: {
+  account: AccountStatus;
+  machineName: string;
+}) {
+  const rows = [
+    { term: "Machine", value: machineName, mono: false },
+    { term: "Linked folder", value: account.directory, mono: true },
+    { term: "Vercel account", value: account.accountId, mono: true },
+    { term: "Team", value: account.teamId, mono: true },
+    { term: "Project", value: account.projectId, mono: true },
+  ].filter(
+    (row): row is { term: string; value: string; mono: boolean } =>
+      row.value !== null,
+  );
+  return (
+    <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 pl-5.5 text-xs">
+      {rows.map(({ term, value, mono }) => (
+        <div key={term} className="contents">
+          <dt className="text-muted-foreground">{term}</dt>
+          <dd
+            className={cn(
+              "min-w-0 break-all text-foreground",
+              mono ? "font-mono" : null,
+            )}
+          >
+            {value}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function ConnectionStatus({
+  state,
+  hosts,
+}: {
+  state: Load<AccountStatus>;
+  hosts: Load<AccountHost[]>;
+}) {
   if (state.status === "pending") {
     return (
       <p
@@ -548,37 +655,331 @@ function ConnectionStatus({ state }: { state: Load<AccountStatus> }) {
     );
   }
   const account = state.data;
+  if (account.hostId === null) {
+    return (
+      <div role="status" className="space-y-1 text-xs">
+        <p className="flex items-start gap-2 text-foreground">
+          <Icon name="Info" className="mt-0.5 size-3.5 shrink-0" />
+          <span className="min-w-0 break-words">
+            Not connected. Set up the Vercel CLI on one of your machines below.
+          </span>
+        </p>
+        {account.message === "" ? null : (
+          <p className="pl-5.5 leading-relaxed text-muted-foreground">
+            {account.message}
+          </p>
+        )}
+      </div>
+    );
+  }
+  const machineName = hostLabel(hosts, account.hostId);
   if (!account.available) {
     return (
-      <p
-        role="alert"
-        className="flex items-start gap-2 text-xs text-destructive-text"
-      >
-        <Icon name="AlertCircle" className="mt-0.5 size-3.5 shrink-0" />
-        <span className="min-w-0 break-words">{account.message}</span>
+      <div className="space-y-2 text-xs">
+        <div role="alert" className="space-y-1">
+          <p className="flex items-start gap-2 text-destructive-text">
+            <Icon name="AlertCircle" className="mt-0.5 size-3.5 shrink-0" />
+            <span className="min-w-0 break-words">{account.message}</span>
+          </p>
+          <p className="pl-5.5 leading-relaxed text-muted-foreground">
+            BB can't start or manage sandboxes with this connection. Fix it on{" "}
+            {machineName}, then check again, or connect again below.
+          </p>
+        </div>
+        <ConnectionDetails account={account} machineName={machineName} />
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-2 text-xs">
+      <div role="status" className="space-y-1">
+        <p className="flex items-start gap-2 text-foreground">
+          <Icon
+            name="CircleCheck"
+            className="mt-0.5 size-3.5 shrink-0 text-success"
+          />
+          <span className="min-w-0 break-words">
+            Connected. New sandboxes use the Vercel CLI on {machineName}.
+          </span>
+        </p>
+        <p className="pl-5.5 leading-relaxed text-muted-foreground">
+          This confirms the CLI can get a short-lived token for the linked
+          project. It doesn't confirm your plan's sandbox limits; Vercel checks
+          those when a sandbox starts.
+        </p>
+      </div>
+      <ConnectionDetails account={account} machineName={machineName} />
+    </div>
+  );
+}
+
+function MachineField({
+  labelId,
+  hosts,
+  hostId,
+  onRetry,
+  onChoose,
+}: {
+  labelId: string;
+  hosts: Load<AccountHost[]>;
+  hostId: string | null;
+  onRetry: () => void;
+  onChoose: (hostId: string) => void;
+}) {
+  if (hosts.status === "pending") {
+    return (
+      <p role="status" className="text-xs text-muted-foreground">
+        Loading your machines…
       </p>
     );
   }
-  const scope = [account.teamId, account.projectId].filter(
-    (entry): entry is string => entry !== null,
-  );
+  if (hosts.status === "error") {
+    return (
+      <div className="flex flex-wrap items-center gap-3">
+        <p role="alert" className="text-xs text-destructive-text">
+          Couldn't load your machines.
+        </p>
+        <Button type="button" size="sm" variant="ghost" onClick={onRetry}>
+          Retry
+        </Button>
+      </div>
+    );
+  }
+  if (hosts.data.length === 0) {
+    return (
+      <p className="text-xs text-muted-foreground">
+        No machines are enrolled in BB. Add the machine that runs the Vercel
+        CLI, then check again.
+      </p>
+    );
+  }
+  const selected = hosts.data.find((host) => host.id === hostId) ?? null;
+  const triggerLabel =
+    selected === null
+      ? "Choose a machine"
+      : `${selected.name}${selected.online ? "" : " (offline)"}`;
   return (
-    <div role="status" className="space-y-1 text-xs">
-      <p className="flex items-start gap-2 text-foreground">
-        <Icon
-          name="CircleCheck"
-          className="mt-0.5 size-3.5 shrink-0 text-success"
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          aria-labelledby={`${labelId} ${labelId}-value`}
+          className="w-full min-w-0 justify-between sm:w-72"
+        >
+          <span id={`${labelId}-value`} className="min-w-0 truncate">
+            {triggerLabel}
+          </span>
+          <Icon
+            name="ChevronDown"
+            className={cn(
+              "shrink-0 text-muted-foreground",
+              COARSE_POINTER_COMPACT_ICON_SIZE_CLASS,
+            )}
+          />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="start"
+        mobileTitle="Machine"
+        aria-labelledby={labelId}
+        className={cn(OPTION_MENU_CONTENT_CLASS_NAME, "max-w-80")}
+      >
+        {hosts.data.map((host) => (
+          <MenuChoice
+            key={host.id}
+            label={host.name}
+            tag={host.online ? null : "Offline"}
+            selected={host.id === hostId}
+            onSelect={() => onChoose(host.id)}
+          />
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function ConnectForm({
+  account,
+  hosts,
+  retryHosts,
+  onConnected,
+}: {
+  account: AccountStatus | null;
+  hosts: Load<AccountHost[]>;
+  retryHosts: () => void;
+  onConnected: (account: AccountStatus) => void;
+}) {
+  const rpc = useRpc<Contract>();
+  const idPrefix = useId();
+  const machineLabelId = `${idPrefix}-machine`;
+  const directoryId = `${idPrefix}-directory`;
+  const directoryErrorId = `${idPrefix}-directory-error`;
+  const [hostChoice, setHostChoice] = useState<string | null>(null);
+  const [directoryDraft, setDirectoryDraft] = useState<string | null>(null);
+  const [attempted, setAttempted] = useState(false);
+  const [connect, setConnect] = useState<ConnectState>({ status: "idle" });
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  const hostList = hosts.status === "ready" ? hosts.data : [];
+  const onlyHost = hostList.length === 1 ? hostList[0] : undefined;
+  const hostId = hostChoice ?? account?.hostId ?? onlyHost?.id ?? null;
+  const selectedHost = hostList.find((host) => host.id === hostId) ?? null;
+  const directory = directoryDraft ?? account?.directory ?? "";
+  const trimmed = directory.trim();
+  const directoryError =
+    trimmed === ""
+      ? "Enter the linked folder's absolute path."
+      : isAbsolutePath(trimmed)
+        ? null
+        : "Use an absolute path, like /Users/you/projects/app.";
+  const showDirectoryError = attempted && directoryError !== null;
+  const hostProblem =
+    selectedHost === null
+      ? attempted && hosts.status === "ready" && hostList.length > 0
+        ? "Choose the machine where you ran vc login and vc link."
+        : null
+      : selectedHost.online
+        ? null
+        : `${selectedHost.name} is offline. Reconnect it to BB before connecting Vercel.`;
+  const connecting = connect.status === "connecting";
+  const reconnect = account?.hostId !== null && account?.hostId !== undefined;
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setAttempted(true);
+    if (
+      connecting ||
+      selectedHost === null ||
+      !selectedHost.online ||
+      directoryError !== null
+    ) {
+      return;
+    }
+    setConnect({ status: "connecting" });
+    rpc
+      .call("account.connect", { hostId: selectedHost.id, directory: trimmed })
+      .then(
+        (result) => {
+          if (!mounted.current) return;
+          setConnect({ status: "idle" });
+          onConnected(result);
+        },
+        () => {
+          if (mounted.current) setConnect({ status: "failed" });
+        },
+      );
+  };
+
+  const linkCommand = `vc link --cwd ${
+    directoryError === null ? shellArgument(trimmed) : LINK_PATH_PLACEHOLDER
+  }`;
+
+  return (
+    <form
+      noValidate
+      aria-label="Connect the Vercel CLI"
+      onSubmit={submit}
+      className="space-y-3"
+    >
+      <ol className="list-decimal space-y-1.5 pl-4 text-xs leading-relaxed text-muted-foreground">
+        <li>
+          On the machine BB should use, run{" "}
+          <code className="font-mono text-foreground">vc login</code> in a
+          terminal and finish Vercel's sign-in in your browser.
+        </li>
+        <li>
+          Link a folder on that machine to an existing Vercel project:{" "}
+          <code className="break-all font-mono text-foreground">
+            {linkCommand}
+          </code>
+        </li>
+        <li>Choose that machine and folder here, then connect.</li>
+      </ol>
+
+      <div className="space-y-1.5">
+        <Label id={machineLabelId} className="text-xs">
+          Machine
+        </Label>
+        <MachineField
+          labelId={machineLabelId}
+          hosts={hosts}
+          hostId={hostId}
+          onRetry={retryHosts}
+          onChoose={(next) => {
+            setHostChoice(next);
+            setConnect({ status: "idle" });
+          }}
         />
-        <span className="min-w-0 break-words">
-          The token can list sandboxes
-          {scope.length === 0 ? "" : ` in ${scope.join(" / ")}`}.
-        </span>
+        {hostProblem === null ? null : (
+          <p className="text-xs text-warning-text">{hostProblem}</p>
+        )}
+      </div>
+
+      <div className="space-y-1.5">
+        <Label htmlFor={directoryId} className="text-xs">
+          Linked folder
+        </Label>
+        <Input
+          id={directoryId}
+          value={directory}
+          placeholder={LINK_PATH_PLACEHOLDER}
+          spellCheck={false}
+          autoCapitalize="off"
+          aria-invalid={showDirectoryError}
+          aria-describedby={showDirectoryError ? directoryErrorId : undefined}
+          className="font-mono sm:w-96"
+          onChange={(event) => {
+            setDirectoryDraft(event.target.value);
+            setConnect({ status: "idle" });
+          }}
+        />
+        {showDirectoryError ? (
+          <p id={directoryErrorId} className="text-xs text-destructive-text">
+            {directoryError}
+          </p>
+        ) : null}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3">
+        <Button
+          type="submit"
+          size="sm"
+          disabled={connecting}
+          aria-busy={connecting}
+        >
+          {connecting ? (
+            <Icon name="Spinner" className="size-3.5 animate-spin" />
+          ) : null}
+          {connecting
+            ? "Connecting…"
+            : reconnect
+              ? "Reconnect"
+              : "Connect linked project"}
+        </Button>
+        {connect.status === "failed" ? (
+          <p role="alert" className="text-xs text-destructive-text">
+            {CONNECT_FAILED_MESSAGE}
+          </p>
+        ) : null}
+      </div>
+
+      <p className="text-xs leading-relaxed text-muted-foreground">
+        Your Vercel sign-in stays in the CLI on that machine. BB saves only the
+        machine, the folder, and the account, team, and project IDs, and asks
+        the CLI for a short-lived token for each operation. If you sign in as a
+        different Vercel user or link the folder to another project, connect
+        again. A new connection applies to new sandboxes; existing sandboxes
+        keep the one they started with.
       </p>
-      <p className="pl-5.5 leading-relaxed text-muted-foreground">
-        This doesn't confirm your plan's sandbox limits. Vercel checks those
-        when a sandbox starts.
-      </p>
-    </div>
+    </form>
   );
 }
 
@@ -588,27 +989,49 @@ function VercelSettingsSection() {
     () => rpc.call("account.inspect", {}),
     [rpc],
   );
-  const account = useRpcLoad(inspectAccount);
+  const account = useLoad(inspectAccount);
+  const hosts = useAccountHosts();
   const { state: options, retry: retryOptions } = useLaunchOptions();
   const loaded = options.status === "ready" ? options.data : null;
+  const checkAgain = () => {
+    account.retry();
+    hosts.retry();
+  };
   return (
     <div className="w-full min-w-0 space-y-5">
       <section className="space-y-2">
         <SettingsHeading
-          title="Connection"
+          title="Vercel account"
           action={
             <Button
               type="button"
               size="sm"
               variant="outline"
               disabled={account.state.status === "pending"}
-              onClick={account.retry}
+              onClick={checkAgain}
             >
               Check again
             </Button>
           }
         />
-        <ConnectionStatus state={account.state} />
+        <ConnectionStatus state={account.state} hosts={hosts.state} />
+      </section>
+
+      <section className="space-y-2">
+        <SettingsHeading
+          title={
+            account.state.status === "ready" &&
+            account.state.data.hostId !== null
+              ? "Change connection"
+              : "Set up"
+          }
+        />
+        <ConnectForm
+          account={account.state.status === "ready" ? account.state.data : null}
+          hosts={hosts.state}
+          retryHosts={hosts.retry}
+          onConnected={account.replace}
+        />
       </section>
 
       <section className="space-y-2">
@@ -908,7 +1331,7 @@ function expiryView(
       tone: "warning",
       label: "Sandbox",
       spoken: "status unavailable",
-      detail: `Couldn't read the sandbox's time limit. ${DATA_LOSS_NOTE} ${REFRESH_HINT}`,
+      detail: `Couldn't read the sandbox's time limit. ${DATA_LOSS_NOTE} If this keeps happening, check the Vercel account in plugin settings. ${REFRESH_HINT}`,
       final: false,
     };
   }
