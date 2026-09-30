@@ -76,6 +76,38 @@ function registerResponder(
 }
 
 describe("context clear dispatch races", () => {
+  it("accepts a new send after a completed clear", async () => {
+    await withTestHarness(async (harness) => {
+      const fixture = seedFixture(harness);
+      const responder = registerResponder(harness, fixture, async () => {});
+
+      const clearResponse = await harness.app.request(
+        `/api/v1/threads/${fixture.thread.id}/context/clear`,
+        { method: "POST" },
+      );
+      expect(clearResponse.status).toBe(200);
+
+      const sendResponse = await harness.app.request(
+        `/api/v1/threads/${fixture.thread.id}/send`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            mode: "start",
+            input: textInput("A new task after clear"),
+          }),
+        },
+      );
+
+      expect(sendResponse.status).toBe(200);
+      await vi.waitFor(() => {
+        expect(responder.requests.map(({ command }) => command.type)).toContain(
+          "thread.start",
+        );
+      });
+    });
+  });
+
   it.each(["queue", "parent notice"] as const)(
     "rejects clear while a %s is preparing a turn",
     async (source) => {

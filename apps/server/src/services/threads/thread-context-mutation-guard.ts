@@ -10,14 +10,14 @@ export class ThreadContextClearInProgressError extends ApiError {
 
 async function withThreadContextMutationGuard<T>(
   threadId: string,
-  mode: "clear" | "send" | "provider-action" | "thread-operation",
+  mode: "clear" | "send" | "provider-action",
   work: () => Promise<T>,
 ): Promise<T> {
   const inFlight = inFlightByThreadId.get(threadId) ?? 0;
   if (
     (mode === "send" && inFlight < 0) ||
     (mode === "provider-action" && inFlight < 0) ||
-    (mode !== "send" && mode !== "provider-action" && inFlight !== 0)
+    (mode === "clear" && inFlight !== 0)
   ) {
     if (mode === "send") throw new ThreadContextClearInProgressError();
     if (mode === "provider-action") {
@@ -35,19 +35,13 @@ async function withThreadContextMutationGuard<T>(
   }
   inFlightByThreadId.set(
     threadId,
-    mode === "clear" ||
-      mode === "provider-action" ||
-      mode === "thread-operation"
-      ? -1
-      : inFlight + 1,
+    mode === "clear" || mode === "provider-action" ? -1 : inFlight + 1,
   );
   try {
     return await work();
   } finally {
     const remaining =
-      mode === "clear" ||
-      mode === "provider-action" ||
-      mode === "thread-operation"
+      mode === "clear" || mode === "provider-action"
         ? 0
         : (inFlightByThreadId.get(threadId) ?? 1) - 1;
     if (remaining === 0) inFlightByThreadId.delete(threadId);
@@ -74,11 +68,4 @@ export async function withThreadProviderActionGuard<T>(
   work: () => Promise<T>,
 ): Promise<T> {
   return withThreadContextMutationGuard(threadId, "provider-action", work);
-}
-
-export async function withThreadOperationGuard<T>(
-  threadId: string,
-  work: () => Promise<T>,
-): Promise<T> {
-  return withThreadContextMutationGuard(threadId, "thread-operation", work);
 }
