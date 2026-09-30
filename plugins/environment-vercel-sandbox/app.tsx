@@ -879,8 +879,7 @@ function expiryView(
       tone: "warning",
       label: "Cleanup failed",
       spoken: "cleanup failed",
-      detail:
-        "BB couldn't finish removing this sandbox machine. The Vercel sandbox may still be running and billing your team. Retry cleanup from the thread's machine banner or with bb machine retry-cleanup.",
+      detail: `BB couldn't finish removing this sandbox machine. The Vercel sandbox may still be running and billing your team. Retry cleanup in machine settings or with bb machine retry-cleanup ${resolution.hostId}.`,
       final: false,
     };
   }

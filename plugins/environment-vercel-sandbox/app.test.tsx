@@ -825,7 +825,9 @@ describe("expiry indicator", () => {
     });
     expect(hostsGet).toHaveBeenCalledTimes(1);
     openMenu(trigger);
-    await slot.findByText(/may still be running and billing/);
+    await slot.findByText(
+      /may still be running and billing your team\. Retry cleanup in machine settings or with bb machine retry-cleanup host-1\./,
+    );
     expect(slot.getByRole("button", { name: "Refresh" })).toBeTruthy();
   });
 
