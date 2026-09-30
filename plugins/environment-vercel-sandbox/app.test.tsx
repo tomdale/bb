@@ -6,7 +6,15 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from "vitest";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { PROVIDER_ID } from "./provider-id.js";
 
@@ -533,9 +541,13 @@ describe("settings section", () => {
     expect(document.body.textContent).not.toMatch(TOKEN_SHAPED);
     expect(slot.queryByLabelText(/token/i)).toBeNull();
     expect(
-      slot.getByText(/Any access token saved by an earlier version/)
-        .textContent,
-    ).toContain("revoke it in Vercel");
+      slot.getByText(
+        /This page can't remove an access token saved by an earlier/,
+      ).textContent,
+    ).toContain("revoke that token in Vercel");
+    expect(
+      slot.queryByText(/until someone removes it|Remove it there/),
+    ).toBeNull();
   });
 
   it("guides terminal sign-in and linking when nothing is connected", async () => {
@@ -680,44 +692,98 @@ describe("settings section", () => {
     ).toBe(false);
   });
 
-  it("refuses relative folders, a missing machine, and offline machines and focuses the problem", async () => {
+  function describedText(element: Element) {
+    return (element.getAttribute("aria-describedby") ?? "")
+      .split(" ")
+      .map((id) => document.getElementById(id)?.textContent ?? "")
+      .join(" ");
+  }
+
+  function recordFocus() {
+    const seen: {
+      element: Element;
+      invalid: string | null;
+      described: string;
+    }[] = [];
+    const listener = (event: FocusEvent) => {
+      if (!(event.target instanceof Element)) return;
+      seen.push({
+        element: event.target,
+        invalid: event.target.getAttribute("aria-invalid"),
+        described: describedText(event.target),
+      });
+    };
+    document.addEventListener("focusin", listener);
+    onTestFinished(() => document.removeEventListener("focusin", listener));
+    return seen;
+  }
+
+  function submitConnect(slot: ReturnType<typeof renderSettings>) {
+    fireEvent.submit(
+      slot.getByRole("form", { name: "Connect the Vercel CLI" }),
+    );
+  }
+
+  it("focuses the machine picker with its problem already described on the first blocked submit", async () => {
     const slot = renderSettings({
       "account.inspect": () => NOT_CONNECTED,
       "account.connect": () => CONNECTED,
     });
     await slot.findByText(/Not connected/);
-    const folder = slot.getByLabelText("Linked folder");
-    const connect = () =>
-      fireEvent.submit(
-        slot.getByRole("form", { name: "Connect the Vercel CLI" }),
-      );
-    const describedText = (element: Element) =>
-      (element.getAttribute("aria-describedby") ?? "")
-        .split(" ")
-        .map((id) => document.getElementById(id)?.textContent ?? "")
-        .join(" ");
-    fireEvent.change(folder, { target: { value: "projects/app" } });
-    connect();
+    const seen = recordFocus();
+    submitConnect(slot);
+    await waitFor(() => expect(seen.length).toBeGreaterThan(0));
     const trigger = slot.getByRole("button", { name: /Machine/ });
-    expect(document.activeElement).toBe(trigger);
-    expect(describedText(trigger)).toContain(
+    expect(seen[0]?.element).toBe(trigger);
+    expect(seen[0]?.described).toContain(
       "Choose the machine where you ran vc login and vc link.",
     );
-    openMenu(trigger);
+    expect(connectCalls(slot)).toEqual([]);
+  });
+
+  it("focuses an invalid folder with its error already attached on the first blocked submit", async () => {
+    const slot = renderSettings({
+      "account.inspect": () => NOT_CONNECTED,
+      "account.connect": () => CONNECTED,
+    });
+    await slot.findByText(/Not connected/);
+    openMenu(slot.getByRole("button", { name: /Machine/ }));
     fireEvent.click(
       await slot.findByRole("menuitemradio", { name: /Build box/ }),
     );
-    connect();
-    expect(document.activeElement).toBe(folder);
-    expect(folder.getAttribute("aria-invalid")).toBe("true");
-    expect(describedText(folder)).toContain("Use an absolute path");
-    fireEvent.change(folder, { target: { value: "/Users/me/app" } });
+    const folder = slot.getByLabelText("Linked folder");
+    fireEvent.change(folder, { target: { value: "projects/app" } });
+    const seen = recordFocus();
+    submitConnect(slot);
+    await waitFor(() =>
+      expect(seen.some((entry) => entry.element === folder)).toBe(true),
+    );
+    const first = seen.find((entry) => entry.element === folder);
+    expect(first?.invalid).toBe("true");
+    expect(first?.described).toContain("Use an absolute path");
+    expect(connectCalls(slot)).toEqual([]);
+  });
+
+  it("focuses an offline machine with the offline reason described", async () => {
+    const slot = renderSettings({
+      "account.inspect": () => NOT_CONNECTED,
+      "account.connect": () => CONNECTED,
+    });
+    await slot.findByText(/Not connected/);
+    fireEvent.change(slot.getByLabelText("Linked folder"), {
+      target: { value: "/Users/me/app" },
+    });
     openMenu(slot.getByRole("button", { name: /Machine/ }));
     fireEvent.click(await slot.findByRole("menuitemradio", { name: /Studio/ }));
-    connect();
-    const offlineTrigger = slot.getByRole("button", { name: /Machine Studio/ });
-    expect(document.activeElement).toBe(offlineTrigger);
-    expect(describedText(offlineTrigger)).toContain("Studio is offline");
+    const seen = recordFocus();
+    submitConnect(slot);
+    const trigger = slot.getByRole("button", { name: /Machine Studio/ });
+    await waitFor(() =>
+      expect(seen.some((entry) => entry.element === trigger)).toBe(true),
+    );
+    expect(
+      seen.find((entry) => entry.element === trigger)?.described,
+    ).toContain("Studio is offline");
     expect(connectCalls(slot)).toEqual([]);
   });
 

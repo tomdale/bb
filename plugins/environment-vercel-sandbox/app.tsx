@@ -867,6 +867,18 @@ function ConnectForm({
   const [hostChoice, setHostChoice] = useState<string | null>(null);
   const [directoryDraft, setDirectoryDraft] = useState<string | null>(null);
   const [attempted, setAttempted] = useState(false);
+  const [focusRequest, setFocusRequest] = useState<{
+    target: "machine" | "directory";
+    attempt: number;
+  } | null>(null);
+  useEffect(() => {
+    if (focusRequest === null) return;
+    const target =
+      focusRequest.target === "machine"
+        ? machineTriggerRef.current
+        : directoryRef.current;
+    target?.focus();
+  }, [focusRequest]);
   const [connect, setConnect] = useState<ConnectState>({ status: "idle" });
   const mounted = useRef(true);
   useEffect(() => {
@@ -905,11 +917,17 @@ function ConnectForm({
     setAttempted(true);
     if (connecting) return;
     if (selectedHost === null || !selectedHost.online) {
-      machineTriggerRef.current?.focus();
+      setFocusRequest((previous) => ({
+        target: "machine",
+        attempt: (previous?.attempt ?? 0) + 1,
+      }));
       return;
     }
     if (directoryError !== null) {
-      directoryRef.current?.focus();
+      setFocusRequest((previous) => ({
+        target: "directory",
+        attempt: (previous?.attempt ?? 0) + 1,
+      }));
       return;
     }
     setHostChoice(selectedHost.id);
@@ -1041,12 +1059,11 @@ function ConnectForm({
         Your Vercel sign-in stays in the CLI on that machine. For a CLI
         connection, BB saves only the machine, the folder, and the account,
         team, and project IDs, and asks the CLI for a short-lived token for each
-        operation. Any access token saved by an earlier version of this plugin
-        stays in BB's plugin settings until someone removes it; revoke it in
-        Vercel if you no longer use it. If you sign in as a different Vercel
-        user or link the folder to another project, connect again. A new
-        connection applies to new sandboxes; existing sandboxes keep the one
-        they started with.
+        operation. This page can't remove an access token saved by an earlier
+        version of this plugin; revoke that token in Vercel if you no longer use
+        it. If you sign in as a different Vercel user or link the folder to
+        another project, connect again. A new connection applies to new
+        sandboxes; existing sandboxes keep the one they started with.
       </p>
     </form>
   );
@@ -1286,9 +1303,9 @@ function LegacyAllocations({
         ) : null}
       </div>
       <p className="text-xs leading-relaxed text-muted-foreground">
-        If these sandboxes were created with an access token saved in an earlier
-        version of this plugin, that token is still in BB's plugin settings.
-        Remove it there and revoke it in Vercel once you no longer need it.
+        If these sandboxes were created with an access token saved by an earlier
+        version of this plugin, this page can't remove that token. Revoke it in
+        Vercel once you no longer need it.
       </p>
     </section>
   );
