@@ -10,7 +10,12 @@ description:
 Use the **Read response aloud / stop playback** action on an assistant response.
 An inline player appears beneath the message while speech is prepared and
 played. It shows live audio levels and progress, and provides pause, resume, and
-stop controls. Activating the same response action again also stops playback. A
+stop controls. Click or drag the waveform to seek through the whole response, or
+focus it and use Left/Right in 5% steps, Home, or End. Whole-response positions
+are estimated by phrase character counts because phrase durations are not known
+until audio is fetched. Phrase audio already fetched during a playback session is
+cached for immediate revisits. Activating the same response action again also
+stops playback. A
 floating player is used if the message's timeline row is unavailable.
 
 Install from the repository root with `bb plugin install ./plugins/tts`.
@@ -51,7 +56,8 @@ characters, and limits each phrase request to 360 characters. The Gateway
 returns complete base64 audio JSON; its documented REST endpoint does not stream
 audio. Read aloud starts after the first phrase is synthesized and fetches a
 following phrase ahead while playback runs, which can reduce perceived latency
-and gaps but cannot stream within a phrase. Hovering over the player shows the
+and gaps but cannot stream within a phrase. Cached phrase audio is released on
+stop, completion, errors, and teardown. Hovering over the player shows the
 measured time to first playback. Speech requires an available Gateway
 account/model. Gateway errors appear in the player; generated speech is not
 cached.

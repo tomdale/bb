@@ -14,7 +14,7 @@ const MAX_ERROR_LENGTH = 240;
 const MAX_CHUNK_CHARACTERS = 360;
 const playListeners = new Set<(message: ThreadChatMessageReference) => void>();
 
-type SpeechSegment = { url: string };
+type SpeechSegment = { blob: Blob; url: string };
 type ActivePlayback = {
   messageId: string;
   controller: AbortController;
@@ -22,6 +22,13 @@ type ActivePlayback = {
   urls: Set<string>;
   segments: string[];
   prefetched: Promise<SpeechSegment> | null;
+  segmentCache: Map<number, SpeechSegment>;
+  segmentRequests: Map<number, Promise<SpeechSegment>>;
+  seekVersion: number;
+  currentIndex: number;
+  progressTimer: number | null;
+  isPlaying: boolean;
+  seek: ((progress: number) => void) | null;
   audioContext: AudioContext | null;
   analyser: AnalyserNode | null;
   startedAt: number;
@@ -132,14 +139,18 @@ function Waveform({
   analyser,
   progress,
   state,
+  onSeek,
 }: {
   analyser: AnalyserNode | null;
   progress: number;
   state: WaveState;
+  onSeek: (progress: number) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const progressRef = useRef(progress);
   const stateRef = useRef(state);
+  const hoverRef = useRef<number | null>(null);
+  const dragRef = useRef<number | null>(null);
   useEffect(() => {
     progressRef.current = progress;
     stateRef.current = state;
@@ -214,7 +225,10 @@ function Waveform({
         total += next;
         const barHeight = Math.max(2, next * height);
         context.fillStyle = ink;
-        context.globalAlpha = index < played ? 0.9 : 0.24;
+        const hover = hoverRef.current;
+        const underPointer =
+          hover !== null && Math.abs(index - hover * bars) < 2;
+        context.globalAlpha = underPointer ? 0.62 : index < played ? 0.9 : 0.24;
         context.beginPath();
         context.roundRect(
           index * (barWidth + gap),
@@ -224,6 +238,18 @@ function Waveform({
           barWidth / 2,
         );
         context.fill();
+      }
+      context.globalAlpha = 1;
+      const hover = hoverRef.current;
+      if (hover !== null) {
+        context.fillStyle = ink;
+        context.globalAlpha = 0.5;
+        context.fillRect(
+          Math.max(0, Math.min(width - 1, hover * width)),
+          2,
+          1,
+          height - 4,
+        );
       }
       context.globalAlpha = 1;
       player?.style.setProperty(
@@ -242,10 +268,60 @@ function Waveform({
     <canvas
       ref={canvasRef}
       className="tts-player__wave"
-      role="img"
-      aria-label={
-        analyser ? "Live audio frequency visualization" : "Audio waveform"
-      }
+      role="slider"
+      tabIndex={state === "closing" ? -1 : 0}
+      aria-label="Seek in response audio"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(progress)}
+      aria-valuetext={`${Math.round(progress)}% through response`}
+      onPointerMove={(event) => {
+        const bounds = event.currentTarget.getBoundingClientRect();
+        const position = Math.max(
+          0,
+          Math.min(1, (event.clientX - bounds.left) / bounds.width),
+        );
+        hoverRef.current = position;
+        if (dragRef.current === event.pointerId) onSeek(position * 100);
+      }}
+      onPointerLeave={() => {
+        if (dragRef.current === null) hoverRef.current = null;
+      }}
+      onPointerDown={(event) => {
+        if (state === "closing") return;
+        const bounds = event.currentTarget.getBoundingClientRect();
+        const position = Math.max(
+          0,
+          Math.min(1, (event.clientX - bounds.left) / bounds.width),
+        );
+        dragRef.current = event.pointerId;
+        event.currentTarget.setPointerCapture?.(event.pointerId);
+        hoverRef.current = position;
+        onSeek(position * 100);
+      }}
+      onPointerUp={(event) => {
+        if (dragRef.current !== event.pointerId) return;
+        dragRef.current = null;
+        event.currentTarget.releasePointerCapture?.(event.pointerId);
+      }}
+      onPointerCancel={() => {
+        dragRef.current = null;
+      }}
+      onKeyDown={(event) => {
+        const next =
+          event.key === "ArrowLeft"
+            ? Math.max(0, progress - 5)
+            : event.key === "ArrowRight"
+              ? Math.min(100, progress + 5)
+              : event.key === "Home"
+                ? 0
+                : event.key === "End"
+                  ? 100
+                  : null;
+        if (next === null) return;
+        event.preventDefault();
+        onSeek(next);
+      }}
     />
   );
 }
@@ -268,7 +344,7 @@ const PLAYER_STYLES = `
 .tts-player__button:disabled:hover{color:color-mix(in oklab,var(--ink) 55%,transparent);background:transparent}
 .tts-player__icon{width:.8rem;height:.8rem;animation:tts-icon-in .32s cubic-bezier(.34,1.56,.64,1) both}
 .tts-player__spinner{animation:tts-icon-in .32s cubic-bezier(.34,1.56,.64,1) both,tts-spin .9s linear infinite}
-.tts-player__wave{flex:1;min-width:0;height:1.5rem;color:var(--ink);mask-image:linear-gradient(90deg,transparent,black 16%,black 84%,transparent)}
+.tts-player__wave{flex:1;min-width:0;height:1.5rem;color:var(--ink);cursor:pointer;touch-action:none;mask-image:linear-gradient(90deg,transparent,black 16%,black 84%,transparent)}\n.tts-player__wave:focus-visible{outline:2px solid var(--ring);outline-offset:3px;border-radius:2px}
 .tts-player__status{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 .tts-player__error{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:color-mix(in oklab,var(--ink) 72%,transparent)}
 @keyframes tts-content-in{from{opacity:0;filter:blur(4px)}}
@@ -410,6 +486,7 @@ function PlayerCard({
   analyser,
   closing,
   onPause,
+  onSeek,
   onStop,
   onDismiss,
   onExited,
@@ -419,6 +496,7 @@ function PlayerCard({
   analyser: AnalyserNode | null;
   closing: boolean;
   onPause: () => void;
+  onSeek: (progress: number) => void;
   onStop: () => void;
   onDismiss: () => void;
   onExited: () => void;
@@ -519,6 +597,7 @@ function PlayerCard({
                 analyser={analyser}
                 progress={active.progress}
                 state={closing ? "closing" : active.state}
+                onSeek={onSeek}
               />
               <button
                 className="tts-player__button"
@@ -562,6 +641,10 @@ function ReadAloudAction() {
     activeRef.current = null;
     playback.controller.abort();
     playback.audio?.pause();
+    if (playback.progressTimer !== null) {
+      window.clearInterval(playback.progressTimer);
+      playback.progressTimer = null;
+    }
     if (playback.audio !== null) {
       playback.audio.removeAttribute("src");
       playback.audio.load();
@@ -613,6 +696,13 @@ function ReadAloudAction() {
         urls: new Set(),
         segments: splitSpeechText(text),
         prefetched: null,
+        segmentCache: new Map(),
+        segmentRequests: new Map(),
+        seekVersion: 0,
+        currentIndex: 0,
+        progressTimer: null,
+        isPlaying: true,
+        seek: null,
         audioContext: null,
         analyser: null,
         startedAt: performance.now(),
@@ -648,31 +738,96 @@ function ReadAloudAction() {
         void pending.catch(() => undefined);
         return pending;
       };
-      const fetchSegment = async (index: number): Promise<SpeechSegment> => {
-        const response = await fetch(
-          `/api/v1/plugins/${encodeURIComponent(pluginId)}/http/speech`,
-          {
-            method: "POST",
-            signal: controller.signal,
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              threadId: message.threadId,
-              text: playback.segments[index],
-            }),
-          },
-        );
-        if (!response.ok) throw new Error(await errorFromResponse(response));
-        const blob = await response.blob();
-        if (activeRef.current !== playback || controller.signal.aborted) {
-          throw new DOMException("Speech request cancelled", "AbortError");
-        }
-        const url = URL.createObjectURL(blob);
-        playback.urls.add(url);
-        return { url };
+      const fetchSegment = (index: number): Promise<SpeechSegment> => {
+        const cached = playback.segmentCache.get(index);
+        if (cached) return Promise.resolve(cached);
+        const pending = playback.segmentRequests.get(index);
+        if (pending) return pending;
+        const request = (async () => {
+          const response = await fetch(
+            `/api/v1/plugins/${encodeURIComponent(pluginId)}/http/speech`,
+            {
+              method: "POST",
+              signal: controller.signal,
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                threadId: message.threadId,
+                text: playback.segments[index],
+              }),
+            },
+          );
+          if (!response.ok) throw new Error(await errorFromResponse(response));
+          const blob = await response.blob();
+          if (activeRef.current !== playback || controller.signal.aborted) {
+            throw new DOMException("Speech request cancelled", "AbortError");
+          }
+          const url = URL.createObjectURL(blob);
+          const segment = { blob, url };
+          playback.urls.add(url);
+          playback.segmentCache.set(index, segment);
+          return segment;
+        })();
+        playback.segmentRequests.set(index, request);
+        void request
+          .finally(() => playback.segmentRequests.delete(index))
+          .catch(() => undefined);
+        return request;
       };
-      const playSegment = async (index: number, segment: SpeechSegment) => {
-        if (activeRef.current !== playback || controller.signal.aborted) return;
+      const segmentWeights = playback.segments.map((segment) => segment.length);
+      const totalWeight = segmentWeights.reduce(
+        (sum, weight) => sum + weight,
+        0,
+      );
+      const progressFor = (index: number, fraction: number) =>
+        ((segmentWeights
+          .slice(0, index)
+          .reduce((sum, weight) => sum + weight, 0) +
+          (segmentWeights[index] ?? 0) * fraction) /
+          totalWeight) *
+        100;
+      const positionFor = (progress: number) => {
+        const target =
+          (Math.max(0, Math.min(100, progress)) / 100) * totalWeight;
+        let accumulated = 0;
+        for (let index = 0; index < segmentWeights.length; index += 1) {
+          const weight = segmentWeights[index] ?? 0;
+          if (
+            target <= accumulated + weight ||
+            index === segmentWeights.length - 1
+          ) {
+            return {
+              index,
+              fraction: weight > 0 ? (target - accumulated) / weight : 0,
+            };
+          }
+          accumulated += weight;
+        }
+        return { index: 0, fraction: 0 };
+      };
+      const playSegment = async (
+        index: number,
+        segment: SpeechSegment,
+        offset = 0,
+        version = playback.seekVersion,
+      ) => {
+        if (
+          activeRef.current !== playback ||
+          controller.signal.aborted ||
+          version !== playback.seekVersion
+        )
+          return;
+        if (playback.progressTimer !== null) {
+          window.clearInterval(playback.progressTimer);
+          playback.progressTimer = null;
+        }
         await playback.audioContext?.close();
+        if (
+          activeRef.current !== playback ||
+          controller.signal.aborted ||
+          version !== playback.seekVersion
+        )
+          return;
+        playback.currentIndex = index;
         playback.audioContext = null;
         playback.analyser = null;
         const audio = new Audio(segment.url);
@@ -695,29 +850,47 @@ function ReadAloudAction() {
           setAnalyser(null);
         }
         const setProgress = () => {
-          if (activeRef.current !== playback) return;
+          if (activeRef.current !== playback || playback.audio !== audio)
+            return;
           const fraction =
             audio.duration > 0 ? audio.currentTime / audio.duration : 0;
           setActive((view) =>
             view?.messageId === message.id
-              ? {
-                  ...view,
-                  state: audio.paused ? view.state : "playing",
-                  progress:
-                    ((index + fraction) / playback.segments.length) * 100,
-                }
+              ? view
+                ? {
+                    ...view,
+                    state: playback.isPlaying ? "playing" : "paused",
+                    progress: progressFor(index, fraction),
+                  }
+                : view
               : view,
           );
         };
         const progressTimer = window.setInterval(setProgress, 180);
+        playback.progressTimer = progressTimer;
         audio.addEventListener("timeupdate", setProgress);
+        audio.addEventListener(
+          "loadedmetadata",
+          () => {
+            if (offset > 0 && Number.isFinite(audio.duration)) {
+              audio.currentTime = audio.duration * offset;
+            }
+            setProgress();
+          },
+          { once: true },
+        );
         audio.addEventListener(
           "ended",
           () => {
             window.clearInterval(progressTimer);
-            playback.urls.delete(segment.url);
-            URL.revokeObjectURL(segment.url);
-            if (activeRef.current !== playback) return;
+            if (playback.progressTimer === progressTimer)
+              playback.progressTimer = null;
+            if (
+              activeRef.current !== playback ||
+              playback.audio !== audio ||
+              version !== playback.seekVersion
+            )
+              return;
             if (index + 1 >= playback.segments.length) {
               stop();
               return;
@@ -727,7 +900,12 @@ function ReadAloudAction() {
             void (async () => {
               try {
                 const ready = next ? await next : await fetchSegment(index + 1);
-                if (activeRef.current !== playback) return;
+                if (
+                  activeRef.current !== playback ||
+                  playback.audio !== audio ||
+                  version !== playback.seekVersion
+                )
+                  return;
                 if (index + 2 < playback.segments.length) {
                   playback.prefetched = prefetchSegment(index + 2);
                 }
@@ -749,29 +927,117 @@ function ReadAloudAction() {
           "error",
           () => {
             window.clearInterval(progressTimer);
-            if (activeRef.current === playback) {
+            if (playback.progressTimer === progressTimer)
+              playback.progressTimer = null;
+            if (
+              activeRef.current === playback &&
+              playback.audio === audio &&
+              version === playback.seekVersion
+            ) {
               fail("The generated audio could not be played.");
             }
           },
           { once: true },
         );
+        if (Number.isFinite(audio.duration)) {
+          audio.currentTime = audio.duration * offset;
+        }
+        playback.isPlaying = true;
         await audio.play();
-        if (activeRef.current === playback) {
+        if (
+          activeRef.current === playback &&
+          playback.audio === audio &&
+          version === playback.seekVersion
+        ) {
           setActive((view) =>
             view?.messageId === message.id
-              ? {
-                  ...view,
-                  state: "playing",
-                  firstAudioMs:
-                    view.firstAudioMs ?? performance.now() - playback.startedAt,
-                }
+              ? view
+                ? {
+                    ...view,
+                    state: "playing",
+                    firstAudioMs:
+                      view.firstAudioMs ??
+                      performance.now() - playback.startedAt,
+                  }
+                : view
               : view,
           );
         }
       };
+      const initialSeekVersion = playback.seekVersion;
+      playback.seek = (progress) => {
+        const { index, fraction } = positionFor(progress);
+        const current = playback.audio;
+        const version = ++playback.seekVersion;
+        if (
+          index === playback.currentIndex &&
+          current &&
+          current.duration > 0
+        ) {
+          current.currentTime = current.duration * fraction;
+          if (playback.isPlaying) void current.play();
+          setActive((view) =>
+            view?.messageId === message.id
+              ? view
+                ? {
+                    ...view,
+                    progress: progressFor(index, fraction),
+                  }
+                : view
+              : view,
+          );
+          return;
+        }
+        current?.pause();
+        if (playback.progressTimer !== null) {
+          window.clearInterval(playback.progressTimer);
+          playback.progressTimer = null;
+        }
+        playback.prefetched = null;
+        setActive((view) =>
+          view?.messageId === message.id
+            ? view
+              ? {
+                  ...view,
+                  state: "loading",
+                  progress: progressFor(index, fraction),
+                }
+              : view
+            : view,
+        );
+        void (async () => {
+          try {
+            const segment = await fetchSegment(index);
+            if (
+              activeRef.current !== playback ||
+              version !== playback.seekVersion
+            )
+              return;
+            if (index + 1 < playback.segments.length)
+              playback.prefetched = prefetchSegment(index + 1);
+            await playSegment(index, segment, fraction, version);
+          } catch (cause) {
+            if (
+              controller.signal.aborted ||
+              activeRef.current !== playback ||
+              version !== playback.seekVersion
+            )
+              return;
+            fail(
+              cause instanceof Error
+                ? cause.message
+                : "Speech generation failed.",
+            );
+          }
+        })();
+      };
       try {
         const first = await fetchSegment(0);
-        if (activeRef.current !== playback) return;
+        if (
+          activeRef.current !== playback ||
+          playback.seekVersion !== initialSeekVersion
+        )
+          return;
         if (playback.segments.length > 1)
           playback.prefetched = prefetchSegment(1);
         await playSegment(0, first);
@@ -789,9 +1055,11 @@ function ReadAloudAction() {
     const playback = activeRef.current;
     if (playback?.audio === null || playback === null) return;
     if (playback.audio.paused) {
+      playback.isPlaying = true;
       void playback.audio.play();
       setActive((view) => (view ? { ...view, state: "playing" } : view));
     } else {
+      playback.isPlaying = false;
       playback.audio.pause();
       setActive((view) => (view ? { ...view, state: "paused" } : view));
     }
@@ -821,6 +1089,10 @@ function ReadAloudAction() {
       activeRef.current = null;
       playback.controller.abort();
       playback.audio?.pause();
+      if (playback.progressTimer !== null) {
+        window.clearInterval(playback.progressTimer);
+        playback.progressTimer = null;
+      }
       if (playback.audio) {
         playback.audio.removeAttribute("src");
         playback.audio.load();
@@ -839,6 +1111,7 @@ function ReadAloudAction() {
         error={error}
         analyser={analyser}
         onPause={togglePause}
+        onSeek={(progress) => activeRef.current?.seek?.(progress)}
         closing={closing}
         onStop={stop}
         onDismiss={() => setClosing(true)}

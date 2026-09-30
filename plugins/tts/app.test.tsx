@@ -130,6 +130,239 @@ describe("read aloud message action", () => {
     row.remove();
   });
 
+  it("seeks within the current phrase using the waveform slider", async () => {
+    const audioInstances: Array<{
+      currentTime: number;
+      duration: number;
+      paused: boolean;
+      play: ReturnType<typeof vi.fn>;
+      pause: ReturnType<typeof vi.fn>;
+      addEventListener: ReturnType<typeof vi.fn>;
+    }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () => new Response(new Uint8Array([1, 2, 3]), { status: 200 }),
+      ),
+    );
+    vi.stubGlobal("URL", {
+      ...URL,
+      createObjectURL: vi.fn(() => `blob:${audioInstances.length}`),
+      revokeObjectURL: vi.fn(),
+    });
+    vi.stubGlobal(
+      "Audio",
+      class {
+        currentTime = 0;
+        duration = 10;
+        paused = false;
+        play = vi.fn(async () => undefined);
+        pause = vi.fn(() => {
+          this.paused = true;
+        });
+        load = vi.fn();
+        removeAttribute = vi.fn();
+        addEventListener = vi.fn();
+        constructor() {
+          audioInstances.push(this);
+        }
+      },
+    );
+    vi.stubGlobal(
+      "AudioContext",
+      class {
+        state = "running";
+        destination = {};
+        close = vi.fn(async () => undefined);
+        createMediaElementSource = vi.fn(() => ({ connect: vi.fn() }));
+        createAnalyser = vi.fn(() => ({
+          fftSize: 0,
+          frequencyBinCount: 64,
+          connect: vi.fn(),
+        }));
+      },
+    );
+    const overlay = renderSlot(app.appOverlays[0]!, {}, { pluginId: "tts" });
+    act(() =>
+      app.messageActions[0]!.run({
+        threadId: "thread_1",
+        message: assistantMessage(),
+        openPanel: () => false,
+        composer: null,
+      }),
+    );
+    await waitFor(() => expect(audioInstances).toHaveLength(1));
+    const slider = overlay.getByRole("slider", {
+      name: "Seek in response audio",
+    });
+    expect(slider.getAttribute("aria-valuenow")).toBe("0");
+    fireEvent.keyDown(slider, { key: "ArrowRight" });
+    await waitFor(() => expect(audioInstances[0]?.currentTime).toBe(0.5));
+    expect(slider.getAttribute("aria-valuenow")).toBe("5");
+    overlay.lifecycle.unmount();
+  });
+
+  it("fetches and plays an unfetched phrase from the estimated offset", async () => {
+    const pending: Array<(response: Response) => void> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise<Response>((resolve) => pending.push(resolve))),
+    );
+    const audioInstances: Array<{
+      currentTime: number;
+      duration: number;
+      play: ReturnType<typeof vi.fn>;
+      pause: ReturnType<typeof vi.fn>;
+      addEventListener: ReturnType<typeof vi.fn>;
+      load: ReturnType<typeof vi.fn>;
+      removeAttribute: ReturnType<typeof vi.fn>;
+    }> = [];
+    vi.stubGlobal("URL", {
+      ...URL,
+      createObjectURL: vi.fn(() => `blob:${audioInstances.length}`),
+      revokeObjectURL: vi.fn(),
+    });
+    vi.stubGlobal(
+      "Audio",
+      class {
+        currentTime = 0;
+        duration = 10;
+        paused = false;
+        play = vi.fn(async () => undefined);
+        pause = vi.fn();
+        load = vi.fn();
+        removeAttribute = vi.fn();
+        addEventListener = vi.fn();
+        constructor() {
+          audioInstances.push(this);
+        }
+      },
+    );
+    vi.stubGlobal(
+      "AudioContext",
+      class {
+        state = "running";
+        destination = {};
+        close = vi.fn(async () => undefined);
+        createMediaElementSource = vi.fn(() => ({ connect: vi.fn() }));
+        createAnalyser = vi.fn(() => ({
+          fftSize: 0,
+          frequencyBinCount: 64,
+          connect: vi.fn(),
+        }));
+      },
+    );
+    const overlay = renderSlot(app.appOverlays[0]!, {}, { pluginId: "tts" });
+    const text = `${"First phrase. ".repeat(20)}${"Second phrase. ".repeat(20)}`;
+    act(() =>
+      app.messageActions[0]!.run({
+        threadId: "thread_1",
+        message: assistantMessage(text),
+        openPanel: () => false,
+        composer: null,
+      }),
+    );
+    await waitFor(() => expect(pending).toHaveLength(1));
+    await act(async () => {
+      pending[0]!(new Response(new Uint8Array([1, 2, 3])));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(audioInstances).toHaveLength(1));
+    fireEvent.keyDown(overlay.getByRole("slider"), { key: "End" });
+    await waitFor(() => expect(pending).toHaveLength(2));
+    await act(async () => {
+      pending[1]!(new Response(new Uint8Array([4, 5, 6])));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(audioInstances).toHaveLength(2));
+    expect(audioInstances[1]?.currentTime).toBe(10);
+    overlay.lifecycle.unmount();
+  });
+
+  it("ignores an abandoned seek when its phrase fetch resolves later", async () => {
+    const pending: Array<(response: Response) => void> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise<Response>((resolve) => pending.push(resolve))),
+    );
+    const audioInstances: Array<{
+      currentTime: number;
+      duration: number;
+      play: ReturnType<typeof vi.fn>;
+      pause: ReturnType<typeof vi.fn>;
+      addEventListener: ReturnType<typeof vi.fn>;
+      load: ReturnType<typeof vi.fn>;
+      removeAttribute: ReturnType<typeof vi.fn>;
+    }> = [];
+    vi.stubGlobal("URL", {
+      ...URL,
+      createObjectURL: vi.fn(() => `blob:${audioInstances.length}`),
+      revokeObjectURL: vi.fn(),
+    });
+    vi.stubGlobal(
+      "Audio",
+      class {
+        currentTime = 0;
+        duration = 10;
+        paused = false;
+        play = vi.fn(async () => undefined);
+        pause = vi.fn();
+        load = vi.fn();
+        removeAttribute = vi.fn();
+        addEventListener = vi.fn();
+        constructor() {
+          audioInstances.push(this);
+        }
+      },
+    );
+    vi.stubGlobal(
+      "AudioContext",
+      class {
+        state = "running";
+        destination = {};
+        close = vi.fn(async () => undefined);
+        createMediaElementSource = vi.fn(() => ({ connect: vi.fn() }));
+        createAnalyser = vi.fn(() => ({
+          fftSize: 0,
+          frequencyBinCount: 64,
+          connect: vi.fn(),
+        }));
+      },
+    );
+    const overlay = renderSlot(app.appOverlays[0]!, {}, { pluginId: "tts" });
+    const text = `${"First phrase. ".repeat(20)}${"Second phrase. ".repeat(20)}${"Third phrase. ".repeat(20)}`;
+    act(() =>
+      app.messageActions[0]!.run({
+        threadId: "thread_1",
+        message: assistantMessage(text),
+        openPanel: () => false,
+        composer: null,
+      }),
+    );
+    await waitFor(() => expect(pending).toHaveLength(1));
+    await act(async () => {
+      pending[0]!(new Response(new Uint8Array([1, 2, 3])));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(audioInstances).toHaveLength(1));
+    const slider = overlay.getByRole("slider");
+    fireEvent.keyDown(slider, { key: "End" });
+    await waitFor(() => expect(pending).toHaveLength(3));
+    fireEvent.keyDown(slider, { key: "Home" });
+    await act(async () => {
+      pending[2]!(new Response(new Uint8Array([4, 5, 6])));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(audioInstances).toHaveLength(1);
+    overlay.lifecycle.unmount();
+  });
+
   it("cleans up in-flight playback on unmount", async () => {
     let resolveFetch!: (response: Response) => void;
     const fetchDeferred = new Promise<Response>((resolve) => {
