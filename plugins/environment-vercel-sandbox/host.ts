@@ -80,22 +80,26 @@ export function createVercelHostEntry(
     handlers: {
       connect: (input, context) =>
         guarded(context.signal, async () => {
-          const connection = await auth.connect(input, context.signal);
-          await createVercelClient(
-            await auth.credentials(connection, context.signal),
-            transport,
-            (signal) => auth.credentials(connection, signal),
+          const { connection } = await auth.connect(input, context.signal);
+          const credentials = await auth.credentials(
+            connection,
+            context.signal,
+          );
+          await createVercelClient(credentials, transport, (signal) =>
+            auth.credentials(connection, signal),
           ).inspectAccount(context.signal);
-          return connection;
+          return { connection, accountName: credentials.accountName };
         }),
       inspect: (connection, context) =>
         guarded(context.signal, async () => {
-          await createVercelClient(
-            await auth.credentials(connection, context.signal),
-            transport,
-            (signal) => auth.credentials(connection, signal),
+          const credentials = await auth.credentials(
+            connection,
+            context.signal,
+          );
+          await createVercelClient(credentials, transport, (signal) =>
+            auth.credentials(connection, signal),
           ).inspectAccount(context.signal);
-          return {};
+          return { accountName: credentials.accountName };
         }),
       get: (input, context) =>
         guarded(context.signal, async () => {

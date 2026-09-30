@@ -80,6 +80,7 @@ export async function allocationStore(bb: Pick<BbPluginApi, "storage">) {
           );
           if (
             intent.resource.owner !== owner ||
+            key !== storageKey(intent.resource.key) ||
             intent.resource.sandboxName !==
               allocationName(owner, intent.resource.key)
           )
@@ -97,31 +98,66 @@ export async function allocationStore(bb: Pick<BbPluginApi, "storage">) {
           resource.projectId === connection.projectId,
       );
     },
-    async bindConnection(connection: Connection) {
-      const candidates = await this.legacyAllocations(connection);
+    async bindConnection(
+      connection: Connection,
+      expectedCount: number,
+      signal: AbortSignal,
+    ) {
+      signal.throwIfAborted();
+      const candidates = (await this.legacyAllocations(connection)).sort(
+        (a, b) => a.resource.key.localeCompare(b.resource.key),
+      );
       let adopted = 0;
       try {
-        for (const candidate of candidates) {
-          await run(candidate.resource.key, async () => {
+        if (candidates.length !== expectedCount)
+          throw new SafeError(
+            "The inspected allocation count changed. Reinspect before authorizing adoption.",
+          );
+        const lock = async (index: number): Promise<void> => {
+          const candidate = candidates[index];
+          if (candidate)
+            return run(candidate.resource.key, () => lock(index + 1));
+          signal.throwIfAborted();
+          const current = await this.legacyAllocations(connection);
+          if (
+            current.length !== candidates.length ||
+            candidates.some(
+              (candidate) =>
+                !current.some(
+                  (intent) =>
+                    intent.resource.key === candidate.resource.key &&
+                    intent.resource.generation ===
+                      candidate.resource.generation,
+                ),
+            )
+          )
+            throw new SafeError(
+              "The inspected allocations changed. Reinspect before authorizing adoption.",
+            );
+          for (const candidate of candidates) {
             const key = storageKey(candidate.resource.key);
             const intent = intentSchema.parse(
               await bb.storage.kv.get<unknown>(key),
             );
             if (
-              intent.phase !== "removed" &&
-              !intent.resource.connection &&
-              intent.resource.generation === candidate.resource.generation &&
-              intent.resource.teamId === connection.teamId &&
-              intent.resource.projectId === connection.projectId
-            ) {
-              await bb.storage.kv.set(key, {
-                ...intent,
-                resource: { ...intent.resource, connection },
-              });
-              adopted++;
-            }
-          });
-        }
+              intent.phase === "removed" ||
+              intent.resource.connection ||
+              intent.resource.generation !== candidate.resource.generation ||
+              intent.resource.teamId !== connection.teamId ||
+              intent.resource.projectId !== connection.projectId
+            )
+              throw new SafeError(
+                "The inspected allocations changed. Reinspect before authorizing adoption.",
+              );
+            signal.throwIfAborted();
+            await bb.storage.kv.set(key, {
+              ...intent,
+              resource: { ...intent.resource, connection },
+            });
+            adopted++;
+          }
+        };
+        await lock(0);
       } catch {
         throw new SafeError(
           `CLI migration was interrupted after ${adopted} confirmed allocation bindings. The default connection was not changed. Reinspect the recorded allocations before retrying; confirmed bindings retain their authorized account.`,

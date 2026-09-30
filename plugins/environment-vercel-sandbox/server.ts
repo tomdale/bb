@@ -16,7 +16,12 @@ import {
   type Intent,
 } from "./allocations.js";
 import { remoteVercelClient } from "./remote-client.js";
-import { connectionSchema, type Connection } from "./auth-contract.js";
+import {
+  accountConnectInputSchema,
+  connectionSchema,
+  type Connection,
+} from "./auth-contract.js";
+import { z } from "zod";
 import {
   allowedVcpus,
   launchInputsSchema,
@@ -82,6 +87,7 @@ export function createVercelSandboxPlugin() {
       available: boolean,
       message: string,
       adoptedAllocations = 0,
+      accountName: string | null = null,
     ) => {
       const count = connection
         ? (await allocations.legacyAllocations(connection)).length
@@ -92,6 +98,7 @@ export function createVercelSandboxPlugin() {
         hostId: connection?.hostId ?? null,
         directory: connection?.directory ?? null,
         accountId: connection?.accountId ?? null,
+        accountName,
         teamId: connection?.teamId ?? null,
         projectId: connection?.projectId ?? null,
         legacyAllocations:
@@ -109,11 +116,16 @@ export function createVercelSandboxPlugin() {
       let connection: Connection | null = null;
       try {
         connection = await currentConnection();
-        await remote.inspect(connection, operationSignal(signal, 60_000));
+        const { accountName } = await remote.inspect(
+          connection,
+          operationSignal(signal, 60_000),
+        );
         return accountResult(
           connection,
           true,
           "CLI login, linked project, OIDC authentication, and scoped listing succeeded on the connected machine. Create permission and plan capacity are checked at launch.",
+          0,
+          accountName,
         );
       } catch (error) {
         signal?.throwIfAborted();
@@ -121,36 +133,49 @@ export function createVercelSandboxPlugin() {
       }
     };
     const connectAccount = async (
-      input: {
-        hostId: string;
-        directory: string;
-        adoptLegacyAllocations?: boolean;
-      },
+      input: z.infer<typeof accountConnectInputSchema>,
       signal?: AbortSignal,
     ) => {
       let adopted = 0;
+      const combinedSignal = operationSignal(signal, 60_000);
       try {
+        combinedSignal.throwIfAborted();
         const host = await bb.sdk.hosts.get({ hostId: input.hostId });
         if (host.type === "ephemeral")
           throw new SafeError(
             "Choose a persistent enrolled machine to own Vercel authentication.",
           );
-        const connection = await remote.connect(
+        const { connection, accountName } = await remote.connect(
           { hostId: input.hostId, directory: input.directory },
-          operationSignal(signal, 60_000),
+          combinedSignal,
         );
-        adopted = input.adoptLegacyAllocations
-          ? await allocations.bindConnection(connection)
-          : 0;
+        const expected = input.expectedLegacyIdentity;
+        if (input.adoptLegacyAllocations) {
+          if (
+            !expected ||
+            expected.accountId !== connection.accountId ||
+            expected.teamId !== connection.teamId ||
+            expected.projectId !== connection.projectId
+          )
+            throw new SafeError(
+              "The CLI account or linked project differs from the inspected migration consent. Reinspect before authorizing adoption; no bindings or default connection were changed.",
+            );
+          adopted = await allocations.bindConnection(
+            connection,
+            expected.count,
+            combinedSignal,
+          );
+        }
+        combinedSignal.throwIfAborted();
         await bb.storage.kv.set("cli-connection", connection);
         return accountResult(
           connection,
           true,
           "Connected CLI login and linked project. Future allocations use this connection; existing allocations retain their original machine and account.",
           adopted,
+          accountName,
         );
       } catch (error) {
-        signal?.throwIfAborted();
         throw new SafeError(
           error instanceof SafeError
             ? error.message
@@ -260,6 +285,23 @@ export function createVercelSandboxPlugin() {
                 description:
                   "Authorize this verified account once for matching recorded allocations without CLI identity",
               },
+              "expected-account": {
+                type: "string",
+                description: "Inspected account ID authorizing adoption",
+              },
+              "expected-team": {
+                type: "string",
+                description: "Inspected team ID authorizing adoption",
+              },
+              "expected-project": {
+                type: "string",
+                description: "Inspected project ID authorizing adoption",
+              },
+              "expected-count": {
+                type: "string",
+                description:
+                  "Inspected positive unbound allocation count authorizing adoption",
+              },
               directory: {
                 type: "string",
                 required: true,
@@ -270,12 +312,27 @@ export function createVercelSandboxPlugin() {
             run(input, context) {
               return guarded(async () => {
                 const result = await connectAccount(
-                  {
+                  accountConnectInputSchema.parse({
                     hostId: input.options.host,
                     directory: input.options.directory,
                     adoptLegacyAllocations:
                       input.options["adopt-legacy-allocations"],
-                  },
+                    expectedLegacyIdentity: [
+                      input.options["expected-account"],
+                      input.options["expected-team"],
+                      input.options["expected-project"],
+                      input.options["expected-count"],
+                    ].some((value) => value !== undefined)
+                      ? {
+                          accountId: input.options["expected-account"],
+                          teamId: input.options["expected-team"],
+                          projectId: input.options["expected-project"],
+                          count: input.options["expected-count"]
+                            ? Number(input.options["expected-count"])
+                            : undefined,
+                        }
+                      : null,
+                  }),
                   context.signal,
                 );
                 return {

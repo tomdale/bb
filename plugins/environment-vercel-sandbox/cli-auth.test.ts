@@ -39,10 +39,10 @@ describe("CLI authentication boundary", () => {
     });
     expect(connected.ok).toBe(true);
     if (!connected.ok) throw new Error(connected.message);
-    const connection = connected.value;
+    const connection = connected.value.connection;
     expect(await worker.experimental_call("inspect", connection)).toEqual({
       ok: true,
-      value: {},
+      value: { accountName: "fixture-user" },
     });
     expect(cli.tokens.length).toBe(2);
     expect(new Set(cli.tokens).size).toBe(2);
@@ -81,7 +81,7 @@ describe("CLI authentication boundary", () => {
     async (mode) => {
       const cli = await fixture();
       const auth = cliAuthentication(cli.run);
-      const connection = await auth.connect(
+      const { connection } = await auth.connect(
         { hostId: "host_auth", directory: cli.directory },
         signal(),
       );
@@ -115,7 +115,7 @@ describe("CLI authentication boundary", () => {
   it("rechecks the selected machine's CLI version after connection before any authentication request", async () => {
     const cli = await fixture();
     const auth = cliAuthentication(cli.run);
-    const connection = await auth.connect(
+    const { connection } = await auth.connect(
       { hostId: "host_auth", directory: cli.directory },
       signal(),
     );
@@ -130,7 +130,7 @@ describe("CLI authentication boundary", () => {
   it("refuses relinked directories before requesting a token and preserves cancellation across host RPC", async () => {
     const cli = await fixture();
     const auth = cliAuthentication(cli.run);
-    const connection = await auth.connect(
+    const { connection } = await auth.connect(
       { hostId: "host_auth", directory: cli.directory },
       signal(),
     );

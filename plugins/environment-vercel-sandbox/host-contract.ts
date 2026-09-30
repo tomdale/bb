@@ -1,6 +1,11 @@
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { connectionInputSchema, connectionSchema } from "./auth-contract.js";
+import {
+  accountNameSchema,
+  authenticatedConnectionSchema,
+  connectionInputSchema,
+  connectionSchema,
+} from "./auth-contract.js";
 import { resourceSchema } from "./allocations.js";
 import { stateSchema } from "./rpc.js";
 export const sandboxViewSchema = z
@@ -35,8 +40,14 @@ const result = <S extends z.ZodType>(value: S) =>
   ]);
 const empty = z.object({}).strict();
 export const hostContract = defineRpcContract({
-  connect: { input: connectionInputSchema, output: result(connectionSchema) },
-  inspect: { input: connectionSchema, output: result(empty) },
+  connect: {
+    input: connectionInputSchema,
+    output: result(authenticatedConnectionSchema),
+  },
+  inspect: {
+    input: connectionSchema,
+    output: result(z.object({ accountName: accountNameSchema }).strict()),
+  },
   get: { input: operationInput, output: result(sandboxViewSchema.nullable()) },
   create: { input: operationInput, output: result(sandboxViewSchema) },
   getSession: {

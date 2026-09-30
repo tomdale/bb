@@ -14,9 +14,23 @@ export const connectionInputSchema = z
       ),
   })
   .strict();
-export const accountConnectInputSchema = connectionInputSchema
-  .extend({ adoptLegacyAllocations: z.boolean().default(false) })
+export const legacyIdentitySchema = scopeSchema
+  .extend({
+    accountId: z.string().min(1).max(200),
+    count: z.number().int().positive(),
+  })
   .strict();
+export const accountConnectInputSchema = connectionInputSchema
+  .extend({
+    adoptLegacyAllocations: z.boolean().default(false),
+    expectedLegacyIdentity: legacyIdentitySchema.nullable().default(null),
+  })
+  .strict()
+  .refine(
+    (value) =>
+      value.adoptLegacyAllocations === (value.expectedLegacyIdentity !== null),
+    "Adoption requires the inspected account, team, project, and count; ordinary connect requires expectedLegacyIdentity null.",
+  );
 export const connectionSchema = scopeSchema
   .extend({
     ...connectionInputSchema.shape,
@@ -24,6 +38,15 @@ export const connectionSchema = scopeSchema
   })
   .strict();
 export type Connection = z.infer<typeof connectionSchema>;
+export const accountNameSchema = z
+  .string()
+  .min(1)
+  .max(200)
+  .regex(/^[A-Za-z0-9_-]+$/)
+  .nullable();
+export const authenticatedConnectionSchema = z
+  .object({ connection: connectionSchema, accountName: accountNameSchema })
+  .strict();
 export const accountInspectionSchema = z
   .object({
     available: z.boolean(),
@@ -36,6 +59,7 @@ export const accountInspectionSchema = z
     hostId: z.string().nullable(),
     directory: z.string().nullable(),
     accountId: z.string().nullable(),
+    accountName: accountNameSchema,
     teamId: z.string().nullable(),
     projectId: z.string().nullable(),
   })

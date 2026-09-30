@@ -13,6 +13,7 @@ export async function cliFixture() {
   const commands: string[][] = [];
   let version = "58.3.0";
   let accountId = "user_test";
+  let accountName: string | null = "fixture-user";
   let tokenScope = scope;
   let expiry = Date.now() + 3600_000;
   let failure: Error | null = null;
@@ -24,7 +25,13 @@ export async function cliFixture() {
     if (args[0] === "--version") return `${version}\n`;
     if (args[0] !== "api") throw new Error("Unexpected command");
     if (args[1] === "/v2/user")
-      return JSON.stringify({ user: { id: accountId } });
+      return JSON.stringify({
+        user: {
+          id: accountId,
+          username: accountName,
+          email: "private-email@example.invalid",
+        },
+      });
     if (args[1]?.startsWith("/v1/projects/")) {
       const token = `eyJhbGciOiJub25lIn0.${Buffer.from(JSON.stringify({ owner_id: tokenScope.teamId, project_id: tokenScope.projectId, exp: expiry / 1000, iat: Date.now() / 1000 })).toString("base64url")}.secret-${tokens.length}`;
       tokens.push(token);
@@ -40,6 +47,9 @@ export async function cliFixture() {
     run,
     set version(value: string) {
       version = value;
+    },
+    set accountName(value: string | null) {
+      accountName = value;
     },
     get accountId() {
       return accountId;

@@ -782,6 +782,11 @@ describe("diagnostics and launch validation", () => {
       hostId: "host_auth",
       directory: test.cli.directory,
       adoptLegacyAllocations: true,
+      expectedLegacyIdentity: {
+        accountId: test.cli.accountId,
+        ...test.cli.scope,
+        count: 1,
+      },
     });
     expect(await test.bb.storage.kv.get(key)).toMatchObject({
       phase: "allocated",
@@ -823,6 +828,11 @@ describe("diagnostics and launch validation", () => {
         hostId: "host_auth",
         directory: test.cli.directory,
         adoptLegacyAllocations: true,
+        expectedLegacyIdentity: {
+          accountId: test.cli.accountId,
+          ...test.cli.scope,
+          count: 2,
+        },
       }),
     ).rejects.toThrow("after 1 confirmed allocation bindings");
     expect(await test.bb.storage.kv.get("cli-connection")).toEqual(
@@ -838,6 +848,11 @@ describe("diagnostics and launch validation", () => {
         hostId: "host_auth",
         directory: test.cli.directory,
         adoptLegacyAllocations: true,
+        expectedLegacyIdentity: {
+          accountId: test.cli.accountId,
+          ...test.cli.scope,
+          count: 1,
+        },
       }),
     ).toMatchObject({ adoptedAllocations: 1, legacyAllocations: null });
     const accounts = await Promise.all(
@@ -874,6 +889,11 @@ describe("diagnostics and launch validation", () => {
         hostId: "host_auth",
         directory: test.cli.directory,
         adoptLegacyAllocations: true,
+        expectedLegacyIdentity: {
+          accountId: test.cli.accountId,
+          ...test.cli.scope,
+          count: 2,
+        },
       }),
     ).rejects.toThrow("invalid ownership");
     for (const key of keys)
@@ -881,44 +901,95 @@ describe("diagnostics and launch validation", () => {
         "resource.connection",
       );
   });
-  it("serializes migration with same-key cleanup and does not resurrect a removed allocation", async () => {
-    const test = await setup();
-    await test.machine.create(test.context);
-    const resource = resourceSchema.parse(test.stored);
-    const key = (await test.bb.storage.kv.list("allocations/"))[0]!;
-    const intent = await test.bb.storage.kv.get<{
-      phase: string;
-      resource: typeof resource;
-    }>(key);
-    const { connection: _connection, ...unbound } = resource;
-    await test.bb.storage.kv.set(key, { ...intent, resource: unbound });
-    let release!: () => void;
-    const barrier = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const store = await import("./allocations.js").then(({ allocationStore }) =>
-      allocationStore(test.bb),
-    );
-    const cleanup = store.run(resource.key, async () => {
-      await barrier;
-      await test.bb.storage.kv.set(key, {
-        phase: "removed",
-        resource: unbound,
+  it.each(["removed", "replacement", "bound"])(
+    "refuses an entire queued migration batch when same-key cleanup leaves %s state",
+    async (mode) => {
+      const test = await setup();
+      await test.machine.create(test.context);
+      const resource = resourceSchema.parse(test.stored);
+      await test.machine.create({ ...test.context, key: "second-key" });
+      const keys = await test.bb.storage.kv.list("allocations/");
+      let changedKey = "";
+      let unbound = resource;
+      for (const key of keys) {
+        const intent = await test.bb.storage.kv.get<{
+          phase: string;
+          resource: ReturnType<typeof resourceSchema.parse>;
+        }>(key);
+        const { connection: _connection, ...original } = intent!.resource;
+        await test.bb.storage.kv.set(key, { ...intent!, resource: original });
+        if (original.key === resource.key) {
+          changedKey = key;
+          unbound = original;
+        }
+      }
+      const originalDefault = await test.bb.storage.kv.get("cli-connection");
+      let release!: () => void;
+      let discovered!: () => void;
+      const barrier = new Promise<void>((resolve) => {
+        release = resolve;
       });
-    });
-    const migration = test.harness.behavior.callRpc("account.connect", {
-      hostId: "host_auth",
-      directory: test.cli.directory,
-      adoptLegacyAllocations: true,
-    });
-    release();
-    await cleanup;
-    expect(await migration).toMatchObject({ adoptedAllocations: 0 });
-    expect(await test.bb.storage.kv.get(key)).toEqual({
-      phase: "removed",
-      resource: unbound,
-    });
-  });
+      const ready = new Promise<void>((resolve) => {
+        discovered = resolve;
+      });
+      const store = await import("./allocations.js").then(
+        ({ allocationStore }) => allocationStore(test.bb),
+      );
+      const changed = {
+        phase: mode === "removed" ? "removed" : "allocated",
+        resource:
+          mode === "replacement"
+            ? { ...unbound, generation: "c5f2ee33-7279-4b90-9f51-7bb6d939bc63" }
+            : mode === "bound"
+              ? {
+                  ...unbound,
+                  connection: {
+                    ...resource.connection!,
+                    accountId: "user_already_bound",
+                  },
+                }
+              : unbound,
+      };
+      const cleanup = store.run(resource.key, async () => {
+        await barrier;
+        await test.bb.storage.kv.set(changedKey, changed);
+      });
+      const list = test.bb.storage.kv.list;
+      test.bb.storage.kv.list = async (prefix) => {
+        const keys = await list(prefix);
+        if (prefix === "allocations/") discovered();
+        return keys;
+      };
+      const migration = test.harness.behavior.callRpc("account.connect", {
+        hostId: "host_auth",
+        directory: test.cli.directory,
+        adoptLegacyAllocations: true,
+        expectedLegacyIdentity: {
+          accountId: test.cli.accountId,
+          ...test.cli.scope,
+          count: 2,
+        },
+      });
+      const outcome = migration.then(
+        () => "unexpected success",
+        (error) => String(error),
+      );
+      await ready;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      release();
+      await cleanup;
+      expect(await outcome).toContain("after 0 confirmed allocation bindings");
+      expect(await test.bb.storage.kv.get(changedKey)).toEqual(changed);
+      for (const key of keys.filter((key) => key !== changedKey))
+        expect(await test.bb.storage.kv.get(key)).not.toHaveProperty(
+          "resource.connection",
+        );
+      expect(await test.bb.storage.kv.get("cli-connection")).toEqual(
+        originalDefault,
+      );
+      test.bb.storage.kv.list = list;
+    },
+  );
   it("reports a disconnected authentication host safely and refuses ephemeral auth ownership", async () => {
     const test = await setup();
     await test.worker.experimental_dispose();
@@ -934,6 +1005,277 @@ describe("diagnostics and launch validation", () => {
         directory: test.cli.directory,
       }),
     ).rejects.toThrow("persistent enrolled machine");
+  });
+  it.each([
+    "account",
+    "team",
+    "project",
+    "count",
+    "missing consent",
+    "ignored consent",
+  ])(
+    "refuses %s changes to inspected adoption consent before bindings or default writes",
+    async (mode) => {
+      const test = await setup();
+      await test.machine.create(test.context);
+      const key = (await test.bb.storage.kv.list("allocations/"))[0]!;
+      const intent = await test.bb.storage.kv.get<{
+        phase: string;
+        resource: ReturnType<typeof resourceSchema.parse>;
+      }>(key);
+      const { connection: _connection, ...resource } = intent!.resource;
+      const unbound = { ...intent!, resource };
+      await test.bb.storage.kv.set(key, unbound);
+      const originalDefault = await test.bb.storage.kv.get("cli-connection");
+      const expected = {
+        accountId: test.cli.accountId,
+        ...test.cli.scope,
+        count: 1,
+      };
+      if (mode === "account") test.cli.accountId = "user_switched";
+      if (mode === "team" || mode === "project") {
+        const scope =
+          mode === "team"
+            ? { ...test.cli.scope, teamId: "team_switched" }
+            : { ...test.cli.scope, projectId: "prj_switched" };
+        await test.cli.link(scope);
+        test.cli.tokenScope = scope;
+      }
+      if (mode === "count") expected.count = 2;
+      await expect(
+        test.harness.behavior.callRpc("account.connect", {
+          hostId: "host_auth",
+          directory: test.cli.directory,
+          adoptLegacyAllocations: mode !== "ignored consent",
+          expectedLegacyIdentity: mode === "missing consent" ? null : expected,
+        }),
+      ).rejects.toThrow();
+      expect(await test.bb.storage.kv.get(key)).toEqual(unbound);
+      expect(await test.bb.storage.kv.get("cli-connection")).toEqual(
+        originalDefault,
+      );
+    },
+  );
+  it("fences queued CLI adoption cancellation, reports durable partial adoption, and checks cancellation before changing the default", async () => {
+    const test = await setup();
+    await test.machine.create(test.context);
+    await test.machine.create({ ...test.context, key: "second-key" });
+    const keys = await test.bb.storage.kv.list("allocations/");
+    for (const key of keys) {
+      const intent = await test.bb.storage.kv.get<{
+        phase: string;
+        resource: ReturnType<typeof resourceSchema.parse>;
+      }>(key);
+      const { connection: _connection, ...resource } = intent!.resource;
+      await test.bb.storage.kv.set(key, { ...intent!, resource });
+    }
+    const originalDefault = await test.bb.storage.kv.get("cli-connection");
+    test.cli.accountId = "user_authorized";
+    const store = await import("./allocations.js").then(({ allocationStore }) =>
+      allocationStore(test.bb),
+    );
+    let release!: () => void;
+    let discovered!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      discovered = resolve;
+    });
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const held = store.run(test.context.key, () => barrier);
+    const list = test.bb.storage.kv.list;
+    test.bb.storage.kv.list = async (prefix) => {
+      const keys = await list(prefix);
+      if (prefix === "allocations/") discovered();
+      return keys;
+    };
+    const argv = [
+      "account",
+      "connect",
+      "--host",
+      "host_auth",
+      "--directory",
+      test.cli.directory,
+      "--adopt-legacy-allocations",
+      "--expected-account",
+      test.cli.accountId,
+      "--expected-team",
+      test.cli.scope.teamId,
+      "--expected-project",
+      test.cli.scope.projectId,
+      "--expected-count",
+      "2",
+      "--json",
+    ];
+    const abort = new AbortController();
+    const pending = test.harness.behavior.runCli(argv, {
+      signal: abort.signal,
+    });
+    await ready;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    abort.abort();
+    release();
+    await held;
+    expect(await pending).toMatchObject({
+      exitCode: 1,
+      stderr: expect.stringContaining("after 0 confirmed allocation bindings"),
+    });
+    for (const key of keys)
+      expect(await test.bb.storage.kv.get(key)).not.toHaveProperty(
+        "resource.connection",
+      );
+    expect(await test.bb.storage.kv.get("cli-connection")).toEqual(
+      originalDefault,
+    );
+    test.bb.storage.kv.list = list;
+    const write = test.bb.storage.kv.set;
+    for (const cancelledAfter of [1, 2]) {
+      const controller = new AbortController();
+      let writes = 0;
+      test.bb.storage.kv.set = async (key, value) => {
+        await write(key, value);
+        if (key.startsWith("allocations/") && ++writes === cancelledAfter)
+          controller.abort();
+      };
+      const outcome = await test.harness.behavior.runCli(argv, {
+        signal: controller.signal,
+      });
+      expect(outcome).toMatchObject({
+        exitCode: 1,
+        stderr: expect.stringContaining(
+          `after ${cancelledAfter} confirmed allocation bindings`,
+        ),
+      });
+      const records = await Promise.all(
+        keys.map((key) =>
+          test.bb.storage.kv.get<{
+            resource: { connection?: { accountId: string } };
+          }>(key),
+        ),
+      );
+      expect(
+        records.filter((record) => record!.resource.connection),
+      ).toHaveLength(cancelledAfter);
+      expect(await test.bb.storage.kv.get("cli-connection")).toEqual(
+        originalDefault,
+      );
+      test.bb.storage.kv.set = write;
+      if (cancelledAfter === 1)
+        for (const key of keys) {
+          const intent = await store.get(
+            (await test.bb.storage.kv.get<{ resource: { key: string } }>(key))!
+              .resource.key,
+          );
+          const { connection: _connection, ...resource } = intent!.resource;
+          await write(key, { ...intent!, resource });
+        }
+    }
+    test.bb.storage.kv.set = write;
+  });
+  it("requires expected identity flags for CLI adoption and returns a validated display username without persisting it or disclosing email", async () => {
+    const test = await setup();
+    const input = [
+      "account",
+      "connect",
+      "--host",
+      "host_auth",
+      "--directory",
+      test.cli.directory,
+      "--adopt-legacy-allocations",
+      "--json",
+    ];
+    expect(await test.harness.behavior.runCli(input)).toMatchObject({
+      exitCode: 1,
+    });
+    const inspect = await test.harness.behavior.callRpc("account.inspect", {});
+    expect(inspect).toMatchObject({
+      accountId: "user_test",
+      accountName: "fixture-user",
+    });
+    expect(JSON.stringify(inspect)).not.toContain("private-email");
+    expect(await test.bb.storage.kv.get("cli-connection")).not.toHaveProperty(
+      "accountName",
+    );
+    test.cli.accountName = "display-changed";
+    expect(
+      await test.harness.behavior.callRpc("account.inspect", {}),
+    ).toMatchObject({ available: true, accountName: "display-changed" });
+    test.cli.accountName = null;
+    expect(
+      await test.harness.behavior.callRpc("account.inspect", {}),
+    ).toMatchObject({ available: true, accountName: null });
+    test.cli.accountName = "private-email@example.invalid";
+    const rejected = await test.harness.behavior.callRpc("account.inspect", {});
+    expect(rejected).toMatchObject({ available: false, accountName: null });
+    expect(JSON.stringify(rejected)).not.toContain("private-email");
+  });
+  it("cancels queued adoption on plugin reload before using the retired storage context", async () => {
+    const test = await setup();
+    await test.machine.create(test.context);
+    const key = (await test.bb.storage.kv.list("allocations/"))[0]!;
+    const intent = await test.bb.storage.kv.get<{
+      phase: string;
+      resource: ReturnType<typeof resourceSchema.parse>;
+    }>(key);
+    const { connection: _connection, ...resource } = intent!.resource;
+    const unbound = { ...intent!, resource };
+    await test.bb.storage.kv.set(key, unbound);
+    const originalDefault = await test.bb.storage.kv.get("cli-connection");
+    let release!: () => void;
+    let discovered!: () => void;
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const ready = new Promise<void>((resolve) => {
+      discovered = resolve;
+    });
+    const store = await import("./allocations.js").then(({ allocationStore }) =>
+      allocationStore(test.bb),
+    );
+    const held = store.run(resource.key, () => barrier);
+    const list = test.bb.storage.kv.list;
+    let retired = false;
+    let retiredReads = 0;
+    test.bb.storage.kv.list = async (prefix) => {
+      if (retired) retiredReads++;
+      const keys = await list(prefix);
+      if (prefix === "allocations/") discovered();
+      return keys;
+    };
+    const pending = test.harness.behavior.runCli([
+      "account",
+      "connect",
+      "--host",
+      "host_auth",
+      "--directory",
+      test.cli.directory,
+      "--adopt-legacy-allocations",
+      "--expected-account",
+      test.cli.accountId,
+      "--expected-team",
+      test.cli.scope.teamId,
+      "--expected-project",
+      test.cli.scope.projectId,
+      "--expected-count",
+      "1",
+    ]);
+    await ready;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const replacement = await test.harness.lifecycle.reload(
+      createVercelSandboxPlugin(),
+    );
+    retired = true;
+    release();
+    await held;
+    expect(await pending).toMatchObject({
+      exitCode: 1,
+      stderr: expect.stringContaining("after 0 confirmed allocation bindings"),
+    });
+    expect(retiredReads).toBe(0);
+    expect(await replacement.bb.storage.kv.get(key)).toEqual(unbound);
+    expect(await replacement.bb.storage.kv.get("cli-connection")).toEqual(
+      originalDefault,
+    );
   });
   it("requires direct owned-session proof and refuses foreign session data or stale allocation generations", async () => {
     const test = await setup();
