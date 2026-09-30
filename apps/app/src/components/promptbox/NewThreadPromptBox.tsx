@@ -429,6 +429,7 @@ export function EnvironmentSlot({
     providers.length > 1 ||
     showReuseEnvironmentPicker ||
     selectedProvider?.machineInputs != null ||
+    selectedProvider?.inputs != null ||
     environmentPickerOpen;
   if (!showEnvironmentPicker) {
     return <ProjectlessMachineSlot environment={environment} />;

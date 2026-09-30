@@ -1206,6 +1206,12 @@ export function NewThreadComposer({
         ? environmentSeed.providerInputs
         : null;
     if (seededInputs !== null) return seededInputs;
+    if (
+      experimental_placementVisibility === "hidden" &&
+      !controlRequiredForSelectedProvider
+    ) {
+      return {};
+    }
     return environmentProviderInputsRegistration === undefined &&
       !controlRequiredForSelectedProvider
       ? {}
@@ -1217,6 +1223,7 @@ export function NewThreadComposer({
     effectiveEnvironmentValue,
     environmentSeed,
     environmentProviderInputsRegistration,
+    experimental_placementVisibility,
     providerTakesInputs,
   ]);
   const environmentInputsPending =
@@ -1939,7 +1946,14 @@ export function NewThreadComposer({
           disabled={disabledReason !== null || experimental_submitDisabled}
           disabledReason={disabledReason ?? undefined}
           submitLabel={experimental_submitLabel}
-          placementVisibility={experimental_placementVisibility}
+          placementVisibility={
+            experimental_placementVisibility === "hidden" &&
+            (controlRequiredForSelectedProvider ||
+              activeProviderInputsBlocked !== null ||
+              machineProviderInputs.blockedReason !== null)
+              ? "visible"
+              : experimental_placementVisibility
+          }
           executionControlsVisibility={experimental_executionControlsVisibility}
           placeholder={options.placeholder}
           mentionMenuPlacement={options.mentionMenuPlacement}
