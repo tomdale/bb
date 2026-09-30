@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   defaultAppSettings,
   PERSONAL_PROJECT_ID,
+  type JsonValue,
   type ThreadListEntry,
 } from "@bb/domain";
 import {
@@ -133,7 +134,9 @@ vi.mock("@/components/promptbox/NewThreadPromptBox", () => ({
     return (
       <div data-testid="new-thread-prompt-box">
         {props.modeConfig?.banner ?? null}
-        {props.modeConfig?.environmentProviderInputsSlot ?? null}
+        {(props.placementVisibility ?? "visible") === "visible"
+          ? (props.modeConfig?.environmentProviderInputsSlot ?? null)
+          : null}
       </div>
     );
   },
@@ -2974,6 +2977,170 @@ describe("NewThreadComposer setSelection", () => {
       expect(onSubmit.mock.calls[0][0].environment).toEqual(result.environment);
     },
   );
+
+  it.each([
+    {
+      displayName: "Project checkout",
+      id: "project-checkout",
+      acceptsEmptyInputs: true,
+      inputs: {} as JsonValue,
+      expectedControlVisibility: false,
+    },
+    {
+      displayName: "Required checkout",
+      id: "required-checkout",
+      acceptsEmptyInputs: false,
+      inputs: { branch: { kind: "named", name: "main" } } as JsonValue,
+      expectedControlVisibility: true,
+    },
+  ])(
+    "does not wait on hidden provider inputs for $displayName",
+    async ({
+      displayName,
+      id,
+      acceptsEmptyInputs,
+      inputs,
+      expectedControlVisibility,
+    }) => {
+      const provider: SystemEnvironmentProvider = {
+        ...CHECKOUT_PROVIDER,
+        id,
+        displayName,
+        pluginId: `plugin-${id}`,
+        acceptsEmptyInputs,
+        inputs: {
+          type: "object",
+          properties: { branch: { type: "object" } },
+          ...(acceptsEmptyInputs ? {} : { required: ["branch"] }),
+        },
+      };
+      mocks.environmentProviders = [provider];
+      let controlMounted = false;
+      function ProviderInputs({
+        value,
+        onChange,
+      }: PluginEnvironmentProviderInputsProps) {
+        useEffect(() => {
+          controlMounted = true;
+          if (value === null) onChange({ status: "ready", value: inputs });
+        }, [onChange, value]);
+        return <span data-testid="provider-input-control">{displayName}</span>;
+      }
+      setPluginSlotRegistrations(provider.pluginId, {
+        ...EMPTY_SLOT_REGISTRATIONS,
+        environmentProviderInputs: [
+          { environmentProviderId: provider.id, component: ProviderInputs },
+        ],
+      });
+      render(
+        <Provider>
+          <MemoryRouter>
+            <PluginNewThreadComposer
+              draftKey={`hidden-provider-inputs-${id}`}
+              defaultProjectId="proj_1"
+              defaultProviderId="claude-code"
+              defaultModel="gpt-5.6-sol"
+              initialPrompt="create work"
+              experimental_placementVisibility="hidden"
+              experimental_executionControlsVisibility="hidden"
+              onSubmit={vi.fn()}
+            />
+          </MemoryRouter>
+        </Provider>,
+      );
+      const result = await settled(
+        currentHost().setSelection!({
+          environment: {
+            type: "provider",
+            environmentProviderId: provider.id,
+            machine: { type: "existing", hostId: "host_1" },
+            inputs: null,
+          },
+        }),
+      );
+      expect(result.environment).toEqual({
+        type: "provider",
+        environmentProviderId: provider.id,
+        machine: { type: "existing", hostId: "host_1" },
+        inputs,
+      });
+      expect(latestPromptBoxProps().placementVisibility).toBe(
+        expectedControlVisibility ? "visible" : "hidden",
+      );
+      expect(controlMounted).toBe(expectedControlVisibility);
+      expect(screen.queryByTestId("provider-input-control") !== null).toBe(
+        expectedControlVisibility,
+      );
+      expect(latestPromptBoxProps().disabled).toBe(false);
+    },
+  );
+
+  it("shows a required provider control and its blocked reason when it cannot provide inputs", async () => {
+    const provider: SystemEnvironmentProvider = {
+      ...CHECKOUT_PROVIDER,
+      id: "blocked-checkout",
+      displayName: "Required checkout",
+      pluginId: "plugin-blocked-checkout",
+      acceptsEmptyInputs: false,
+      inputs: {
+        type: "object",
+        properties: { branch: { type: "object" } },
+        required: ["branch"],
+      },
+    };
+    mocks.environmentProviders = [provider];
+    function BlockedInputs({ onChange }: PluginEnvironmentProviderInputsProps) {
+      useEffect(() => {
+        onChange({ status: "blocked", reason: "Choose a checkout branch." });
+      }, [onChange]);
+      return (
+        <span data-testid="blocked-provider-input-control">Configure</span>
+      );
+    }
+    setPluginSlotRegistrations(provider.pluginId, {
+      ...EMPTY_SLOT_REGISTRATIONS,
+      environmentProviderInputs: [
+        { environmentProviderId: provider.id, component: BlockedInputs },
+      ],
+    });
+    render(
+      <Provider>
+        <MemoryRouter>
+          <PluginNewThreadComposer
+            draftKey="blocked-hidden-provider-inputs"
+            defaultProjectId="proj_1"
+            defaultProviderId="claude-code"
+            defaultModel="gpt-5.6-sol"
+            initialPrompt="create work"
+            experimental_placementVisibility="hidden"
+            experimental_executionControlsVisibility="hidden"
+            onSubmit={vi.fn()}
+          />
+        </MemoryRouter>
+      </Provider>,
+    );
+    const result = await settled(
+      currentHost().setSelection!({
+        environment: {
+          type: "provider",
+          environmentProviderId: provider.id,
+          machine: { type: "existing", hostId: "host_1" },
+          inputs: null,
+        },
+      }),
+    );
+    expect(result.environment).toBeUndefined();
+    expect(latestPromptBoxProps().placementVisibility).toBe("visible");
+    expect(
+      await screen.findByTestId("blocked-provider-input-control"),
+    ).toBeTruthy();
+    await waitFor(() => {
+      expect(latestPromptBoxProps().disabled).toBe(true);
+      expect(latestPromptBoxProps().disabledReason).toBe(
+        "Choose a checkout branch.",
+      );
+    });
+  });
 
   it("tracks values changed through the visible model picker", async () => {
     render(rootLikeElement("proj_1"));
