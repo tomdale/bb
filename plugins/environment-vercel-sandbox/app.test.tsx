@@ -223,7 +223,7 @@ describe("launch inputs control", () => {
     });
   });
 
-  it("lists every vCPU count Vercel allows and nothing else", async () => {
+  it("renders the backend's allowed vCPU list unchanged", async () => {
     const slot = renderSlot(
       inputsSlot(),
       { value: { vcpus: 6 }, onChange: vi.fn() },
@@ -233,7 +233,7 @@ describe("launch inputs control", () => {
             ...LAUNCH_OPTIONS,
             limits: {
               ...LAUNCH_OPTIONS.limits,
-              allowedVcpus: [...LAUNCH_OPTIONS.limits.allowedVcpus, 3],
+              allowedVcpus: [1, 2, 4, 6, 8],
             },
           }),
         },
@@ -244,12 +244,61 @@ describe("launch inputs control", () => {
       .map((item) => /^(\d+) vCPU/.exec(item.textContent ?? "")?.[1])
       .filter((count): count is string => count !== undefined)
       .map(Number);
-    expect(counts).toEqual(LAUNCH_OPTIONS.limits.allowedVcpus);
+    expect(counts).toEqual([1, 2, 4, 6, 8]);
     expect(
       slot
         .getByRole("menuitemradio", { name: /^6 vCPU · 12 GiB/ })
         .getAttribute("aria-checked"),
     ).toBe("true");
+  });
+
+  it("groups each radio set and describes the menu with its warnings", async () => {
+    const slot = renderSlot(
+      inputsSlot(),
+      { value: null, onChange: vi.fn() },
+      { rpc: { "launch.options": () => LAUNCH_OPTIONS } },
+    );
+    openMenu(await slot.findByRole("button", { name: /2 vCPU/ }));
+    const vcpu = await slot.findByRole("group", { name: "vCPU" });
+    const stops = slot.getByRole("group", { name: "Stops after" });
+    expect(vcpu.querySelectorAll('[role="menuitemradio"]').length).toBe(17);
+    expect(stops.querySelectorAll('[role="menuitemradio"]').length).toBe(8);
+    const menu = slot.getByRole("menu");
+    const described = (menu.getAttribute("aria-describedby") ?? "")
+      .split(" ")
+      .map((id) => document.getElementById(id)?.textContent ?? "")
+      .join(" ");
+    expect(described).toContain("stops for good at its time limit");
+    expect(described).toContain("Choices are Vercel maximums");
+  });
+
+  it("names the saved choice, not the defaults, when options fail", async () => {
+    const onChange = vi.fn();
+    const slot = renderSlot(
+      inputsSlot(),
+      { value: { vcpus: 6, timeoutMinutes: 90 }, onChange },
+      {
+        rpc: {
+          "launch.options": () => {
+            throw new Error("offline");
+          },
+        },
+      },
+    );
+    openMenu(
+      await slot.findByRole("button", {
+        name: "Vercel sandbox: 6 vCPU, stops after 1 hour 30 minutes",
+      }),
+    );
+    const alert = await slot.findByRole("alert");
+    expect(alert.textContent).toContain(
+      "saved choice (6 vCPU, stops after 1 h 30 min)",
+    );
+    expect(alert.textContent).not.toContain("defaults");
+    expect(onChange).toHaveBeenLastCalledWith({
+      status: "ready",
+      value: { vcpus: 6, timeoutMinutes: 90 },
+    });
   });
 
   it.each([
@@ -451,18 +500,25 @@ describe("expiry indicator", () => {
     return action;
   }
 
-  function sdkFor(machineProviderId: string | null, phase = "active") {
+  function sdkFor(
+    machineProviderId: string | null,
+    phase = "active",
+    teardown: { status: string } | null = null,
+    hostsGet?: () => unknown,
+  ) {
     return {
       threads: {
         get: () => ({ id: "thread-1", environmentId: "env-1" }),
       },
       environments: { get: () => ({ id: "env-1", hostId: "host-1" }) },
       hosts: {
-        get: () => ({
-          id: "host-1",
-          machineProviderId,
-          lifecycle: { phase },
-        }),
+        get:
+          hostsGet ??
+          (() => ({
+            id: "host-1",
+            machineProviderId,
+            lifecycle: { phase, teardown },
+          })),
       },
     };
   }
@@ -572,7 +628,7 @@ describe("expiry indicator", () => {
     });
     openMenu(trigger);
     await slot.findByText(/files can't be recovered/);
-    expect(slot.queryByRole("menuitem")).toBeNull();
+    expect(slot.queryByRole("button", { name: /Refresh|Retry/ })).toBeNull();
   });
 
   it.each(["stopped", "failed", "aborted"])(
@@ -599,7 +655,7 @@ describe("expiry indicator", () => {
       openMenu(trigger);
       await slot.findByText(/hasn't confirmed it stopped/);
       expect(slot.queryByText(/can't be recovered|files are gone/)).toBeNull();
-      expect(slot.getByRole("menuitem", { name: "Refresh" })).toBeTruthy();
+      expect(slot.getByRole("button", { name: "Refresh" })).toBeTruthy();
     },
   );
 
@@ -625,7 +681,7 @@ describe("expiry indicator", () => {
     openMenu(trigger);
     await slot.findByText(/It may still be running/);
     expect(slot.getByText(/Compute termination unresolved/)).toBeTruthy();
-    fireEvent.click(slot.getByRole("menuitem", { name: "Refresh" }));
+    fireEvent.click(slot.getByRole("button", { name: "Refresh" }));
     await waitFor(() => {
       expect(inspect.mock.calls.length).toBeGreaterThanOrEqual(3);
     });
@@ -653,13 +709,140 @@ describe("expiry indicator", () => {
       await vi.advanceTimersByTimeAsync(3_500);
     });
     const trigger = await slot.findByRole("button", {
-      name: "Vercel sandbox: time limit reached, awaiting Vercel status",
+      name: "Vercel sandbox: time limit reached, checking Vercel status",
     });
     expect(inspect).toHaveBeenCalledTimes(2);
     openMenu(trigger);
-    await slot.findByText(/Waiting for Vercel to report/);
-    expect(slot.queryByText(/stopped|files are gone/i)).toBeNull();
-    expect(slot.getByRole("menuitem", { name: "Refresh" })).toBeTruthy();
+    await slot.findByText(/hasn't reported the sandbox stopped yet/);
+    expect(slot.queryByText(/can't be recovered|files are gone/)).toBeNull();
+    expect(slot.getByRole("button", { name: "Refresh" })).toBeTruthy();
+  });
+
+  it("keeps checking after the deadline until Vercel confirms the stop", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const expiresAt = Date.now() + 2_000;
+    let reads = 0;
+    const inspect = vi.fn(() => {
+      reads += 1;
+      return reads < 4
+        ? machine({ expiresAt })
+        : machine({ state: "stopped", expiresAt, computeEnded: true });
+    });
+    const slot = renderSlot(headerSlot(), props, {
+      sdk: sdkFor(PROVIDER_ID) as never,
+      rpc: { "machine.inspect": inspect },
+    });
+    await slot.findByRole("button", {
+      name: "Vercel sandbox: less than a minute left",
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_500);
+    });
+    await slot.findByRole("button", {
+      name: "Vercel sandbox: time limit reached, checking Vercel status",
+    });
+    for (let step = 0; step < 2; step += 1) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+    }
+    await slot.findByRole("button", { name: "Vercel sandbox: stopped" });
+    expect(inspect).toHaveBeenCalledTimes(4);
+  });
+
+  it("stops automatic checks after a bounded number and says so", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const expiresAt = Date.now() + 2_000;
+    const inspect = vi.fn(() => machine({ expiresAt }));
+    const slot = renderSlot(headerSlot(), props, {
+      sdk: sdkFor(PROVIDER_ID) as never,
+      rpc: { "machine.inspect": inspect },
+    });
+    await slot.findByRole("button", {
+      name: "Vercel sandbox: less than a minute left",
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_500);
+    });
+    for (let step = 0; step < 12; step += 1) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+    }
+    const trigger = await slot.findByRole("button", {
+      name: "Vercel sandbox: time limit reached, Vercel hasn't reported a stop",
+    });
+    expect(inspect).toHaveBeenCalledTimes(11);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(120_000);
+    });
+    expect(inspect).toHaveBeenCalledTimes(11);
+    openMenu(trigger);
+    await slot.findByText(/Refresh to check again/);
+  });
+
+  it("retries a failed host lookup instead of hiding the indicator", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let lookups = 0;
+    const slot = renderSlot(headerSlot(), props, {
+      sdk: sdkFor(PROVIDER_ID, "active", null, () => {
+        lookups += 1;
+        if (lookups === 1) throw new Error("503");
+        return {
+          id: "host-1",
+          machineProviderId: PROVIDER_ID,
+          lifecycle: { phase: "active", teardown: null },
+        };
+      }) as never,
+      rpc: {
+        "machine.inspect": () =>
+          machine({ expiresAt: Date.now() + 60 * 60_000 + 30_000 }),
+      },
+    });
+    await waitFor(() => {
+      expect(lookups).toBe(1);
+    });
+    expect(slot.container.textContent).toBe("");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    await slot.findByRole("button", { name: "Vercel sandbox: 1 hour left" });
+  });
+
+  it("reports failed cleanup as possibly still running and stops polling", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const sdk = sdkFor(PROVIDER_ID, "removing", { status: "failed" });
+    const hostsGet = vi.fn(sdk.hosts.get);
+    const slot = renderSlot(headerSlot(), props, {
+      sdk: { ...sdk, hosts: { get: hostsGet } } as never,
+      rpc: { "machine.inspect": vi.fn() },
+    });
+    const trigger = await slot.findByRole("button", {
+      name: "Vercel sandbox: cleanup failed",
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(120_000);
+    });
+    expect(hostsGet).toHaveBeenCalledTimes(1);
+    openMenu(trigger);
+    await slot.findByText(/may still be running and billing/);
+    expect(slot.getByRole("button", { name: "Refresh" })).toBeTruthy();
+  });
+
+  it("opens an accessible dialog that exposes the stop time and details", async () => {
+    const slot = renderSlot(headerSlot(), props, {
+      sdk: sdkFor(PROVIDER_ID) as never,
+      rpc: {
+        "machine.inspect": () =>
+          machine({ expiresAt: Date.now() + 60 * 60_000 + 30_000 }),
+      },
+    });
+    openMenu(
+      await slot.findByRole("button", { name: "Vercel sandbox: 1 hour left" }),
+    );
+    const dialog = await slot.findByRole("dialog", { name: "Vercel sandbox" });
+    expect(dialog.textContent).toContain("Stops at");
+    expect(dialog.textContent).toContain("bb-host-1");
   });
 
   it("returns to the countdown when a refresh sees the session running", async () => {
@@ -677,7 +860,7 @@ describe("expiry indicator", () => {
         name: "Vercel sandbox: Vercel reports stopped, stop unconfirmed",
       }),
     );
-    fireEvent.click(await slot.findByRole("menuitem", { name: "Refresh" }));
+    fireEvent.click(await slot.findByRole("button", { name: "Refresh" }));
     await slot.findByText(/Stops at .*BB can't extend/);
     expect(
       slot.getByRole("button", {
@@ -709,7 +892,7 @@ describe("expiry indicator", () => {
     });
     openMenu(trigger);
     await slot.findByText(/BB removed this sandbox machine/);
-    expect(slot.queryByRole("menuitem")).toBeNull();
+    expect(slot.queryByRole("button", { name: /Refresh|Retry/ })).toBeNull();
   });
 
   it("shows starting without inspecting a machine that is still being created", async () => {

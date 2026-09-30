@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useState, type ReactNode } from "react";
 import {
   definePluginApp,
   useRpc,
@@ -25,11 +25,17 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import type { vercelRpcContract } from "./rpc.js";
 import { PROVIDER_ID } from "./provider-id.js";
 
@@ -161,12 +167,6 @@ function timeoutPlanTag(minutes: number): string | null {
   return minutes <= HOBBY_MAX_TIMEOUT_MINUTES ? null : "Pro+";
 }
 
-function vcpuChoices(options: LaunchOptions): number[] {
-  return [...new Set(options.limits.allowedVcpus)]
-    .filter(isAllowedVcpuCount)
-    .sort((left, right) => left - right);
-}
-
 function choiceList(
   ladder: readonly number[],
   min: number,
@@ -249,14 +249,17 @@ function MenuChoice({
 }
 
 function MenuNote({
+  id,
   tone,
   children,
 }: {
+  id?: string;
   tone: "muted" | "warning";
   children: ReactNode;
 }) {
   return (
     <div
+      id={id}
       className={cn(
         "flex max-w-72 gap-2 px-2 py-1.5 text-xs leading-relaxed",
         tone === "warning" ? "text-warning-text" : "text-muted-foreground",
@@ -272,6 +275,27 @@ function MenuNote({
       <span className="min-w-0 whitespace-normal">{children}</span>
     </div>
   );
+}
+
+function optionsErrorMessage(
+  inputs: LaunchInputs | null,
+  blocked: boolean,
+): string {
+  const prefix = "Couldn't load Vercel launch options.";
+  if (inputs === null || blocked) {
+    return `${prefix} Retry, then choose new options.`;
+  }
+  const parts = [
+    ...(inputs.vcpus === undefined ? [] : [`${inputs.vcpus} vCPU`]),
+    ...(inputs.timeoutMinutes === undefined
+      ? []
+      : [`stops after ${formatMinutes(inputs.timeoutMinutes).full}`]),
+  ];
+  if (parts.length === 0) {
+    return `${prefix} New sandboxes use the defaults in plugin settings.`;
+  }
+  const rest = parts.length === 2 ? "" : ", with plugin defaults for the rest";
+  return `${prefix} This thread uses your saved choice (${parts.join(", ")})${rest}. Retry to change it.`;
 }
 
 function launchChange(
@@ -303,6 +327,10 @@ function VercelMachineInputsControl({
   onChange,
 }: PluginMachineProviderInputsProps) {
   const { state: options, retry } = useLaunchOptions();
+  const noteIdPrefix = useId();
+  const blockedNoteId = `${noteIdPrefix}-blocked`;
+  const dataLossNoteId = `${noteIdPrefix}-data-loss`;
+  const planNoteId = `${noteIdPrefix}-plan`;
   const inputs = readLaunchInputs(value);
   const change = launchChange(inputs, options);
   useEffect(() => {
@@ -393,10 +421,17 @@ function VercelMachineInputsControl({
       <DropdownMenuContent
         align="start"
         mobileTitle="Vercel sandbox"
+        aria-describedby={[
+          ...(blockedReason === null ? [] : [blockedNoteId]),
+          dataLossNoteId,
+          planNoteId,
+        ].join(" ")}
         className={cn(OPTION_MENU_CONTENT_CLASS_NAME, "max-w-80")}
       >
         {blockedReason === null ? null : (
-          <MenuNote tone="warning">{blockedReason}</MenuNote>
+          <MenuNote id={blockedNoteId} tone="warning">
+            {blockedReason}
+          </MenuNote>
         )}
         {options.status === "pending" ? (
           <p
@@ -408,9 +443,11 @@ function VercelMachineInputsControl({
         ) : null}
         {options.status === "error" ? (
           <>
-            <p role="alert" className="px-2 py-1.5 text-xs text-warning-text">
-              Couldn't load Vercel launch options. New sandboxes use the
-              defaults in plugin settings.
+            <p
+              role="alert"
+              className="max-w-72 whitespace-normal px-2 py-1.5 text-xs text-warning-text"
+            >
+              {optionsErrorMessage(inputs, blockedReason !== null)}
             </p>
             <DropdownMenuItem
               onSelect={(event) => {
@@ -426,39 +463,47 @@ function VercelMachineInputsControl({
         ) : null}
         {loaded === null ? null : (
           <>
-            <DropdownMenuLabel>vCPU</DropdownMenuLabel>
-            {vcpuChoices(loaded).map((candidate) => (
-              <MenuChoice
-                key={candidate}
-                label={`${sizeLabel(candidate, candidate * loaded.memoryMiBPerVcpu)}${candidate === loaded.defaultInputs.vcpus ? " (default)" : ""}`}
-                tag={vcpuPlanTag(candidate)}
-                selected={blockedReason === null && candidate === vcpus}
-                onSelect={() => choose({ vcpus: candidate })}
-              />
-            ))}
+            <DropdownMenuGroup aria-label="vCPU">
+              <DropdownMenuLabel>vCPU</DropdownMenuLabel>
+              {loaded.limits.allowedVcpus.map((candidate) => (
+                <MenuChoice
+                  key={candidate}
+                  label={`${sizeLabel(candidate, candidate * loaded.memoryMiBPerVcpu)}${candidate === loaded.defaultInputs.vcpus ? " (default)" : ""}`}
+                  tag={vcpuPlanTag(candidate)}
+                  selected={blockedReason === null && candidate === vcpus}
+                  onSelect={() => choose({ vcpus: candidate })}
+                />
+              ))}
+            </DropdownMenuGroup>
             <DropdownMenuSeparator />
-            <DropdownMenuLabel>Stops after</DropdownMenuLabel>
-            {choiceList(
-              TIMEOUT_LADDER_MINUTES,
-              loaded.limits.minTimeoutMinutes,
-              loaded.limits.maxTimeoutMinutes,
-              [loaded.defaultInputs.timeoutMinutes, inputs?.timeoutMinutes],
-            ).map((candidate) => (
-              <MenuChoice
-                key={candidate}
-                label={`${formatMinutes(candidate).full}${candidate === loaded.defaultInputs.timeoutMinutes ? " (default)" : ""}`}
-                tag={timeoutPlanTag(candidate)}
-                selected={
-                  blockedReason === null && candidate === timeoutMinutes
-                }
-                onSelect={() => choose({ timeoutMinutes: candidate })}
-              />
-            ))}
+            <DropdownMenuGroup aria-label="Stops after">
+              <DropdownMenuLabel>Stops after</DropdownMenuLabel>
+              {choiceList(
+                TIMEOUT_LADDER_MINUTES,
+                loaded.limits.minTimeoutMinutes,
+                loaded.limits.maxTimeoutMinutes,
+                [loaded.defaultInputs.timeoutMinutes, inputs?.timeoutMinutes],
+              ).map((candidate) => (
+                <MenuChoice
+                  key={candidate}
+                  label={`${formatMinutes(candidate).full}${candidate === loaded.defaultInputs.timeoutMinutes ? " (default)" : ""}`}
+                  tag={timeoutPlanTag(candidate)}
+                  selected={
+                    blockedReason === null && candidate === timeoutMinutes
+                  }
+                  onSelect={() => choose({ timeoutMinutes: candidate })}
+                />
+              ))}
+            </DropdownMenuGroup>
           </>
         )}
         <DropdownMenuSeparator />
-        <MenuNote tone="warning">{DATA_LOSS_NOTE}</MenuNote>
-        <MenuNote tone="muted">{PLAN_NOTE}</MenuNote>
+        <MenuNote id={dataLossNoteId} tone="warning">
+          {DATA_LOSS_NOTE}
+        </MenuNote>
+        <MenuNote id={planNoteId} tone="muted">
+          {PLAN_NOTE}
+        </MenuNote>
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -646,10 +691,21 @@ type HostResolution =
   | { kind: "pending" }
   | { kind: "none" }
   | { kind: "waiting" }
+  | { kind: "retrying"; failures: number }
   | { kind: "creating"; hostId: string }
   | { kind: "removing"; hostId: string }
+  | { kind: "cleanup-failed"; hostId: string }
   | { kind: "removed"; hostId: string }
   | { kind: "active"; hostId: string };
+
+type ResolvedHost = Exclude<
+  HostResolution,
+  { kind: "pending" } | { kind: "retrying" }
+>;
+
+function lookupRetryDelay(failures: number): number {
+  return Math.min(LOOKUP_RETRY_MAX_MS, TICK_MS * 2 ** (failures - 1));
+}
 
 function useVercelHost(threadId: string, refreshKey: number): HostResolution {
   const sdk = useSdk();
@@ -658,24 +714,26 @@ function useVercelHost(threadId: string, refreshKey: number): HostResolution {
     value: HostResolution;
   } | null>(null);
   const [tick, setTick] = useState(0);
-  const current =
-    resolution?.threadId === threadId
-      ? resolution.value
-      : { kind: "pending" as const };
+  const current: HostResolution =
+    resolution?.threadId === threadId ? resolution.value : { kind: "pending" };
   const settled = current.kind === "none" || current.kind === "removed";
-  const polling =
+  const pollDelay =
     current.kind === "waiting" ||
     current.kind === "creating" ||
-    current.kind === "removing";
+    current.kind === "removing"
+      ? TICK_MS
+      : current.kind === "retrying"
+        ? lookupRetryDelay(current.failures)
+        : null;
   useEffect(() => {
-    if (!polling) return;
-    const timer = setInterval(() => setTick((value) => value + 1), TICK_MS);
-    return () => clearInterval(timer);
-  }, [polling]);
+    if (pollDelay === null) return;
+    const timer = setTimeout(() => setTick((value) => value + 1), pollDelay);
+    return () => clearTimeout(timer);
+  }, [pollDelay, tick]);
   useEffect(() => {
     if (settled) return;
     const controller = new AbortController();
-    const resolve = async (): Promise<HostResolution> => {
+    const resolve = async (): Promise<ResolvedHost> => {
       const thread = await sdk.threads.get({
         threadId,
         signal: controller.signal,
@@ -694,7 +752,9 @@ function useVercelHost(threadId: string, refreshKey: number): HostResolution {
         case "creating":
           return { kind: "creating", hostId: host.id };
         case "removing":
-          return { kind: "removing", hostId: host.id };
+          return host.lifecycle.teardown?.status === "failed"
+            ? { kind: "cleanup-failed", hostId: host.id }
+            : { kind: "removing", hostId: host.id };
         case "destroyed":
           return { kind: "removed", hostId: host.id };
         default:
@@ -706,8 +766,24 @@ function useVercelHost(threadId: string, refreshKey: number): HostResolution {
         if (!controller.signal.aborted) setResolution({ threadId, value });
       },
       () => {
-        if (!controller.signal.aborted)
-          setResolution({ threadId, value: { kind: "none" } });
+        if (controller.signal.aborted) return;
+        setResolution((previous) => {
+          const known = previous?.threadId === threadId ? previous.value : null;
+          if (
+            known !== null &&
+            known.kind !== "retrying" &&
+            known.kind !== "pending"
+          ) {
+            return previous;
+          }
+          return {
+            threadId,
+            value: {
+              kind: "retrying",
+              failures: known?.kind === "retrying" ? known.failures + 1 : 1,
+            },
+          };
+        });
       },
     );
     return () => controller.abort();
@@ -749,6 +825,21 @@ const REPORTED_STOP_STATES = new Set<MachineStatus["state"]>([
   "aborted",
 ]);
 const DEADLINE_OBSERVATION_DELAY_MS = 1_000;
+const LOOKUP_RETRY_MAX_MS = 10 * 60_000;
+const MAX_FOLLOW_UP_READS = 10;
+const REFRESH_HINT = "Refresh to check again.";
+
+function awaitsVendorStop(machine: MachineStatus, now: number): boolean {
+  if (machine.computeEnded) return false;
+  if (machine.state === "stopping" || machine.state === "snapshotting") {
+    return true;
+  }
+  return (
+    machine.state === "running" &&
+    machine.expiresAt !== null &&
+    machine.expiresAt <= now
+  );
+}
 
 type ExpiryView = {
   tone: "muted" | "warning" | "destructive";
@@ -761,6 +852,7 @@ type ExpiryView = {
 function expiryView(
   resolution: HostResolution,
   inspection: Load<MachineStatus>,
+  followingUp: boolean,
   now: number,
 ): ExpiryView | null {
   if (resolution.kind === "creating") {
@@ -779,6 +871,16 @@ function expiryView(
       spoken: "being removed",
       detail:
         "BB is removing this sandbox machine. Uncommitted files will be lost.",
+      final: false,
+    };
+  }
+  if (resolution.kind === "cleanup-failed") {
+    return {
+      tone: "warning",
+      label: "Cleanup failed",
+      spoken: "cleanup failed",
+      detail:
+        "BB couldn't finish removing this sandbox machine. The Vercel sandbox may still be running and billing your team. Retry cleanup from the thread's machine banner or with bb machine retry-cleanup.",
       final: false,
     };
   }
@@ -807,11 +909,14 @@ function expiryView(
       tone: "warning",
       label: "Sandbox",
       spoken: "status unavailable",
-      detail: `Couldn't read the sandbox's time limit. ${DATA_LOSS_NOTE}`,
+      detail: `Couldn't read the sandbox's time limit. ${DATA_LOSS_NOTE} ${REFRESH_HINT}`,
       final: false,
     };
   }
   const machine = inspection.data;
+  const followUp = followingUp
+    ? "BB checks Vercel again every 30 seconds for a few minutes."
+    : REFRESH_HINT;
   if (machine.computeEnded) {
     return {
       tone: "destructive",
@@ -828,7 +933,7 @@ function expiryView(
       tone: "warning",
       label: `${state.charAt(0).toUpperCase()}${state.slice(1)}?`,
       spoken: `Vercel reports ${state}, stop unconfirmed`,
-      detail: `Vercel reports this sandbox as ${state}, but hasn't confirmed it stopped. It may still be running; BB can't tell whether its files are still there.`,
+      detail: `Vercel reports this sandbox as ${state}, but hasn't confirmed it stopped. It may still be running; BB can't tell whether its files are still there. ${REFRESH_HINT}`,
       final: false,
     };
   }
@@ -837,8 +942,7 @@ function expiryView(
       tone: "warning",
       label: "Unknown",
       spoken: "status unknown",
-      detail:
-        "Vercel can't find this sandbox right now. It may still be running while Vercel updates its records, or it may have stopped. BB can't tell whether its files are still there.",
+      detail: `Vercel can't find this sandbox right now. It may still be running while Vercel updates its records, or it may have stopped. BB can't tell whether its files are still there. ${REFRESH_HINT}`,
       final: false,
     };
   }
@@ -856,8 +960,7 @@ function expiryView(
       tone: "warning",
       label: "Stopping",
       spoken: "stopping",
-      detail:
-        "The sandbox is stopping. Uncommitted files will be lost when it stops.",
+      detail: `The sandbox is stopping. Uncommitted files will be lost when it stops. ${followUp}`,
       final: false,
     };
   }
@@ -865,9 +968,12 @@ function expiryView(
     return {
       tone: "warning",
       label: "Time limit reached",
-      spoken: "time limit reached, awaiting Vercel status",
-      detail:
-        "The time limit has passed. Waiting for Vercel to report the sandbox's state; uncommitted files will be lost when it stops.",
+      spoken: followingUp
+        ? "time limit reached, checking Vercel status"
+        : "time limit reached, Vercel hasn't reported a stop",
+      detail: followingUp
+        ? `The time limit has passed and Vercel hasn't reported the sandbox stopped yet. Uncommitted files will be lost when it stops. ${followUp}`
+        : `The time limit has passed, but Vercel hasn't reported the sandbox stopped. Uncommitted files will be lost when it stops. ${REFRESH_HINT}`,
       final: false,
     };
   }
@@ -895,42 +1001,51 @@ function expiryView(
   };
 }
 
+type Inspection = {
+  hostId: string;
+  observedAt: number;
+  value: Load<MachineStatus>;
+  summary: string | null;
+  followUps: number;
+};
+
 function VercelExpiryIndicator({
   threadId,
   isCompactViewport,
 }: PluginThreadHeaderActionProps) {
   const rpc = useRpc<Contract>();
+  const headingId = useId();
   const [refreshKey, setRefreshKey] = useState(0);
   const resolution = useVercelHost(threadId, refreshKey);
   const hostId = resolution.kind === "active" ? resolution.hostId : null;
   const [observeKey, setObserveKey] = useState(0);
-  const [inspection, setInspection] = useState<{
-    hostId: string;
-    observedAt: number;
-    value: Load<MachineStatus>;
-    summary: string | null;
-  } | null>(null);
+  const [inspection, setInspection] = useState<Inspection | null>(null);
   useEffect(() => {
     if (hostId === null) return;
     let active = true;
     rpc.call("machine.inspect", { hostId }).then(
       (result) => {
         if (!active) return;
-        setInspection({
+        const observedAt = Date.now();
+        setInspection((previous) => ({
           hostId,
-          observedAt: Date.now(),
+          observedAt,
           value: { status: "ready", data: result.values },
           summary: result.summary,
-        });
+          followUps: awaitsVendorStop(result.values, observedAt)
+            ? (previous?.hostId === hostId ? previous.followUps : 0) + 1
+            : 0,
+        }));
       },
       () => {
         if (!active) return;
-        setInspection({
+        setInspection((previous) => ({
           hostId,
           observedAt: Date.now(),
           value: { status: "error" },
           summary: null,
-        });
+          followUps: previous?.hostId === hostId ? previous.followUps : 0,
+        }));
       },
     );
     return () => {
@@ -954,16 +1069,26 @@ function VercelExpiryIndicator({
     );
     return () => clearTimeout(timer);
   }, [deadline, observedAt]);
+  const followUps = current?.followUps ?? 0;
+  const followingUp = followUps > 0 && followUps < MAX_FOLLOW_UP_READS;
+  useEffect(() => {
+    if (!followingUp) return;
+    const timer = setTimeout(
+      () => setObserveKey((value) => value + 1),
+      TICK_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [followingUp, observedAt]);
   const counting =
     machine.status === "ready" &&
     machine.data.state === "running" &&
     !machine.data.computeEnded &&
     machine.data.expiresAt !== null;
   const tickNow = useNow(counting);
-  const now = Math.max(tickNow, inspection?.observedAt ?? 0);
-  const view = expiryView(resolution, machine, now);
+  const now = Math.max(tickNow, observedAt ?? 0);
+  const view = expiryView(resolution, machine, followingUp, now);
   if (view === null) return null;
-  const refresh = () => setRefreshKey((current) => current + 1);
+  const refresh = () => setRefreshKey((value) => value + 1);
   const toneClass =
     view.tone === "destructive"
       ? "text-destructive-text"
@@ -982,10 +1107,10 @@ function VercelExpiryIndicator({
       ? (current?.summary ?? null)
       : null;
   return (
-    <DropdownMenu
+    <Popover
       onOpenChange={(open) => (open && !view.final ? refresh() : undefined)}
     >
-      <DropdownMenuTrigger asChild>
+      <PopoverTrigger asChild>
         <Button
           type="button"
           variant="ghost"
@@ -1006,49 +1131,43 @@ function VercelExpiryIndicator({
             <span className="min-w-0 truncate">{view.label}</span>
           )}
         </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent
+      </PopoverTrigger>
+      <PopoverContent
         align="end"
         mobileTitle="Vercel sandbox"
-        className={cn(OPTION_MENU_CONTENT_CLASS_NAME, "max-w-80")}
+        aria-labelledby={headingId}
+        className="w-80 space-y-2 p-3"
       >
-        <DropdownMenuLabel>Vercel sandbox</DropdownMenuLabel>
+        <h3 id={headingId} className="text-xs font-medium text-foreground">
+          Vercel sandbox
+        </h3>
         <p
           className={cn(
-            "max-w-72 whitespace-normal px-2 pb-1.5 text-xs leading-relaxed",
+            "text-xs leading-relaxed",
             view.tone === "muted" ? "text-foreground" : toneClass,
           )}
         >
           {view.detail}
         </p>
         {guidance === null || guidance === "" ? null : (
-          <p className="max-w-72 whitespace-normal px-2 pb-1.5 text-xs leading-relaxed text-muted-foreground">
+          <p className="text-xs leading-relaxed text-muted-foreground">
             {guidance}
           </p>
         )}
         {details === null ? null : (
-          <p className="flex max-w-72 flex-col gap-0.5 px-2 pb-1.5 text-xs text-muted-foreground">
+          <p className="flex flex-col gap-0.5 text-xs text-muted-foreground">
             <span>{details.size}</span>
             <span className="truncate font-mono">{details.name}</span>
           </p>
         )}
         {view.final ? null : (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              onSelect={(event) => {
-                event.preventDefault();
-                refresh();
-              }}
-              className="text-xs"
-            >
-              <Icon name="ArrowReloadHorizontal" className="size-3.5" />
-              {machine.status === "error" ? "Retry" : "Refresh"}
-            </DropdownMenuItem>
-          </>
+          <Button type="button" size="sm" variant="outline" onClick={refresh}>
+            <Icon name="ArrowReloadHorizontal" className="size-3.5" />
+            {machine.status === "error" ? "Retry" : "Refresh"}
+          </Button>
         )}
-      </DropdownMenuContent>
-    </DropdownMenu>
+      </PopoverContent>
+    </Popover>
   );
 }
 
