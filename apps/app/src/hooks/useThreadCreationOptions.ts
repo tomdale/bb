@@ -142,6 +142,7 @@ interface UseThreadCreationOptionsResult<TExecutionInputSources> {
   serviceTierSupportByProvider: Record<string, boolean>;
   serviceTierFastLabel: string;
   executionInputSources: TExecutionInputSources;
+  isUnavailableModelRecovery: boolean;
 }
 
 interface ResolveThreadCreationProviderRoutingArgs {
@@ -954,5 +955,6 @@ export function useThreadCreationOptions(
     serviceTierSupportByProvider,
     serviceTierFastLabel,
     executionInputSources,
+    isUnavailableModelRecovery,
   };
 }
