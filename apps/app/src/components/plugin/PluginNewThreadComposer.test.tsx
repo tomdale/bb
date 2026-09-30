@@ -98,12 +98,6 @@ const mocks = vi.hoisted(() => ({
   machineProviders: [] as SystemMachineProvider[],
   modelsLoading: false,
   permissionCeiling: undefined as "accept-edits" | "auto" | "full" | undefined,
-  availableModels: null as null | Array<{
-    model: string;
-    displayName: string;
-    isDefault?: boolean;
-    supportedReasoningEfforts: Array<{ reasoningEffort: string }>;
-  }>,
 }));
 
 vi.mock("@/views/RootComposePanelCommandHandlers", () => ({
@@ -322,7 +316,7 @@ vi.mock("@/hooks/queries/system-queries", () => ({
                 composerActions: [],
               },
             ],
-            models: mocks.availableModels ?? [
+            models: [
               {
                 model: "gpt-5.6",
                 displayName: "GPT-5.6",
@@ -701,7 +695,6 @@ describe("PluginNewThreadComposer seeding", () => {
     mocks.machineProviders = [];
     mocks.modelsLoading = false;
     mocks.permissionCeiling = undefined;
-    mocks.availableModels = null;
     mocks.environmentProviders = [
       CHECKOUT_PROVIDER,
       MANAGED_WORKTREE_SUGAR_PROVIDER,
@@ -2955,101 +2948,5 @@ describe("NewThreadComposer setSelection", () => {
     expect(
       window.localStorage.getItem("bb.promptbox.permission-mode"),
     ).toBeNull();
-  });
-
-  it("preserves manually chosen model and reasoning across project changes", async () => {
-    const submitted: NewThreadRequest[] = [];
-    render(
-      <MemoryRouter>
-        <PluginNewThreadComposer
-          draftKey="manual-model-persist"
-          defaultProjectId="proj_1"
-          initialPrompt="test prompt"
-          onSubmit={(request) => {
-            submitted.push(request);
-          }}
-        />
-      </MemoryRouter>,
-    );
-
-    await waitFor(() => {
-      expect(latestPromptBoxProps().disabled).toBe(false);
-    });
-
-    act(() => {
-      latestPromptBoxProps().execution.model.onChange("gpt-5.6-sol");
-      latestPromptBoxProps().execution.reasoning.onChange("high");
-    });
-
-    expect(latestPromptBoxProps().execution.model.selected).toBe("gpt-5.6-sol");
-    expect(latestPromptBoxProps().execution.reasoning.value).toBe("high");
-
-    await act(async () => {
-      await latestPromptBoxProps().project.onChange("proj_2");
-    });
-
-    expect(latestPromptBoxProps().project.value).toBe("proj_2");
-    expect(latestPromptBoxProps().execution.model.selected).toBe("gpt-5.6-sol");
-    expect(latestPromptBoxProps().execution.reasoning.value).toBe("high");
-
-    await submit();
-
-    expect(submitted).toHaveLength(1);
-    expect(submitted[0]).toMatchObject({
-      projectId: "proj_2",
-      model: "gpt-5.6-sol",
-      reasoningLevel: "high",
-    });
-  });
-
-  it("requires model selection rather than silent substitute when chosen model is invalid in the new project", async () => {
-    render(
-      <MemoryRouter>
-        <PluginNewThreadComposer
-          draftKey="manual-model-recovery"
-          defaultProjectId="proj_1"
-          initialPrompt="test prompt"
-          onSubmit={() => undefined}
-        />
-      </MemoryRouter>,
-    );
-
-    await waitFor(() => {
-      expect(latestPromptBoxProps().disabled).toBe(false);
-    });
-
-    act(() => {
-      latestPromptBoxProps().execution.model.onChange("gpt-5.6-sol");
-    });
-    expect(latestPromptBoxProps().execution.model.selected).toBe("gpt-5.6-sol");
-
-    mocks.availableModels = [
-      {
-        model: "gpt-5.6",
-        displayName: "GPT-5.6",
-        isDefault: true,
-        supportedReasoningEfforts: [{ reasoningEffort: "medium" }],
-      },
-    ];
-
-    await act(async () => {
-      await latestPromptBoxProps().project.onChange("proj_2");
-    });
-
-    await waitFor(() => {
-      expect(latestPromptBoxProps().project.value).toBe("proj_2");
-      expect(latestPromptBoxProps().execution.model.selected).toBe("");
-      expect(latestPromptBoxProps().disabledReason).toBe("Select a model.");
-      expect(latestPromptBoxProps().disabled).toBe(true);
-    });
-
-    act(() => {
-      latestPromptBoxProps().execution.model.onChange("gpt-5.6");
-    });
-
-    await waitFor(() => {
-      expect(latestPromptBoxProps().execution.model.selected).toBe("gpt-5.6");
-      expect(latestPromptBoxProps().disabled).toBe(false);
-    });
   });
 });

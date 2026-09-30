@@ -607,6 +607,7 @@ export function NewThreadComposer({
   const pluginList = usePluginList({ enabled: true });
 
   const seedSignature = JSON.stringify([
+    projectId,
     resetKey ?? null,
     seed?.providerId ?? null,
     seed?.model ?? null,
@@ -827,7 +828,7 @@ export function NewThreadComposer({
   const creationOptions = useThreadCreationOptions({
     scope: selectionScope,
     preferenceProjectId: projectId,
-    resetKey: resetKey ? `${resetKey}\0${seedSignature}` : seedSignature,
+    resetKey: `${projectId}\0${seedSignature}`,
     resolveProviderRouting,
     initialProviderId: seed?.providerId ?? projectDefaults?.providerId,
     preferReadyProviderWhenUnset:
@@ -847,7 +848,6 @@ export function NewThreadComposer({
     environmentSelectionValue,
     hasMultipleProviders,
     isLoadingModels,
-    isUnavailableModelRecovery,
     modelCatalogIsSettled,
     modelLoadError,
     modelLoadFailed,
@@ -876,9 +876,7 @@ export function NewThreadComposer({
     supportsServiceTier,
     clearReuseEnvironment,
   } = creationOptions;
-  const selectedThreadModel = isUnavailableModelRecovery
-    ? ""
-    : (activeModel?.model ?? selectedModel);
+  const selectedThreadModel = activeModel?.model ?? selectedModel;
   const providerIds = useMemo(
     () => providerOptions.map((option) => option.value),
     [providerOptions],
@@ -1691,7 +1689,7 @@ export function NewThreadComposer({
     snapshotDraftBeforeOptionChange,
   );
   const handleModelChange = useDraftPreservingOptionChange(
-    isUnavailableModelRecovery ? "" : selectedModel,
+    selectedModel,
     setSelectedModel,
     snapshotDraftBeforeOptionChange,
   );
@@ -1769,10 +1767,8 @@ export function NewThreadComposer({
       supportsServiceTier,
     ],
   );
-  const { getSelection, subscribeSelection } = useComposerHostSelection(
-    promptDraft.storageKey,
-    composerSelection,
-  );
+  const { getSelection, subscribeSelection } =
+    useComposerHostSelection(promptDraft.storageKey, composerSelection);
   const pendingSelectionRef = useRef<Promise<unknown>>(Promise.resolve());
   const applySelection = useCallback(
     async (
@@ -2046,8 +2042,8 @@ export function NewThreadComposer({
               hasMultiple: hasMultipleProviders,
             },
             model: {
-              active: isUnavailableModelRecovery ? undefined : activeModel,
-              selected: isUnavailableModelRecovery ? "" : selectedModel,
+              active: activeModel,
+              selected: selectedModel,
               options: modelOptions,
               moreOptions: moreModelOptions,
               isLoading: isLoadingModels,
@@ -2073,10 +2069,8 @@ export function NewThreadComposer({
     },
     [
       activeModel,
-      activeProviderInputsBlocked,
       attachmentError,
       commandSuggestions,
-      controlRequiredForSelectedProvider,
       currentDraft,
       defaultMentionLinkResolver,
       effectiveEnvironmentValue,
@@ -2101,9 +2095,7 @@ export function NewThreadComposer({
       isLoadingModels,
       isProjectless,
       isSubmitting,
-      isUnavailableModelRecovery,
       isUploading,
-      machineProviderInputs.blockedReason,
       pendingUploads,
       modelLoadError,
       modelLoadFailed,
