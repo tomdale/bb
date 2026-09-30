@@ -400,6 +400,12 @@ describe("settings section", () => {
     accountId: string | null;
     teamId: string | null;
     projectId: string | null;
+    legacyAllocations: {
+      count: number;
+      teamId: string;
+      projectId: string;
+    } | null;
+    adoptedAllocations: number;
   };
 
   const NOT_CONNECTED: Account = {
@@ -410,6 +416,8 @@ describe("settings section", () => {
     accountId: null,
     teamId: null,
     projectId: null,
+    legacyAllocations: null,
+    adoptedAllocations: 0,
   };
 
   const CONNECTED: Account = {
@@ -420,7 +428,11 @@ describe("settings section", () => {
     accountId: "user_abc",
     teamId: "team_abc",
     projectId: "prj_def",
+    legacyAllocations: null,
+    adoptedAllocations: 0,
   };
+
+  const LEGACY = { count: 2, teamId: "team_abc", projectId: "prj_def" };
 
   const TOKEN_SHAPED = /eyJ|vca_|Bearer|token=/i;
 
@@ -562,7 +574,11 @@ describe("settings section", () => {
     expect(connectCalls(slot)).toEqual([
       {
         method: "account.connect",
-        input: { hostId: "host-linux", directory: "/srv/vercel-bb" },
+        input: {
+          hostId: "host-linux",
+          directory: "/srv/vercel-bb",
+          adoptLegacyAllocations: false,
+        },
       },
     ]);
     await act(async () => {
@@ -758,6 +774,103 @@ describe("settings section", () => {
     await slot.findByText("Couldn't load your machines.");
     fireEvent.click(slot.getByRole("button", { name: "Retry" }));
     await slot.findByRole("button", { name: /Machine Choose a machine/ });
+  });
+
+  it("keeps earlier unbound sandboxes unmanaged until the user explicitly opts in", async () => {
+    const adopt = deferred<Account>();
+    const slot = renderSettings({
+      "account.inspect": () => ({ ...CONNECTED, legacyAllocations: LEGACY }),
+      "account.connect": () => adopt.promise,
+    });
+    await slot.findByRole("heading", { name: "Earlier sandboxes" });
+    expect(
+      slot.getByText(/BB recorded 2 earlier sandboxes in/).textContent,
+    ).toContain("team_abc / prj_def");
+    const consent = slot.getByRole("checkbox", {
+      name: "Let user_abc on Tom's MacBook manage and clean up these 2 earlier sandboxes",
+    });
+    expect(consent.getAttribute("aria-checked")).toBe("false");
+    const describedBy = consent.getAttribute("aria-describedby") ?? "";
+    expect(document.getElementById(describedBy)?.textContent).toContain(
+      "not a record of who created them",
+    );
+    const apply = slot.getByRole("button", {
+      name: "Use this account for 2 earlier sandboxes",
+    });
+    expect(apply.hasAttribute("disabled")).toBe(true);
+    fireEvent.click(apply);
+    fireEvent.click(slot.getByRole("button", { name: "Reconnect" }));
+    await slot.findByRole("button", { name: "Connecting…" });
+    expect(connectCalls(slot).map((call) => call.input)).toEqual([
+      {
+        hostId: "host-mac",
+        directory: "/Users/me/vercel-bb",
+        adoptLegacyAllocations: false,
+      },
+    ]);
+    await act(async () => {
+      adopt.resolve({ ...CONNECTED, legacyAllocations: LEGACY });
+      await adopt.promise;
+    });
+    expect(
+      slot
+        .getByRole("checkbox", { name: /manage and clean up/ })
+        .getAttribute("aria-checked"),
+    ).toBe("false");
+  });
+
+  it("binds earlier sandboxes to the verified account only after consent", async () => {
+    const slot = renderSettings({
+      "account.inspect": () => ({ ...CONNECTED, legacyAllocations: LEGACY }),
+      "account.connect": () => ({ ...CONNECTED, adoptedAllocations: 2 }),
+    });
+    fireEvent.click(
+      await slot.findByRole("checkbox", { name: /manage and clean up/ }),
+    );
+    fireEvent.click(
+      slot.getByRole("button", {
+        name: "Use this account for 2 earlier sandboxes",
+      }),
+    );
+    await slot.findByText("BB now manages 2 earlier sandboxes with user_abc.");
+    expect(connectCalls(slot).map((call) => call.input)).toEqual([
+      {
+        hostId: "host-mac",
+        directory: "/Users/me/vercel-bb",
+        adoptLegacyAllocations: true,
+      },
+    ]);
+    expect(slot.queryByRole("checkbox")).toBeNull();
+  });
+
+  it("disables adoption while the connection is broken and reports failures generically", async () => {
+    const broken = renderSettings({
+      "account.inspect": () => ({
+        ...CONNECTED,
+        available: false,
+        message: "Couldn't get a short-lived token for the linked project.",
+        legacyAllocations: LEGACY,
+      }),
+    });
+    const disabled = await broken.findByRole("checkbox", {
+      name: /manage and clean up/,
+    });
+    expect(disabled.hasAttribute("disabled")).toBe(true);
+    expect(broken.getByText(/Fix the connection above/)).toBeTruthy();
+    broken.unmount();
+
+    const failing = renderSettings({
+      "account.inspect": () => ({ ...CONNECTED, legacyAllocations: LEGACY }),
+      "account.connect": () => {
+        throw new Error("vc api: Bearer eyJsecret");
+      },
+    });
+    fireEvent.click(
+      await failing.findByRole("checkbox", { name: /manage and clean up/ }),
+    );
+    fireEvent.click(failing.getByRole("button", { name: /Use this account/ }));
+    await failing.findByText(/Couldn't update the earlier sandboxes/);
+    expect(document.body.textContent).not.toMatch(TOKEN_SHAPED);
   });
 
   it("replaces RPC failures with generic copy", async () => {

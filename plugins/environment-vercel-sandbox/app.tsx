@@ -21,6 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import {
   COARSE_POINTER_COMPACT_ICON_SIZE_CLASS,
@@ -865,7 +866,11 @@ function ConnectForm({
     }
     setConnect({ status: "connecting" });
     rpc
-      .call("account.connect", { hostId: selectedHost.id, directory: trimmed })
+      .call("account.connect", {
+        hostId: selectedHost.id,
+        directory: trimmed,
+        adoptLegacyAllocations: false,
+      })
       .then(
         (result) => {
           if (!mounted.current) return;
@@ -983,6 +988,174 @@ function ConnectForm({
   );
 }
 
+type AdoptState =
+  | { status: "idle" }
+  | { status: "adopting" }
+  | { status: "failed" }
+  | { status: "adopted"; count: number; accountId: string | null };
+
+function pluralSandboxes(count: number): string {
+  return `${count} earlier sandbox${count === 1 ? "" : "es"}`;
+}
+
+function AdoptedNote({
+  count,
+  accountId,
+}: {
+  count: number;
+  accountId: string | null;
+}) {
+  return (
+    <p role="status" className="flex items-start gap-2 text-xs text-foreground">
+      <Icon
+        name="CircleCheck"
+        className="mt-0.5 size-3.5 shrink-0 text-success"
+      />
+      <span className="min-w-0 break-words">
+        BB now manages {pluralSandboxes(count)} with{" "}
+        {accountId ?? "this Vercel account"}.
+      </span>
+    </p>
+  );
+}
+
+function LegacyAllocations({
+  account,
+  machineName,
+  onConnected,
+}: {
+  account: AccountStatus;
+  machineName: string;
+  onConnected: (account: AccountStatus) => void;
+}) {
+  const rpc = useRpc<Contract>();
+  const consentId = useId();
+  const [consent, setConsent] = useState(false);
+  const [adopt, setAdopt] = useState<AdoptState>({ status: "idle" });
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  const legacy = account.legacyAllocations;
+  const pending = legacy !== null && legacy.count > 0 ? legacy : null;
+  if (pending === null) {
+    if (adopt.status !== "adopted") return null;
+    return (
+      <section className="space-y-2">
+        <SettingsHeading title="Earlier sandboxes" />
+        <AdoptedNote count={adopt.count} accountId={adopt.accountId} />
+      </section>
+    );
+  }
+  const hostId = account.hostId;
+  const directory = account.directory;
+  const canAdopt =
+    account.available &&
+    hostId !== null &&
+    directory !== null &&
+    adopt.status !== "adopting";
+  const submit = () => {
+    if (!canAdopt || !consent) return;
+    setAdopt({ status: "adopting" });
+    rpc
+      .call("account.connect", {
+        hostId,
+        directory,
+        adoptLegacyAllocations: true,
+      })
+      .then(
+        (result) => {
+          if (!mounted.current) return;
+          setConsent(false);
+          setAdopt({
+            status: "adopted",
+            count: result.adoptedAllocations,
+            accountId: result.accountId,
+          });
+          onConnected(result);
+        },
+        () => {
+          if (mounted.current) setAdopt({ status: "failed" });
+        },
+      );
+  };
+  const who = account.accountId ?? "the signed-in Vercel account";
+  return (
+    <section className="space-y-2">
+      <SettingsHeading title="Earlier sandboxes" />
+      <p className="text-xs leading-relaxed text-foreground">
+        BB recorded {pluralSandboxes(pending.count)} in{" "}
+        <span className="font-mono">
+          {pending.teamId} / {pending.projectId}
+        </span>{" "}
+        before it tracked which Vercel account created them. BB won't manage or
+        clean them up until you choose an account for them.
+      </p>
+      {account.available ? null : (
+        <p className="text-xs text-warning-text">
+          Fix the connection above before choosing an account for them.
+        </p>
+      )}
+      <div className="flex items-start gap-2">
+        <Checkbox
+          id={consentId}
+          checked={consent}
+          disabled={!canAdopt}
+          aria-describedby={`${consentId}-note`}
+          onCheckedChange={(checked) => {
+            setConsent(checked === true);
+            if (adopt.status === "failed") setAdopt({ status: "idle" });
+          }}
+          className="mt-0.5"
+        />
+        <div className="min-w-0 space-y-1">
+          <Label htmlFor={consentId} className="text-xs leading-relaxed">
+            Let {who} on {machineName} manage and clean up these{" "}
+            {pluralSandboxes(pending.count)}
+          </Label>
+          <p
+            id={`${consentId}-note`}
+            className="text-xs leading-relaxed text-muted-foreground"
+          >
+            This is your authorization, not a record of who created them. BB
+            can't check that from its old records. Once set, reconnecting
+            doesn't change it.
+          </p>
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={!canAdopt || !consent}
+          aria-busy={adopt.status === "adopting"}
+          onClick={submit}
+        >
+          {adopt.status === "adopting" ? (
+            <Icon name="Spinner" className="size-3.5 animate-spin" />
+          ) : null}
+          {adopt.status === "adopting"
+            ? "Saving…"
+            : `Use this account for ${pluralSandboxes(pending.count)}`}
+        </Button>
+        {adopt.status === "failed" ? (
+          <p role="alert" className="text-xs text-destructive-text">
+            Couldn't update the earlier sandboxes. Check the connection, then
+            try again.
+          </p>
+        ) : null}
+        {adopt.status === "adopted" ? (
+          <AdoptedNote count={adopt.count} accountId={adopt.accountId} />
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
 function VercelSettingsSection() {
   const rpc = useRpc<Contract>();
   const inspectAccount = useCallback(
@@ -1016,6 +1189,18 @@ function VercelSettingsSection() {
         />
         <ConnectionStatus state={account.state} hosts={hosts.state} />
       </section>
+
+      {account.state.status === "ready" ? (
+        <LegacyAllocations
+          account={account.state.data}
+          machineName={
+            account.state.data.hostId === null
+              ? ""
+              : hostLabel(hosts.state, account.state.data.hostId)
+          }
+          onConnected={account.replace}
+        />
+      ) : null}
 
       <section className="space-y-2">
         <SettingsHeading
