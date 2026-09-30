@@ -45,13 +45,22 @@ untrusted users or a public proxy. BB plugins are trusted server-side code.
 Never return the key to a client or log it.
 
 The plugin sends extracted assistant response text to Vercel AI Gateway's speech
-endpoint using `openai/tts-1`, voice `alloy`, and MP3 output. It excludes
-separate tool-output cards, reads Markdown as prose, limits text to 4,000
-characters, and limits each phrase request to 360 characters. The Gateway
-returns complete base64 audio JSON; its documented REST endpoint does not stream
-audio. Read aloud starts after the first phrase is synthesized and fetches a
-following phrase ahead while playback runs, which can reduce perceived latency
-and gaps but cannot stream within a phrase. Hovering over the player shows the
-measured time to first playback. Speech requires an available Gateway
+endpoint using configurable OpenAI `tts-1` or `tts-1-hd` models, one of their
+six voices `alloy`, `echo`, `fable`, `nova`, `onyx`, and `shimmer`, and speed
+from 0.25 to 4. The plugin requests MP3 output and passes the configured
+speed. Defaults are `openai/tts-1`,
+`alloy`, and speed 1. Configure settings under Settings → Installed plugins →
+Read aloud, with `bb plugin config tts` or
+`bb plugin config tts set model openai/tts-1-hd`,
+`bb plugin config tts set voice nova`,
+`bb plugin config tts set speed 1.25`. SDK clients can call
+`bb.sdk.plugins.updateSettings({ pluginId: "tts", values: { model: "openai/tts-1-hd", voice: "nova", speed: 1.25 } })`.
+The plugin excludes separate tool-output cards, reads Markdown as prose, limits
+text to 4,000 characters, and limits each phrase request to 360 characters. The
+Gateway returns complete base64 audio JSON; its documented REST endpoint does
+not stream audio. Read aloud starts after the first phrase is synthesized and
+fetches a following phrase ahead while playback runs, which can reduce perceived
+latency and gaps but cannot stream within a phrase. Hovering over the player
+shows the measured time to first playback. Speech requires an available Gateway
 account/model. Gateway errors appear in the player; generated speech is not
 cached.
