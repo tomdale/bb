@@ -2636,6 +2636,25 @@ describe("PromptBoxInternal compact layout", () => {
     expect(form.style.height).toBe("");
   });
 
+  it("keeps an explicit submit label visible in compact layout", () => {
+    render(
+      <PromptBoxInternal
+        {...createPromptBoxProps({
+          compact: { isCompact: true, placeholder: "Ask a follow-up" },
+          submission: {
+            label: "Create workstream",
+            showLabelInCompact: true,
+            title: "Create workstream",
+          },
+        })}
+      />,
+    );
+
+    const submit = screen.getByRole("button", { name: "Create workstream" });
+    expect(submit.textContent).toContain("Create workstream");
+    expect(submit.getAttribute("data-promptbox-submit-action")).not.toBeNull();
+  });
+
   it("keeps the one-line editor, voice input, and submit action", () => {
     const voice: PromptVoiceConfig = {
       state: "idle",

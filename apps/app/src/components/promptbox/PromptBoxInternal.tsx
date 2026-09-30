@@ -241,6 +241,7 @@ export interface PromptBoxSubmissionConfig {
   disabled?: boolean;
   disabledReason?: string;
   label?: string;
+  showLabelInCompact?: boolean;
   icon?: IconName;
   title?: string;
   isRunning?: boolean;
@@ -252,6 +253,7 @@ export interface PromptBoxSubmissionConfig {
 
 interface PromptSubmitButtonProps {
   canSubmit: boolean;
+  showLabelInCompact: boolean;
   className: string;
   disabledReason: string | undefined;
   icon: IconName | undefined;
@@ -266,6 +268,7 @@ interface PromptSubmitButtonProps {
 
 function PromptSubmitButton({
   canSubmit,
+  showLabelInCompact,
   className,
   disabledReason,
   icon,
@@ -285,7 +288,7 @@ function PromptSubmitButton({
     <Button
       data-promptbox-submit-action=""
       type="submit"
-      size={isCompact ? "icon" : "sm"}
+      size={isCompact && !showLabelInCompact ? "icon" : "sm"}
       variant="default"
       aria-label={title}
       aria-busy={isBusy}
@@ -341,7 +344,9 @@ function PromptSubmitButton({
       }}
       className={cn(
         className,
-        label !== undefined && !isCompact && "size-auto h-8 gap-1.5 px-2.5",
+        label !== undefined &&
+          (!isCompact || showLabelInCompact) &&
+          "size-auto h-8 gap-1.5 px-2.5",
       )}
     >
       {isBusy ? (
@@ -352,7 +357,7 @@ function PromptSubmitButton({
       ) : (
         <>
           <Icon name={icon ?? "CornerDownLeft"} className="size-4" />
-          {label !== undefined && !isCompact ? (
+          {label !== undefined && (!isCompact || showLabelInCompact) ? (
             <span data-promptbox-submit-label="">{label}</span>
           ) : null}
         </>
@@ -1124,6 +1129,7 @@ export function PromptBoxInternal({
     disabled: submitDisabled = false,
     disabledReason: submitDisabledReason,
     label: submitLabel,
+    showLabelInCompact = false,
     icon: submitIcon,
     title: submitTitle = "Submit (Enter)",
     isRunning = false,
@@ -1363,6 +1369,8 @@ export function PromptBoxInternal({
   }, []);
   const showCompactLayout =
     compact?.isCompact === true && !showVoiceActionGroup;
+  const compactActionsInFlow =
+    showCompactLayout && showLabelInCompact && submitLabel !== undefined;
   const effectivePlaceholder = showCompactLayout
     ? (compact.placeholder ?? placeholder)
     : placeholder;
@@ -3167,7 +3175,7 @@ export function PromptBoxInternal({
             className={cn(
               "relative",
               showCompactLayout && "min-w-0 flex-1",
-              showCompactVoiceAction && "pr-9",
+              showCompactVoiceAction && !compactActionsInFlow && "pr-9",
             )}
           >
             {!showCompactLayout ? (
@@ -3214,6 +3222,7 @@ export function PromptBoxInternal({
               scrollContainerRef={editorScrollContainerRef}
               inputLocked={composerInputLocked}
               isCompactLayout={showCompactLayout}
+              compactActionsInFlow={compactActionsInFlow}
               minHeight={minHeight}
               layout={editorLayout}
               resolveMentionLink={mentionResolveLink}
@@ -3272,7 +3281,10 @@ export function PromptBoxInternal({
               data-promptbox-action-row=""
               className={cn(
                 "relative flex shrink-0 select-none flex-row items-center gap-3 pb-2 pl-3.5 pr-[13px] pt-1.5",
-                showCompactLayout && "absolute inset-y-0 right-2 gap-0 p-0",
+                showCompactLayout &&
+                  (compactActionsInFlow
+                    ? "static gap-0 py-0 pl-0 pr-2"
+                    : "absolute inset-y-0 right-2 gap-0 p-0"),
               )}
             >
               {voice && isVoiceActionPresent ? (
@@ -3431,6 +3443,7 @@ export function PromptBoxInternal({
                       >
                         <PromptSubmitButton
                           canSubmit={canSubmit}
+                          showLabelInCompact={showLabelInCompact}
                           icon={submitIcon}
                           label={submitLabel}
                           className={cn(

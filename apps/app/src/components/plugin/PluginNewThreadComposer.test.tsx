@@ -670,6 +670,169 @@ async function submit(): Promise<void> {
 }
 
 describe("PluginNewThreadComposer seeding", () => {
+  it("shares one async guard across repeated native activations", async () => {
+    const onSubmit = vi.fn();
+    const guard = vi.fn(() => createDeferredPromise<boolean>().promise);
+    const pending = createDeferredPromise<boolean>();
+    guard.mockReturnValue(pending.promise);
+    render(
+      <MemoryRouter>
+        <PluginNewThreadComposer
+          draftKey="double-submit-guard"
+          defaultProjectId="proj_1"
+          initialPrompt="create work"
+          onSubmit={onSubmit}
+          experimental_onBeforeSubmit={guard}
+        />
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(latestPromptBoxProps().disabled).toBe(false));
+    void latestPromptBoxProps().onSubmit();
+    void latestPromptBoxProps().onSubmit();
+    await waitFor(() => expect(guard).toHaveBeenCalledOnce());
+    pending.resolve(true);
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
+  });
+
+  it("rejects programmatic submit when the pre-submit guard blocks", async () => {
+    render(
+      <MemoryRouter>
+        <PluginNewThreadComposer
+          draftKey="programmatic-guard"
+          defaultProjectId="proj_1"
+          initialPrompt="create work"
+          onSubmit={() => undefined}
+          experimental_onBeforeSubmit={() => false}
+        />
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(latestPromptBoxProps().disabled).toBe(false));
+    const host = latestPromptBoxProps()
+      .pluginComposerHost as PluginComposerHost;
+    await expect(
+      host.submit!({ experimental_data: null }, undefined),
+    ).rejects.toThrow("This composer is not ready to submit yet");
+    expect(
+      getPromptDraftAccessor({
+        kind: "plugin-new-thread",
+        key: "programmatic-guard",
+      }).getCurrent().text,
+    ).toBe("create work");
+  });
+
+  it("blocks submission when an async guard sees a changed draft", async () => {
+    const onSubmit = vi.fn();
+    const gate = createDeferredPromise<boolean>();
+    render(
+      <MemoryRouter>
+        <PluginNewThreadComposer
+          draftKey="async-guard-text"
+          defaultProjectId="proj_1"
+          initialPrompt="original text"
+          onSubmit={onSubmit}
+          experimental_onBeforeSubmit={() => gate.promise}
+        />
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(latestPromptBoxProps().disabled).toBe(false));
+    void latestPromptBoxProps().onSubmit();
+    await waitFor(() => expect(latestPromptBoxProps().isSubmitting).toBe(true));
+    const draft = getPromptDraftAccessor({
+      kind: "plugin-new-thread",
+      key: "async-guard-text",
+    });
+    draft.setDraft({
+      ...draft.getCurrent(),
+      text: "newer text",
+    });
+    gate.resolve(true);
+    await waitFor(() =>
+      expect(latestPromptBoxProps().isSubmitting).toBe(false),
+    );
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(draft.getCurrent().text).toBe("newer text");
+  });
+
+  it("blocks submission when attachments change while an async guard runs", async () => {
+    const onSubmit = vi.fn();
+    const gate = createDeferredPromise<boolean>();
+    render(
+      <MemoryRouter>
+        <PluginNewThreadComposer
+          draftKey="async-guard-attachment"
+          defaultProjectId="proj_1"
+          initialPrompt="original text"
+          onSubmit={onSubmit}
+          experimental_onBeforeSubmit={() => gate.promise}
+        />
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(latestPromptBoxProps().disabled).toBe(false));
+    void latestPromptBoxProps().onSubmit();
+    await waitFor(() => expect(latestPromptBoxProps().isSubmitting).toBe(true));
+    const draft = getPromptDraftAccessor({
+      kind: "plugin-new-thread",
+      key: "async-guard-attachment",
+    });
+    const attachment: PromptDraftAttachment = {
+      type: "localFile",
+      path: "uploads/readme.md",
+      name: "readme.md",
+      sizeBytes: 12,
+    };
+    draft.setDraft({ ...draft.getCurrent(), attachments: [attachment] });
+    gate.resolve(true);
+    await waitFor(() =>
+      expect(latestPromptBoxProps().isSubmitting).toBe(false),
+    );
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(draft.getCurrent().attachments).toEqual([attachment]);
+  });
+
+  it("forwards optional native submit and chrome props while defaults stay unchanged", async () => {
+    const onSubmit = vi.fn();
+    const view = render(
+      <MemoryRouter>
+        <PluginNewThreadComposer
+          draftKey="composer-contract"
+          defaultProjectId="proj_1"
+          initialPrompt="create work"
+          onSubmit={onSubmit}
+          experimental_submitLabel="Create workstream"
+          experimental_submitDisabled
+          experimental_placementVisibility="hidden"
+          experimental_executionControlsVisibility="hidden"
+        />
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(latestPromptBoxProps().disabled).toBe(true));
+    expect(latestPromptBoxProps()).toMatchObject({
+      submitLabel: "Create workstream",
+      placementVisibility: "hidden",
+      executionControlsVisibility: "hidden",
+    });
+    await submit();
+    expect(onSubmit).not.toHaveBeenCalled();
+
+    view.rerender(
+      <MemoryRouter>
+        <PluginNewThreadComposer
+          draftKey="composer-contract"
+          defaultProjectId="proj_1"
+          initialPrompt="create work"
+          onSubmit={onSubmit}
+        />
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(latestPromptBoxProps().disabled).toBe(false));
+    expect(latestPromptBoxProps()).toMatchObject({
+      placementVisibility: "visible",
+      executionControlsVisibility: "visible",
+    });
+    expect(latestPromptBoxProps().submitLabel).toBeUndefined();
+    await submit();
+    expect(onSubmit).toHaveBeenCalledOnce();
+  });
   beforeEach(() => {
     resetFixedPanelTabsStateForTest();
     mocks.closeTerminal.mockClear();

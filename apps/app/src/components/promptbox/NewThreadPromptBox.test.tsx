@@ -3,13 +3,24 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { Host } from "@bb/domain";
+import {
+  EMPTY_ORDERED_MENTION_SUGGESTIONS,
+  emptyPromptDraftState,
+} from "@bb/client-core";
+import type { ComponentProps } from "react";
+import { MemoryRouter } from "react-router-dom";
 import { makeHost } from "@bb/test-helpers/domain-fixtures";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   SystemEnvironmentProvider,
   SystemMachineProvider,
 } from "@bb/server-contract";
-import { EnvironmentSlot, ProjectlessMachineSlot } from "./NewThreadPromptBox";
+import {
+  EnvironmentSlot,
+  NewThreadPromptBoxUI,
+  ProjectlessMachineSlot,
+} from "./NewThreadPromptBox";
+import { INERT_TYPEAHEAD_COMMAND_CONFIG } from "./PromptBoxInternal";
 
 const host = makeHost({
   id: "host_test",
@@ -19,6 +30,107 @@ const host = makeHost({
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+});
+
+describe("NewThreadPromptBoxUI chrome", () => {
+  it.each([
+    ["visible", "visible"],
+    ["hidden", "visible"],
+    ["visible", "hidden"],
+    ["hidden", "hidden"],
+  ] as const)(
+    "independently controls placement=%s and execution=%s",
+    (placementVisibility, executionControlsVisibility) => {
+      const props: ComponentProps<typeof NewThreadPromptBoxUI> = {
+        value: "Create work",
+        mentionRanges: [],
+        onChange: vi.fn(),
+        onSubmit: vi.fn(),
+        isSubmitting: false,
+        disabled: false,
+        submitLabel: "Create workstream",
+        placementVisibility,
+        executionControlsVisibility,
+        mentionMenuPlacement: "bottom",
+        history: {
+          currentDraft: emptyPromptDraftState(),
+          entries: [],
+          onSelectEntry: vi.fn(),
+        },
+        attachments: { onAttachFiles: vi.fn() },
+        typeahead: {
+          mention: {
+            results: EMPTY_ORDERED_MENTION_SUGGESTIONS,
+            isLoading: false,
+            isError: false,
+            onQueryChange: vi.fn(),
+          },
+          command: INERT_TYPEAHEAD_COMMAND_CONFIG,
+        },
+        project: {
+          projects: [{ id: "proj_1", name: "Example" }],
+          value: "proj_1",
+          onChange: vi.fn(),
+        },
+        modeConfig: {
+          environment: { value: "host", sources: [], host, isLocal: true },
+          worktree: { options: [], value: null, onChange: vi.fn() },
+          permission: {
+            value: "auto",
+            options: [
+              { value: "auto", label: "Approve for me" },
+              { value: "full", label: "Full access" },
+            ],
+            supported: true,
+            onChange: vi.fn(),
+          },
+        },
+        execution: {
+          provider: { selectedId: "codex" },
+          model: {
+            selected: "gpt-5",
+            options: [],
+            moreOptions: [],
+            isLoading: false,
+            loadFailed: false,
+            onChange: vi.fn(),
+          },
+          reasoning: { value: "medium", options: [], onChange: vi.fn() },
+        },
+      };
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      const view = render(
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter>
+            <NewThreadPromptBoxUI {...props} />
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+      expect(
+        screen.queryByRole("button", { name: "Project: Example" }) !== null,
+      ).toBe(placementVisibility === "visible");
+      expect(
+        screen.queryByRole("button", { name: "Environment" }) !== null,
+      ).toBe(placementVisibility === "visible");
+      expect(
+        screen.queryByRole("button", { name: "Permission mode" }) !== null,
+      ).toBe(executionControlsVisibility === "visible");
+      expect(
+        screen.queryByRole("button", {
+          name: /Provider, model and reasoning/u,
+        }) !== null,
+      ).toBe(executionControlsVisibility === "visible");
+      const submit = screen.getByRole("button", { name: "Create workstream" });
+      expect(submit.textContent).toContain("Create workstream");
+      expect(screen.getByRole("textbox")).toBeTruthy();
+      fireEvent.click(submit);
+      expect(props.onSubmit).toHaveBeenCalledOnce();
+      view.unmount();
+      queryClient.clear();
+    },
+  );
 });
 
 describe("ProjectlessMachineSlot", () => {

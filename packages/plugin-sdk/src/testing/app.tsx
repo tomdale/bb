@@ -88,6 +88,7 @@ import {
   type ExperimentalOpenFixedTabOptions,
   type ExperimentalPluginFixedTabReference,
   type NewThreadComposerProps,
+  type NewThreadRequest,
   type BranchPickerProps,
   type CheckoutState,
   type ExperimentalPermissionModePickerProps,
@@ -642,6 +643,11 @@ function TestNewThreadComposer({
   defaultEnvironment,
   initialPrompt,
   placeholder,
+  experimental_submitLabel,
+  experimental_submitDisabled,
+  experimental_onBeforeSubmit,
+  experimental_placementVisibility,
+  experimental_executionControlsVisibility,
   layout = "contained",
   focusRequest,
   className,
@@ -649,6 +655,43 @@ function TestNewThreadComposer({
   onSubmit,
 }: NewThreadComposerProps) {
   const [text, setText] = useState(initialPrompt ?? "");
+  const textRef = useRef(text);
+  const submitInFlightRef = useRef(false);
+  textRef.current = text;
+
+  const submit = async () => {
+    if (experimental_submitDisabled || submitInFlightRef.current) return;
+    submitInFlightRef.current = true;
+    const submittedText = textRef.current;
+    const request: NewThreadRequest = {
+      projectId: defaultProjectId ?? "project-test",
+      providerId: defaultProviderId ?? "codex",
+      model: defaultModel ?? "gpt-5",
+      reasoningLevel: defaultReasoningLevel ?? "medium",
+      permissionMode: defaultPermissionMode ?? "auto",
+      ...(defaultServiceTier !== undefined
+        ? { serviceTier: defaultServiceTier }
+        : {}),
+      executionInputSources: {},
+      environment: defaultEnvironment ?? { type: "project-default" },
+      input: [{ type: "text", text: submittedText, mentions: [] }],
+    };
+    try {
+      if (
+        experimental_onBeforeSubmit &&
+        (await experimental_onBeforeSubmit(request)) === false
+      ) {
+        return;
+      }
+      if (textRef.current !== submittedText) return;
+      await onSubmit(request);
+    } catch {
+      return;
+    } finally {
+      submitInFlightRef.current = false;
+    }
+  };
+
   return (
     <div
       data-testid="bb-new-thread-composer"
@@ -666,37 +709,28 @@ function TestNewThreadComposer({
       data-layout={layout}
       data-focus-request={focusRequest ?? 0}
       data-draft-key={draftKey ?? ""}
+      data-placement-visibility={experimental_placementVisibility ?? "visible"}
+      data-execution-controls-visibility={
+        experimental_executionControlsVisibility ?? "visible"
+      }
       className={className}
     >
       <textarea
         data-testid="bb-new-thread-composer-input"
         placeholder={placeholder}
         value={text}
-        onChange={(event) => setText(event.target.value)}
+        onChange={(event) => {
+          textRef.current = event.target.value;
+          setText(event.target.value);
+        }}
       />
       <button
         type="button"
         data-testid="bb-new-thread-composer-submit"
-        onClick={() => {
-          // Untouched submits echo the `default*` seeds back, mirroring the
-          // real composer's round-trip guarantee so plugin tests can cover
-          // the store-then-restore pattern.
-          void onSubmit({
-            projectId: defaultProjectId ?? "project-test",
-            providerId: defaultProviderId ?? "codex",
-            model: defaultModel ?? "gpt-5",
-            reasoningLevel: defaultReasoningLevel ?? "medium",
-            permissionMode: defaultPermissionMode ?? "auto",
-            ...(defaultServiceTier !== undefined
-              ? { serviceTier: defaultServiceTier }
-              : {}),
-            executionInputSources: {},
-            environment: defaultEnvironment ?? { type: "project-default" },
-            input: [{ type: "text", text, mentions: [] }],
-          });
-        }}
+        disabled={experimental_submitDisabled}
+        onClick={() => void submit()}
       >
-        Start thread
+        {experimental_submitLabel ?? "Start thread"}
       </button>
     </div>
   );

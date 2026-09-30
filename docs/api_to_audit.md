@@ -2148,6 +2148,20 @@ host's `useCreateThread` and the thread would look host-originated. So the
 rule is: the composer owns user selections; the plugin owns filing
 (`sectionId`, `parentThreadId`, `title`, `visibility`) and attribution.
 
+The host-created composer remains the only writer of its draft and handles
+native activation, IME behavior, attachments, mentions and voice. A plugin can
+provide `experimental_submitLabel` and `experimental_submitDisabled` to label
+and block its native action. `experimental_onBeforeSubmit(request)` runs before
+the host clears the draft; returning `false` or rejecting preserves it. The
+host snapshots the full draft (including mentions and attachments) before the
+async guard and blocks dispatch if that draft changed while the guard ran.
+Native click, touch, Enter, and `useComposer().experimental_submit` share this
+pipeline. `experimental_placementVisibility="hidden"` hides the native
+project/environment row while preserving the permission picker;
+`experimental_executionControlsVisibility="hidden"` hides provider/model/
+reasoning/service-tier and permission controls while preserving the prompt.
+All optional props default to current behavior.
+
 Implementation: the shared workflow is
 `apps/app/src/components/promptbox/NewThreadComposer.tsx`; the SDK adapter is
 `apps/app/src/components/plugin/PluginNewThreadComposer.tsx`, bound in
@@ -2210,6 +2224,16 @@ Implementation: the shared workflow is
    project metadata with `projects.list({ includePersonal: true })`. Before
    stabilizing, confirm unconditional project switching is right for embedded
    plugin workflows, rather than adding an explicit project-locking policy.
+7. **Submit guard and label.** Confirm false and rejection preserve text,
+   mentions and attachments; a draft changed during an async guard never
+   dispatches; click, touch, Enter, programmatic submit and duplicate Enter all
+   share the guard; compact layout exposes the visible supplied label; and
+   unconfigured callers retain existing labels and disabled rules.
+8. **Chrome visibility.** Confirm hiding placement leaves permission visible,
+   hiding execution controls removes provider/model/reasoning/service-tier and
+   permission together, and either mode retains attachments, mentions, voice
+   and submit. Verify existing-thread send semantics against a real plugin
+   consumer before stabilizing.
 
 ## `app.slots.experimental_appOverlay` (`@get-bb/plugin-sdk/app`)
 

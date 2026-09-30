@@ -263,6 +263,13 @@ export interface NewThreadComposerProps {
   resetKey?: string | number | null;
   preferReadyProviderWhenUnset?: boolean;
   onSubmit: (request: NewThreadComposerSubmission) => void | Promise<void>;
+  experimental_submitLabel?: string;
+  experimental_submitDisabled?: boolean;
+  experimental_onBeforeSubmit?: (
+    request: NewThreadRequest,
+  ) => boolean | void | Promise<boolean | void>;
+  experimental_placementVisibility?: "visible" | "hidden";
+  experimental_executionControlsVisibility?: "visible" | "hidden";
   focusRequest?: number;
   children: (state: NewThreadComposerState) => ReactNode;
 }
@@ -463,6 +470,11 @@ export function NewThreadComposer({
   resetKey,
   preferReadyProviderWhenUnset = false,
   onSubmit,
+  experimental_submitLabel,
+  experimental_submitDisabled = false,
+  experimental_onBeforeSubmit,
+  experimental_placementVisibility = "visible",
+  experimental_executionControlsVisibility = "visible",
   focusRequest,
   children,
 }: NewThreadComposerProps) {
@@ -1594,6 +1606,7 @@ export function NewThreadComposer({
         submitDisabledReason !== null ||
         input.length === 0 ||
         isSubmittingRef.current ||
+        experimental_submitDisabled ||
         projectDefaultsUnavailable ||
         submissionEnvironment === null ||
         !selectedProviderId ||
@@ -1632,9 +1645,29 @@ export function NewThreadComposer({
       isSubmittingRef.current = true;
       setIsSubmitting(true);
       setAttachmentError(null);
-      const clearedSubmittedDraft =
-        promptDraft.clearIfCurrentMatches(submittedDraft);
+      let clearedSubmittedDraft = false;
       try {
+        if (experimental_onBeforeSubmit) {
+          let allowed: boolean | void;
+          try {
+            allowed = await experimental_onBeforeSubmit(request);
+          } catch {
+            throw new Error("This composer is not ready to submit yet.");
+          }
+          if (allowed === false) {
+            throw new Error("This composer is not ready to submit yet.");
+          }
+          if (
+            !arePromptDraftStatesEqual(promptDraft.getCurrent(), submittedDraft)
+          ) {
+            throw new Error("This composer is not ready to submit yet.");
+          }
+        }
+        clearedSubmittedDraft =
+          promptDraft.clearIfCurrentMatches(submittedDraft);
+        if (!clearedSubmittedDraft) {
+          throw new Error("This composer is not ready to submit yet.");
+        }
         await onSubmit(request);
         clearReuseEnvironment();
       } catch (submitError) {
@@ -1650,6 +1683,8 @@ export function NewThreadComposer({
     [
       clearReuseEnvironment,
       executionInputSources,
+      experimental_onBeforeSubmit,
+      experimental_submitDisabled,
       onSubmit,
       permissionMode,
       projectDefaultsUnavailable,
@@ -1901,8 +1936,11 @@ export function NewThreadComposer({
           onChange={promptDraft.setTextAndMentions}
           onSubmit={() => void handleSubmit(options.blockedReason ?? null)}
           isSubmitting={isSubmitting}
-          disabled={disabledReason !== null}
+          disabled={disabledReason !== null || experimental_submitDisabled}
           disabledReason={disabledReason ?? undefined}
+          submitLabel={experimental_submitLabel}
+          placementVisibility={experimental_placementVisibility}
+          executionControlsVisibility={experimental_executionControlsVisibility}
           placeholder={options.placeholder}
           mentionMenuPlacement={options.mentionMenuPlacement}
           autoFocus={options.autoFocus}
@@ -2077,6 +2115,10 @@ export function NewThreadComposer({
       environmentProviders,
       environmentProvidersByHostId,
       executionOptionsRouting,
+      experimental_executionControlsVisibility,
+      experimental_placementVisibility,
+      experimental_submitDisabled,
+      experimental_submitLabel,
       handleAttachFiles,
       handleEditorFocus,
       handleModelChange,
