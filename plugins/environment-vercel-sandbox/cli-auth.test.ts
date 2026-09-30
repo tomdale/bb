@@ -6,9 +6,16 @@ import { cliFixture } from "./cli-test-fixture.js";
 import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/host";
 import { createVercelHostEntry } from "./host.js";
 import { vendorTransport } from "./vendor-test-transport.js";
+import { access } from "node:fs/promises";
+vi.mock("node:fs/promises", async (original) => {
+  const actual = await original<typeof import("node:fs/promises")>();
+  return { ...actual, access: vi.fn(actual.access) };
+});
 const disposals: (() => Promise<void>)[] = [];
 afterEach(async () => {
   vi.unstubAllEnvs();
+  vi.mocked(access).mockReset();
+  vi.mocked(access).mockRejectedValue(new Error("absent"));
   for (const dispose of disposals.splice(0)) await dispose();
 });
 async function fixture() {
@@ -41,6 +48,11 @@ describe("CLI authentication boundary", () => {
     expect(new Set(cli.tokens).size).toBe(2);
     expect(
       cli.commands.every((args) => args.includes("--non-interactive")),
+    ).toBe(true);
+    expect(
+      cli.commands.every(
+        (args) => args[args.indexOf("--api") + 1] === "https://api.vercel.com",
+      ),
     ).toBe(true);
     expect(
       cli.commands.some((args) => args[0] === "login" || args[0] === "link"),
@@ -145,7 +157,7 @@ describe("CLI authentication boundary", () => {
     await mkdir(bin);
     await writeFile(
       join(bin, "vc"),
-      `#!/bin/sh\nif [ -n "$VERCEL_TOKEN$VERCEL_AUTH_TOKEN$VERCEL_OIDC_TOKEN$NODE_OPTIONS$DEBUG_FETCH" ]; then exit 1; fi\ncase "$1" in\n  fail) echo private-auth-file >&2; exit 1;;\n  large) head -c 300000 /dev/zero;;\n  hang) trap '' TERM; while :; do :; done;;
+      `#!/bin/sh\nif [ -n "$VERCEL_TOKEN$VERCEL_AUTH_TOKEN$VERCEL_OIDC_TOKEN$NODE_OPTIONS$DEBUG_FETCH$FORCE_TTY$AI_AGENT$CURSOR_TRACE_ID$CURSOR_AGENT$CURSOR_EXTENSION_HOST_ROLE$GEMINI_CLI$CODEX_SANDBOX$CODEX_CI$CODEX_THREAD_ID$ANTIGRAVITY_AGENT$AUGMENT_AGENT$OPENCODE_CLIENT$CLAUDECODE$CLAUDE_CODE$CLAUDE_CODE_IS_COWORK$REPL_ID$COPILOT_MODEL$COPILOT_ALLOW_ALL$COPILOT_GITHUB_TOKEN" ]; then echo unsolicited-device-login >&2; exit 1; fi\ncase "$1" in\n  fail) echo private-auth-file >&2; exit 1;;\n  large) head -c 300000 /dev/zero;;\n  hang) trap '' TERM; while :; do :; done;;
   *) printf '{"token":"private-oidc-token"}';;\nesac\n`,
       { mode: 0o700 },
     );
@@ -156,6 +168,25 @@ describe("CLI authentication boundary", () => {
       "VERCEL_OIDC_TOKEN",
       "NODE_OPTIONS",
       "DEBUG_FETCH",
+      "FORCE_TTY",
+      "AI_AGENT",
+      "CURSOR_TRACE_ID",
+      "CURSOR_AGENT",
+      "CURSOR_EXTENSION_HOST_ROLE",
+      "GEMINI_CLI",
+      "CODEX_SANDBOX",
+      "CODEX_CI",
+      "CODEX_THREAD_ID",
+      "ANTIGRAVITY_AGENT",
+      "AUGMENT_AGENT",
+      "OPENCODE_CLIENT",
+      "CLAUDECODE",
+      "CLAUDE_CODE",
+      "CLAUDE_CODE_IS_COWORK",
+      "REPL_ID",
+      "COPILOT_MODEL",
+      "COPILOT_ALLOW_ALL",
+      "COPILOT_GITHUB_TOKEN",
     ])
       vi.stubEnv(key, "private-override");
     expect(await runVc(["api"], cli.directory, signal())).toBe(
@@ -178,5 +209,12 @@ describe("CLI authentication boundary", () => {
     );
     expect(String(error)).toContain("Vercel CLI authentication failed");
     expect(String(error)).not.toContain("private-");
+  });
+  it("refuses non-environment agent detection before starting the CLI", async () => {
+    const cli = await fixture();
+    vi.mocked(access).mockResolvedValue(undefined);
+    await expect(runVc(["api"], cli.directory, signal())).rejects.toThrow(
+      "/opt/.devin agent detection",
+    );
   });
 });

@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { connectionSchema, type Connection } from "./auth-contract.js";
@@ -14,6 +14,15 @@ const CLI_FAILURE =
   "Vercel CLI authentication failed on the selected machine. Install vc 58.3.0 or later, run vc login, link an existing project with vc link, and reconnect. Inspection never starts login.";
 export const runVc: CliRunner = async (args, directory, signal) => {
   signal.throwIfAborted();
+  const devin = await access("/opt/.devin").then(
+    () => true,
+    () => false,
+  );
+  if (devin)
+    throw new SafeError(
+      "Vercel CLI authentication cannot run safely on a machine with /opt/.devin agent detection. Choose another enrolled authentication machine.",
+    );
+  signal.throwIfAborted();
   const env: Record<string, string | undefined> = {
     ...process.env,
     CI: "1",
@@ -24,7 +33,7 @@ export const runVc: CliRunner = async (args, directory, signal) => {
   };
   for (const key of Object.keys(env)) {
     if (
-      /^(VERCEL_TOKEN|VERCEL_AUTH_TOKEN|VERCEL_OIDC_TOKEN|VERCEL_AUTH_CONFIG_DIR|DEBUG|DEBUG_FETCH|NODE_OPTIONS|NODE_DEBUG)$/.test(
+      /^(VERCEL_TOKEN|VERCEL_AUTH_TOKEN|VERCEL_OIDC_TOKEN|VERCEL_AUTH_CONFIG_DIR|DEBUG|DEBUG_FETCH|NODE_OPTIONS|NODE_DEBUG|FORCE_TTY|AI_AGENT|CURSOR_TRACE_ID|CURSOR_AGENT|CURSOR_EXTENSION_HOST_ROLE|GEMINI_CLI|CODEX_SANDBOX|CODEX_CI|CODEX_THREAD_ID|ANTIGRAVITY_AGENT|AUGMENT_AGENT|OPENCODE_CLIENT|CLAUDECODE|CLAUDE_CODE|CLAUDE_CODE_IS_COWORK|REPL_ID|COPILOT_MODEL|COPILOT_ALLOW_ALL|COPILOT_GITHUB_TOKEN)$/.test(
         key,
       )
     )
@@ -74,7 +83,15 @@ export const runVc: CliRunner = async (args, directory, signal) => {
 export function cliAuthentication(run: CliRunner = runVc) {
   const command = (args: string[], directory: string, signal: AbortSignal) =>
     run(
-      [...args, "--cwd", directory, "--non-interactive", "--no-color"],
+      [
+        ...args,
+        "--api",
+        "https://api.vercel.com",
+        "--cwd",
+        directory,
+        "--non-interactive",
+        "--no-color",
+      ],
       directory,
       signal,
     );
