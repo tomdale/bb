@@ -2887,6 +2887,94 @@ describe("NewThreadComposer setSelection", () => {
     return host;
   }
 
+  it.each([
+    {
+      name: "managed worktree with the provider's named default branch",
+      workspace: {
+        type: "managed-worktree",
+        baseBranch: { kind: "default" },
+      },
+      providerId: "git-worktree",
+      inputs: { branch: { kind: "named", name: "main" } },
+    },
+    {
+      name: "project checkout with an absent path",
+      workspace: { type: "unmanaged", path: null },
+      providerId: "project-checkout",
+      inputs: {},
+    },
+  ] satisfies Array<{
+    name: string;
+    workspace: Extract<
+      NewThreadRequest["environment"],
+      { type: "host" }
+    >["workspace"];
+    providerId: string;
+    inputs: Record<string, unknown>;
+  }>)(
+    "settles embedded host selection for $name",
+    async ({ workspace, providerId, inputs }) => {
+      function NamedDefaultWorktreeInputs({
+        value,
+        onChange,
+      }: PluginEnvironmentProviderInputsProps) {
+        useEffect(() => {
+          if (value === null) {
+            onChange({
+              status: "ready",
+              value: { branch: { kind: "named", name: "main" } },
+            });
+          }
+        }, [onChange, value]);
+        return null;
+      }
+      setPluginSlotRegistrations("environment-git-worktree", {
+        ...EMPTY_SLOT_REGISTRATIONS,
+        environmentProviderInputs: [
+          {
+            environmentProviderId: "git-worktree",
+            component: NamedDefaultWorktreeInputs,
+          },
+        ],
+      });
+      const onSubmit = vi.fn();
+      render(
+        <Provider>
+          <MemoryRouter>
+            <PluginNewThreadComposer
+              draftKey={`host-selection-${providerId}`}
+              defaultProjectId="proj_1"
+              defaultProviderId="claude-code"
+              defaultModel="gpt-5.6-sol"
+              initialPrompt="create work"
+              experimental_executionControlsVisibility="hidden"
+              experimental_placementVisibility="hidden"
+              onSubmit={onSubmit}
+            />
+          </MemoryRouter>
+        </Provider>,
+      );
+      await waitFor(() => expect(latestPromptBoxProps().disabled).toBe(false));
+      const host = currentHost();
+      const result = await settled(
+        host.setSelection!({
+          environment: { type: "host", hostId: "host_1", workspace },
+        }),
+      );
+      expect(result.environment).toEqual({
+        type: "provider",
+        environmentProviderId: providerId,
+        machine: { type: "existing", hostId: "host_1" },
+        inputs,
+      });
+      expect(host.getSelection?.()).toEqual(result);
+      expect(latestPromptBoxProps().disabled).toBe(false);
+      await submit();
+      expect(onSubmit).toHaveBeenCalledOnce();
+      expect(onSubmit.mock.calls[0][0].environment).toEqual(result.environment);
+    },
+  );
+
   it("tracks values changed through the visible model picker", async () => {
     render(rootLikeElement("proj_1"));
     const host = currentHost();
