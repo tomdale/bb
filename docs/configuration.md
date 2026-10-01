@@ -184,6 +184,38 @@ which interrupts running threads; the app and CLI ask first.
 `BB_APP_UPDATE_MODE` is an internal marker the launcher passes to its server
 child; do not set it yourself.
 
+## Private Desktop Builds
+
+The private macOS build profiles are built from this checkout with
+`pnpm exec turbo run package:personal --filter=@bb/desktop` and
+`pnpm exec turbo run package:lab --filter=@bb/desktop`. Personal uses the normal
+`~/.bb` runtime and default ports. Lab uses `~/.bb-lab`, loopback server port
+38890, and host-daemon port 38891. Lab ignores inherited `BB_DATA_DIR`,
+`BB_SERVER_URL`, `BB_SERVER_PORT`, `BB_HOST_DAEMON_PORT`, external app URLs,
+and shell/dev worktree routing values so Finder launches remain isolated; it
+also rejects data or preference paths that resolve inside `~/.bb`. Set
+`BB_LAB_DATA_DIR`, `BB_LAB_USER_DATA_DIR`, `BB_LAB_APP_DATA_DIR`,
+`BB_LAB_SERVER_PORT`, and `BB_LAB_HOST_DAEMON_PORT` to explicitly override
+Lab-only paths or ports. Lab
+ports must differ from 38886/38887 and each other. Personal preserves the
+normal runtime environment and can set `BB_PERSONAL_USER_DATA_DIR` and
+`BB_PERSONAL_APP_DATA_DIR` for its Electron preferences and caches.
+
+Both profiles use distinct macOS bundle identities and Electron preference
+folders. Lab's packaged-runtime smoke uses a separate serialized expected-target
+handshake; it fails before filesystem writes if the effective profile does not
+match the exact temporary data/preference paths and ports. Lab's Electron
+app-data and user-data paths default to
+`~/.bb-lab-electron` and `~/.bb-lab-desktop`. Lab clears inherited host identity,
+enrollment credentials, server headers, CLI overrides, telemetry keys, and
+external/development routing values before launching the bundled runtime; it
+sets the desktop app surface itself and disables telemetry. Both profiles
+suppress upstream desktop update checks and replacement; update binaries by
+rebuilding and packaging this checkout. Artifacts go to
+`apps/desktop/release/personal/` and `apps/desktop/release/lab/`. Smoke them
+with `pnpm exec turbo run smoke:packaged:personal --filter=@bb/desktop` and
+`pnpm exec turbo run smoke:packaged:lab --filter=@bb/desktop`.
+
 ## Common Keys
 
 | Key                            | Command                                            | When to set             | Used for                                                                                                                                                                                                                                                                                                                                                                                                       |

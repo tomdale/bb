@@ -79,11 +79,15 @@ interface ResolveDesktopUpdateSupportArgs {
   canReplaceAppImage: (appImagePath: string) => boolean;
   env: NodeJS.ProcessEnv;
   platform: BbDesktopVersionFeedPlatform;
+  updatesEnabled?: boolean;
 }
 
 export function resolveDesktopUpdateSupport(
   args: ResolveDesktopUpdateSupportArgs,
 ): DesktopUpdateSupport {
+  if (args.updatesEnabled === false) {
+    return { autoUpdate: false, versionCheck: false };
+  }
   if (args.platform === "macos") {
     return { autoUpdate: true, versionCheck: true };
   }
