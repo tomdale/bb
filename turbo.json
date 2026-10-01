@@ -242,10 +242,11 @@
     },
     "@bb/desktop#build": {
       "dependsOn": ["bb-app#build"],
-      "env": ["BB_DESKTOP_RELEASE_CHANNEL"],
+      "env": ["BB_DESKTOP_RELEASE_CHANNEL", "BB_DESKTOP_BUILD_PROFILE"],
       "inputs": [
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/apps/desktop/**",
+        "$TURBO_ROOT$/apps/desktop/scripts/desktop-build-profiles.mjs",
         "$TURBO_ROOT$/packages/bb-app/app/**",
         "$TURBO_ROOT$/packages/bb-app/dist/**",
         "$TURBO_ROOT$/packages/bb-app/host-daemon/**",
@@ -256,6 +257,18 @@
         "$TURBO_ROOT$/turbo.json"
       ],
       "outputs": ["dist/**"]
+    },
+    "@bb/desktop#desktop:build:personal": {
+      "dependsOn": ["bb-app#build", "@bb/desktop#build"],
+      "cache": false,
+      "outputs": ["release/personal/**"],
+      "passThroughEnv": ["*"]
+    },
+    "@bb/desktop#desktop:build:lab": {
+      "dependsOn": ["bb-app#build", "@bb/desktop#build"],
+      "cache": false,
+      "outputs": ["release/lab/**"],
+      "passThroughEnv": ["*"]
     },
     "@bb/desktop#desktop:build": {
       "dependsOn": ["bb-app#build", "@bb/desktop#build"],
@@ -280,10 +293,37 @@
       "outputs": [],
       "passThroughEnv": ["*"]
     },
+    "@bb/desktop#smoke:packaged:personal": {
+      "cache": false,
+      "outputs": [],
+      "passThroughEnv": ["*"]
+    },
+    "@bb/desktop#smoke:packaged:lab": {
+      "cache": false,
+      "outputs": [],
+      "passThroughEnv": ["*"]
+    },
+    "@bb/desktop#smoke:owned-runtime:lab": {
+      "cache": false,
+      "outputs": [],
+      "passThroughEnv": ["*"]
+    },
     "@bb/desktop#smoke:packaged-npm": {
       "cache": false,
       "outputs": [],
       "passThroughEnv": ["BB_DESKTOP_RELEASE_CHANNEL"]
+    },
+    "@bb/desktop#package:personal": {
+      "dependsOn": ["bb-app#build", "@bb/desktop#build"],
+      "cache": false,
+      "outputs": ["release/personal/**"],
+      "passThroughEnv": ["*"]
+    },
+    "@bb/desktop#package:lab": {
+      "dependsOn": ["bb-app#build", "@bb/desktop#build"],
+      "cache": false,
+      "outputs": ["release/lab/**"],
+      "passThroughEnv": ["*"]
     },
     "@bb/desktop#package": {
       "dependsOn": ["bb-app#build", "@bb/desktop#build"],

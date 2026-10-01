@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { accessSync, constants as fsConstants } from "node:fs";
+import { accessSync, constants as fsConstants, mkdirSync } from "node:fs";
+import { mkdir } from "node:fs/promises";
 import { arch, homedir, release, type as osType } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import {
@@ -179,11 +180,20 @@ import {
 import { createDesktopUpdateService } from "./desktop-update-check.js";
 import {
   createDesktopUpdateFeedUrl,
-  DESKTOP_RELEASE_CHANNEL,
-  DESKTOP_RELEASE_INFO,
   resolveDesktopUpdateSupport,
 } from "./desktop-update-provider.js";
 import type { DesktopUpdateService } from "./desktop-update-scheduler.js";
+import {
+  createDesktopApplicationIdentity,
+  createDesktopProfileEnvironment,
+  DESKTOP_BUILD_PROFILE,
+  DESKTOP_RELEASE_CHANNEL,
+} from "./desktop-build-profile.js";
+import {
+  assertLabRuntimeConfig,
+  createExpectedLabRuntimeConfig,
+  parseExpectedLabRuntimeConfig,
+} from "../scripts/lab-runtime-config.mjs";
 import {
   createDesktopAutoUpdateService,
   createElectronAutoUpdaterAdapter,
@@ -2695,18 +2705,81 @@ async function initializeRuntime(args: InitializeRuntimeArgs): Promise<void> {
 }
 
 async function runDesktopApp(): Promise<void> {
+  const labSmokeMode =
+    process.argv.includes("--bb-lab-smoke") ||
+    process.env.BB_DESKTOP_LAB_SMOKE_MODE === "1";
+  if (labSmokeMode && DESKTOP_BUILD_PROFILE !== "lab") {
+    throw new Error("Lab smoke invocation requires a Lab build");
+  }
+  const expectedLabConfig =
+    DESKTOP_BUILD_PROFILE === "lab"
+      ? labSmokeMode
+        ? parseExpectedLabRuntimeConfig({
+            serializedExpected:
+              process.env.BB_DESKTOP_LAB_EXPECTED_CONFIG ?? "",
+          })
+        : createExpectedLabRuntimeConfig({ env: process.env })
+      : null;
+  const profileEnv = createDesktopProfileEnvironment({
+    env: process.env,
+    homeDir: homedir(),
+    profile: DESKTOP_BUILD_PROFILE,
+  });
+  if (expectedLabConfig !== null) {
+    assertLabRuntimeConfig(profileEnv, expectedLabConfig);
+    if (labSmokeMode) {
+      process.stdout.write(
+        `BB_LAB_CONFIG_VALIDATED ${JSON.stringify(expectedLabConfig)}\n`,
+      );
+    }
+  }
+  for (const key of new Set([
+    ...Object.keys(process.env),
+    ...Object.keys(profileEnv),
+  ])) {
+    const value = profileEnv[key];
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+  const desktopIdentity = createDesktopApplicationIdentity(
+    DESKTOP_BUILD_PROFILE,
+    DESKTOP_RELEASE_CHANNEL,
+  );
+  const applicationName = app.isPackaged
+    ? desktopIdentity.applicationName
+    : "bb-dev";
+  app.setName(applicationName);
+  if (DESKTOP_BUILD_PROFILE !== "release") {
+    const userDataPath = process.env.BB_DESKTOP_USER_DATA_DIR;
+    if (userDataPath === undefined || userDataPath.trim().length === 0) {
+      throw new Error(
+        "Private desktop profile user-data path is not configured",
+      );
+    }
+    const sessionDataPath = join(userDataPath, "session-data");
+    mkdirSync(userDataPath, { recursive: true });
+    mkdirSync(sessionDataPath, { recursive: true });
+    const appDataPath = process.env.BB_DESKTOP_APP_DATA_DIR;
+    if (appDataPath === undefined || appDataPath.trim().length === 0) {
+      throw new Error(
+        "Private desktop profile app-data path is not configured",
+      );
+    }
+    mkdirSync(appDataPath, { recursive: true });
+    app.setPath("appData", appDataPath);
+    app.setPath("userData", userDataPath);
+    app.setPath("sessionData", sessionDataPath);
+  }
+  installAboutPanel(applicationName);
   ensurePackagedUserShellPath({
     env: process.env,
     isPackaged: app.isPackaged,
     logger: desktopLogger,
     platform: process.platform,
   });
-
-  const applicationName = app.isPackaged
-    ? DESKTOP_RELEASE_INFO.applicationName
-    : "bb-dev";
-  app.setName(applicationName);
-  installAboutPanel(applicationName);
 
   if (!app.requestSingleInstanceLock()) {
     app.quit();
@@ -2772,7 +2845,7 @@ async function runDesktopApp(): Promise<void> {
 
   const paths = createDesktopPathContext();
   const iconPath = resolveDesktopIconPath({
-    packagedIconFileName: DESKTOP_RELEASE_INFO.iconFileName,
+    packagedIconFileName: desktopIdentity.iconFileName,
     paths,
   });
   const bridgePath = resolveDesktopBridgePath({ paths });
@@ -2813,6 +2886,13 @@ async function runDesktopApp(): Promise<void> {
   });
   const userDataPath = app.getPath("userData");
   desktopUserDataPath = userDataPath;
+  if (DESKTOP_BUILD_PROFILE === "lab") {
+    const expectedConfig = expectedLabConfig;
+    if (expectedConfig === null) {
+      throw new Error("Lab runtime expected target was not resolved");
+    }
+    await mkdir(expectedConfig.dataDir, { recursive: true });
+  }
 
   assertPathExists({ label: "bb-app bridge", path: bridgePath });
   assertPathExists({
@@ -2859,6 +2939,9 @@ async function runDesktopApp(): Promise<void> {
     env: process.env,
     homeDir: homedir(),
   });
+  if (DESKTOP_BUILD_PROFILE === "lab") {
+    await mkdir(dataDir, { recursive: true });
+  }
   builtinDataDir = dataDir;
   serverMoveNoticeStore = createServerMoveNoticeStore({
     storagePath: join(userDataPath, SERVER_MOVE_NOTICE_FILE_NAME),
@@ -2927,11 +3010,13 @@ async function runDesktopApp(): Promise<void> {
     canReplaceAppImage,
     env: process.env,
     platform: desktopPlatform,
+    updatesEnabled: desktopIdentity.updatesEnabled,
   });
   desktopUpdateService = createDesktopUpdateService({
     channel: DESKTOP_RELEASE_CHANNEL,
     currentVersion: desktopVersion,
     enabled:
+      desktopIdentity.updatesEnabled &&
       desktopUpdateSupport.versionCheck &&
       (app.isPackaged || process.env.BB_DESKTOP_VERSION_CHECK === "1"),
     feedUrl: desktopUpdateFeedUrl,
@@ -2941,6 +3026,7 @@ async function runDesktopApp(): Promise<void> {
   desktopAutoUpdateService = createDesktopAutoUpdateService({
     currentVersion: desktopVersion,
     enabled:
+      desktopIdentity.updatesEnabled &&
       desktopUpdateSupport.autoUpdate &&
       shouldEnableDesktopAutoUpdate({
         env: process.env,
@@ -3118,7 +3204,7 @@ async function runDesktopApp(): Promise<void> {
   }
   if (desktopUpdateSupport.autoUpdate) {
     desktopAutoUpdateService.start();
-  } else {
+  } else if (desktopIdentity.updatesEnabled) {
     desktopLogger.info(
       "Desktop auto-install is disabled: only the Linux AppImage build can replace itself. Version checks still report new releases.",
     );

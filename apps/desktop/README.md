@@ -112,6 +112,24 @@ For local verification without publishing, use
 `pnpm exec turbo run package --filter=@bb/desktop` on macOS, or
 `pnpm exec turbo run package:linux --filter=@bb/desktop` on Linux.
 
+The private macOS variants package into independent output trees:
+`pnpm exec turbo run package:personal --filter=@bb/desktop` creates
+`release/personal/` (`bb Personal`, `com.tomdale.bb.personal`), and
+`pnpm exec turbo run package:lab --filter=@bb/desktop` creates `release/lab/`
+(`bb Lab`, `com.tomdale.bb.lab`). Personal uses the normal `~/.bb` runtime;
+Lab defaults to isolated `~/.bb-lab`, loopback ports 38890/38891, and separate
+Electron data/preferences. Both disable desktop updates. Lab ignores inherited
+runtime/server/host identity and CLI targets and accepts only documented
+`BB_LAB_*` directory and port overrides; see `docs/configuration.md`.
+
+The `smoke:packaged:personal` and `smoke:packaged:lab` tasks exercise the
+packaged Electron attach/preload path against a synthetic compatible HTTP
+server and disposable preference/data directories; they do not start the
+bundled server or host daemon. `pnpm exec turbo run smoke:owned-runtime:lab
+--filter=@bb/desktop` separately starts the packaged Lab app's bundled server
+and host daemon on disposable ports, checks health and data-dir identity, and
+waits for its owned runtime PID and listeners to stop.
+
 npm's bundled dependencies are copied through an explicit `files` entry into
 `node_modules/npm/node_modules`, including nested dependency versions. pnpm's
 dependency listing omits this bundled tree, and electron-builder's dependency

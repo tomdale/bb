@@ -20,6 +20,19 @@
 - Host-dependent environment preflight requires a connected machine. Directory
   switching creates a core-owned attachment without claiming plugin provenance.
 
+## Private desktop builds
+
+Build the checkout's private macOS desktop variants with
+`pnpm exec turbo run package:personal --filter=@bb/desktop` or
+`pnpm exec turbo run package:lab --filter=@bb/desktop`. Personal uses the normal
+`~/.bb` runtime; Lab uses `~/.bb-lab`, loopback port 38890, and daemon port
+38891, ignoring inherited desktop/server target settings. Lab overrides use
+`BB_LAB_DATA_DIR`, `BB_LAB_USER_DATA_DIR`, `BB_LAB_APP_DATA_DIR`,
+`BB_LAB_SERVER_PORT`, and `BB_LAB_HOST_DAEMON_PORT`; Personal preferences use
+`BB_PERSONAL_USER_DATA_DIR` and `BB_PERSONAL_APP_DATA_DIR`. Both disable desktop update checks and write package
+artifacts under `apps/desktop/release/<profile>/`. See `docs/configuration.md`
+for path and port safety.
+
 ## App settings
 
 - Read `references/app-settings.md` for every general key, experiment, default,
