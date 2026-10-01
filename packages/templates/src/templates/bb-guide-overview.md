@@ -48,6 +48,11 @@ repo-level `.bb-env-setup.sh` and `.bb-env-teardown.sh` hooks. Run `bb guide
 agent-configuration` for the data-dir and workspace files that customize agent
 behavior.
 
+Private desktop profiles separate everyday and test installations. Personal
+uses the normal `~/.bb` runtime; Lab has isolated data and runtime ports.
+See the BB checkout's `docs/configuration.md` for packaging, profile settings,
+and update behavior.
+
 Run `bb guide <chapter>` for command details:
 
   threads              Spawning, inspecting, messaging, and managing threads

@@ -67,6 +67,25 @@ describe("desktop update support", () => {
     ).toEqual({ autoUpdate: false, versionCheck: true });
   });
 
+  it("disables every upstream update path for private builds", () => {
+    expect(
+      resolveDesktopUpdateSupport({
+        canReplaceAppImage: () => true,
+        env: { APPIMAGE: APP_IMAGE_PATH },
+        platform: "linux",
+        updatesEnabled: false,
+      }),
+    ).toEqual({ autoUpdate: false, versionCheck: false });
+    expect(
+      resolveDesktopUpdateSupport({
+        canReplaceAppImage: () => true,
+        env: {},
+        platform: "macos",
+        updatesEnabled: false,
+      }),
+    ).toEqual({ autoUpdate: false, versionCheck: false });
+  });
+
   it("refuses to install into an AppImage it cannot replace", () => {
     const checked: Array<string> = [];
 

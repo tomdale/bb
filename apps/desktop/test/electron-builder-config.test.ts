@@ -67,7 +67,7 @@ const macConfigSchema = z
 const linuxConfigSchema = z
   .object({
     category: z.literal("Development"),
-    executableName: z.enum(["bb", "bb-nightly"]),
+    executableName: z.enum(["bb", "bb-nightly", "bb-personal", "bb-lab"]),
     icon: z.string().min(1),
     target: z.tuple([
       z
@@ -109,7 +109,7 @@ const electronBuilderConfigSchema = z
     appId: z.string().min(1),
     artifactName: z.string().min(1),
     productName: z.string().min(1),
-    publish: z.tuple([
+    publish: z.array(
       z
         .object({
           channel: z.enum(["latest", "nightly"]),
@@ -117,7 +117,7 @@ const electronBuilderConfigSchema = z
           url: z.string().min(1),
         })
         .passthrough(),
-    ]),
+    ),
     toolsets: z.object({
       appimage: z.literal("1.0.3"),
     }),
@@ -587,6 +587,59 @@ describe("electron-builder signing config", () => {
       url: nightlyRelease.updateReleaseBaseUrl,
     });
   });
+
+  it.each([
+    [
+      "personal",
+      "com.tomdale.bb.personal",
+      "bb Personal",
+      "assets/icon-personal.icns",
+      "assets/icon-personal.png",
+      "bb-personal",
+      "release/personal",
+    ],
+    [
+      "lab",
+      "com.tomdale.bb.lab",
+      "bb Lab",
+      "assets/icon-lab.icns",
+      "assets/icon-lab.png",
+      "bb-lab",
+      "release/lab",
+    ],
+  ] as const)(
+    "packages private %s identity without an update feed",
+    async (
+      profile,
+      appId,
+      productName,
+      macIcon,
+      linuxIcon,
+      executableName,
+      output,
+    ) => {
+      const { config } = await readResolvedConfig({
+        BB_DESKTOP_BUILD_PROFILE: profile,
+      });
+
+      expect(config.appId).toBe(appId);
+      expect(config.productName).toBe(productName);
+      expect(config.artifactName).toBe(
+        `bb-${profile}-\${version}-\${arch}.\${ext}`,
+      );
+      expect(config.mac.icon).toBe(macIcon);
+      expect(config.linux.icon).toBe(linuxIcon);
+      expect(config.linux.executableName).toBe(executableName);
+      expect(config.directories).toMatchObject({ output });
+      expect(config.publish).toEqual([]);
+      await expect(
+        access(resolve(desktopPackageRoot, macIcon)),
+      ).resolves.toBeUndefined();
+      await expect(
+        access(resolve(desktopPackageRoot, linuxIcon)),
+      ).resolves.toBeUndefined();
+    },
+  );
 
   it("rejects unknown desktop release channels", async () => {
     const result = await runConfigScript({

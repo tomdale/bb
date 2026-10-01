@@ -1,22 +1,27 @@
 export type DesktopReleaseChannel = "latest" | "nightly";
-export type DesktopBuildPlatform = "macos" | "linux" | "windows";
+export type DesktopBuildPlatform = "macos" | "linux";
+export type DesktopBuildProfile = "release" | "personal" | "lab";
 
 export interface DesktopUpdateMetadataFileNames {
   linux: "latest-linux.yml" | "nightly-linux.yml";
   macos: "latest-mac.yml" | "nightly-mac.yml";
-  windows: "latest.yml" | "nightly.yml";
 }
 
 export interface DesktopReleaseConfig {
-  appId: "dev.bb.desktop" | "dev.bb.desktop.nightly";
-  applicationName: "bb" | "bb Nightly";
+  appId: string;
+  applicationName: string;
   artifactName: string;
-  iconFileName: "icon.png" | "icon-nightly.png";
-  linuxExecutableName: "bb" | "bb-nightly";
-  macIconPath: "assets/icon.icns" | "assets/icon-nightly.icns";
-  releaseTag: "desktop-latest" | "desktop-nightly";
+  iconFileName: string;
+  linuxExecutableName: string;
+  macIconPath: string;
+  outputDirectory?: string;
+  publish: Array<{
+    channel: DesktopReleaseChannel;
+    provider: "generic";
+    url: string;
+  }>;
+  releaseTag: string;
   updateMetadataFileNames: DesktopUpdateMetadataFileNames;
-  windowsInstallName: "bb" | "bb-nightly";
 }
 
 export function resolveDesktopReleaseChannel(
@@ -26,6 +31,29 @@ export function resolveDesktopReleaseChannel(
 export function resolveDesktopBuildPlatform(
   nodePlatform: string,
 ): DesktopBuildPlatform;
+
+export function resolveDesktopBuildProfile(
+  value: string | undefined,
+): DesktopBuildProfile;
+
+export interface DesktopApplicationIdentity {
+  appId: string;
+  applicationName: string;
+  artifactName: string;
+  iconFileName: string;
+  linuxExecutableName: string;
+  macIconPath: string;
+  outputDirectory?: string;
+  publish: DesktopReleaseConfig["publish"];
+  releaseTag?: string;
+  updateMetadataFileNames?: DesktopUpdateMetadataFileNames;
+  updatesEnabled: boolean;
+}
+
+export function createDesktopApplicationIdentity(
+  profile: DesktopBuildProfile,
+  releaseChannel: DesktopReleaseChannel,
+): DesktopApplicationIdentity;
 
 export function createDesktopReleaseConfig(
   channel: DesktopReleaseChannel,
