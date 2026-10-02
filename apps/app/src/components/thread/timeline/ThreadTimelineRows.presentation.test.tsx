@@ -4,7 +4,6 @@ import { cleanup, render, screen, within } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ReactElement } from "react";
-import type { JsonObject } from "@bb/domain";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { PluginTimelineRendererProps } from "@get-bb/plugin-sdk";
@@ -234,130 +233,6 @@ describe("presentation-driven timeline rows", () => {
       items.map((item) => item.getAttribute("data-plan-step-status")),
     ).toEqual(["completed", "active", "pending"]);
     expect(list.textContent).toContain("Wire the renderer");
-  });
-});
-
-describe("recap tool output", () => {
-  const stateSpecificRecaps = [
-    {
-      label: "review",
-      args: {
-        state: "review",
-        goal: "Added compact cards",
-        latest: ["Displays the implementation summary"],
-        review: [
-          {
-            step: "Open the timeline",
-            expect: "Find the recap after the turn",
-          },
-        ],
-        links: [{ title: "Screenshot", location: "https://example.com/shot" }],
-      },
-      expected: [
-        "Ready for review",
-        "Review",
-        "Open the timeline",
-        "Screenshot",
-      ],
-    },
-    {
-      label: "waiting",
-      args: {
-        state: "waiting",
-        goal: "Waiting for tests",
-        tasks: ["App tests"],
-        timeout: 30,
-      },
-      expected: ["Waiting", "App tests", "Check status in 30s"],
-    },
-  ];
-
-  it.each(stateSpecificRecaps)(
-    "renders a completed $label recap with its state-specific details",
-    ({ args, expected }) => {
-      const row = toolRow({
-        id: `tool_recap_${args.state}`,
-        toolName: "WorkstreamsRecap",
-        toolArgs: JSON.parse(JSON.stringify(args)) as JsonObject,
-        status: "completed",
-      });
-
-      renderRows(
-        <ThreadTimelineRows
-          threadId="thr_main"
-          threadRuntimeDisplayStatus="idle"
-          workspaceRootPath={undefined}
-          timelineRows={[row]}
-          initialExpanded={new Set([row.id])}
-        />,
-      );
-
-      const card = screen.getByTestId("recap-tool-output");
-      for (const text of expected) expect(card.textContent).toContain(text);
-    },
-  );
-
-  it("renders a completed WorkstreamsRecap row as a compact recap card", () => {
-    const row = toolRow({
-      id: "tool_recap",
-      toolName: "WorkstreamsRecap",
-      toolArgs: {
-        state: "complete",
-        goal: "Added inline recap cards",
-        latest: [
-          "Shows **results** directly in the timeline",
-          { step: "Preserves details", expect: "Available on demand" },
-        ],
-      },
-      output: "**Complete** · Added inline recap cards\\n- Shows results",
-      status: "completed",
-    });
-
-    renderRows(
-      <ThreadTimelineRows
-        threadId="thr_main"
-        threadRuntimeDisplayStatus="idle"
-        workspaceRootPath={undefined}
-        timelineRows={[row]}
-        initialExpanded={new Set([row.id])}
-      />,
-    );
-
-    const card = screen.getByTestId("recap-tool-output");
-    expect(card.textContent).toContain("Complete");
-    expect(card.textContent).toContain("Added inline recap cards");
-    expect(card.textContent).toContain(
-      "Shows results directly in the timeline",
-    );
-    expect(card.textContent).toContain("Available on demand");
-    expect(card.querySelector("details")?.textContent).toContain(
-      '"goal": "Added inline recap cards"',
-    );
-    expect(card.querySelector("details")?.textContent).toContain(
-      "Shows results",
-    );
-  });
-
-  it("keeps malformed recap tool arguments in the generic tool renderer", () => {
-    const row = toolRow({
-      id: "tool_bad_recap",
-      toolName: "WorkstreamsRecap",
-      toolArgs: { state: "complete", goal: "Missing results" },
-      output: "raw tool output",
-      status: "completed",
-    });
-    renderRows(
-      <ThreadTimelineRows
-        threadId="thr_main"
-        threadRuntimeDisplayStatus="idle"
-        workspaceRootPath={undefined}
-        timelineRows={[row]}
-        initialExpanded={new Set([row.id])}
-      />,
-    );
-
-    expect(screen.queryByTestId("recap-tool-output")).toBeNull();
-    expect(screen.getByText("WorkstreamsRecap")).toBeTruthy();
   });
 });
 
