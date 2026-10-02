@@ -2940,6 +2940,21 @@ describe("public thread data routes", () => {
         },
       );
 
+      const queueResponse = await harness.app.request(
+        `/api/v1/threads/${thread.id}/queued-messages`,
+      );
+      expect(queueResponse.status).toBe(200);
+      await expect(readJson(queueResponse)).resolves.toEqual([]);
+      const threadResponse = await harness.app.request(
+        `/api/v1/threads/${thread.id}`,
+      );
+      await expect(readJson(threadResponse)).resolves.toMatchObject({
+        queuedMessageCount: 0,
+      });
+      expect(
+        getQueuedThreadMessage(harness.db, systemQueuedMessage.id),
+      ).not.toBeNull();
+
       const response = await harness.app.request(
         `/api/v1/threads/${thread.id}/queued-messages/${systemQueuedMessage.id}`,
         {
@@ -3147,6 +3162,60 @@ describe("public thread data routes", () => {
         code: "invalid_request",
         message: "Queued message order is invalid",
       });
+    });
+  });
+
+  it("groups the visible queue behind a hidden continuation", async () => {
+    await withTestHarness(async (harness) => {
+      const { thread } = seedThreadFixture(harness);
+      const hidden = createQueuedThreadMessage(harness.db, harness.hub, {
+        threadId: thread.id,
+        content: textInput("hidden continuation"),
+        model: "gpt-5",
+        reasoningLevel: "medium",
+        permissionMode: "full",
+        serviceTier: "default",
+        waitingOn: { kind: "thread-busy" },
+        sendAt: null,
+        payload: { kind: "inline" },
+        systemNotice: { kind: "turn-continuation", subject: null },
+      });
+      const messages = ["A", "B"].map((text) =>
+        createQueuedThreadMessage(harness.db, harness.hub, {
+          threadId: thread.id,
+          content: textInput(text),
+          model: "gpt-5",
+          reasoningLevel: "medium",
+          permissionMode: "full",
+          serviceTier: "default",
+          waitingOn: { kind: "thread-busy" },
+          sendAt: null,
+          payload: { kind: "inline" },
+          systemNotice: null,
+        }),
+      );
+      const response = await harness.app.request(
+        `/api/v1/threads/${thread.id}/queued-messages/group-boundary`,
+        {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            expectedGroupedPrefixQueuedMessageIds: messages.map(
+              (row) => row.id,
+            ),
+            groupBoundaryQueuedMessageId: messages[1].id,
+          }),
+        },
+      );
+      expect(response.status).toBe(200);
+      const result = await readJson(response);
+      expect(result).toMatchObject([
+        { id: messages[0].id, groupWithNext: true },
+        { id: messages[1].id, groupWithNext: false },
+      ]);
+      expect(getQueuedThreadMessage(harness.db, hidden.id)?.groupWithNext).toBe(
+        false,
+      );
     });
   });
 

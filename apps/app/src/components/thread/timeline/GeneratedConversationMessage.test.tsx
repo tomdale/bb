@@ -648,12 +648,12 @@ describe("GeneratedConversationMessage markdown body (system)", () => {
       "Continue the current task in the updated working directory.",
     );
 
-    expect(screen.getByText("Continuing after directory switch")).toBeTruthy();
+    expect(screen.getByText("Continued in new directory")).toBeTruthy();
     expect(
-      screen.getByText(
+      screen.queryByText(
         "Continue the current task in the updated working directory.",
       ),
-    ).toBeTruthy();
+    ).toBeNull();
   });
 
   it("keeps the continuation width stable when it makes the preview overflow", () => {
