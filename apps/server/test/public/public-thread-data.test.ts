@@ -1,6 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import {
   claimQueuedThreadMessageGroup,
+  createQueuedThreadMessage,
   createQueuedThreadMessageId,
   createThreadSection,
   deleteQueuedThreadMessage,
@@ -2885,6 +2886,50 @@ describe("public thread data routes", () => {
           threadId: thread.id,
         },
       ]);
+    });
+  });
+
+  it("rejects attempts to edit system queued-message content", async () => {
+    await withTestHarness(async (harness) => {
+      const { thread } = seedThreadFixture(harness);
+      const systemQueuedMessage = createQueuedThreadMessage(
+        harness.db,
+        harness.hub,
+        {
+          threadId: thread.id,
+          content: [
+            { type: "text", text: "system continuation", mentions: [] },
+          ],
+          model: "gpt-5",
+          reasoningLevel: "medium",
+          permissionMode: "full",
+          serviceTier: "default",
+          waitingOn: { kind: "thread-busy" },
+          sendAt: null,
+          payload: { kind: "inline" },
+          systemNotice: { kind: "turn-continuation", subject: null },
+        },
+      );
+
+      const response = await harness.app.request(
+        `/api/v1/threads/${thread.id}/queued-messages/${systemQueuedMessage.id}`,
+        {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            expectedUpdatedAt: systemQueuedMessage.updatedAt,
+            input: [{ type: "text", text: "replacement text", mentions: [] }],
+          }),
+        },
+      );
+
+      expect(response.status).toBe(409);
+      await expect(readJson(response)).resolves.toMatchObject({
+        message: "System queued messages cannot be edited",
+      });
+      expect(
+        getQueuedThreadMessage(harness.db, systemQueuedMessage.id)?.content,
+      ).toBe(systemQueuedMessage.content);
     });
   });
 

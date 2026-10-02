@@ -343,6 +343,8 @@ export {
   listOpenTurnInputAcceptedRowsByThreadIds,
   listOpenBackgroundTaskItemRowsForHost,
   listOpenBackgroundTaskItemRowsForThread,
+  wasThreadTurnManuallyStopped,
+  hasThreadTurnRequestAfterStart,
   listThreadIdsStoppedSinceLastTurnStart,
   listThreadIdsWithLatestHostDaemonRestartInterruption,
   listThreadTurnInterruptionEventStates,

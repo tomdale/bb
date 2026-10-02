@@ -344,6 +344,13 @@ export function registerThreadActionRoutes(app: Hono, deps: AppDeps): void {
         "Queued message is already being sent",
       );
     }
+    if (result.kind === "not_editable") {
+      throw new ApiError(
+        409,
+        "invalid_request",
+        "System queued messages cannot be edited",
+      );
+    }
     if (result.kind === "stale") {
       throw new ApiError(
         409,

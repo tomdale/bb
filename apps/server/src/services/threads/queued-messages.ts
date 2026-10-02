@@ -636,27 +636,20 @@ async function sendClaimedSystemNotice(
   );
   const queuedMessage = toThreadQueuedMessage(lead);
   const delivered = await deliverParentSystemMessage(deps, {
+    claimed: args.queuedMessages,
     input: queuedMessage.content,
     parentThread: args.thread,
     systemMessageKind: notice.kind,
     systemMessageSubject: notice.subject,
   });
-  if (!delivered) {
+  if (delivered === "unavailable") {
     // The thread changed under the drain. Leave the row claimed-and-released
     // by the caller's error path rather than consuming a notice nobody got.
     throw createQueuedMessageClaimLostError();
   }
-  const consumed = deps.db.transaction(
-    (tx) =>
-      deleteClaimedQueuedThreadMessageBatchInTransaction(tx, {
-        queuedMessages: args.queuedMessages,
-      }),
-    { behavior: "immediate" },
-  );
-  if (!consumed) {
-    throw createQueuedMessageClaimLostError();
+  if (delivered === "delivered") {
+    settleQueueRowDispatched({ row: lead });
   }
-  settleQueueRowDispatched({ row: lead });
   return queuedMessage;
 }
 
