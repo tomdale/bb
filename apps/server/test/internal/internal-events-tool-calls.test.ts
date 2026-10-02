@@ -1073,7 +1073,10 @@ describe("internal event and tool-call routes", () => {
         threadId: thread.id,
         turnId: "turn-existing-environment",
         tool: "update_environment_directory",
-        arguments: { path: "/tmp/existing-managed-worktree/" },
+        arguments: {
+          path: "/tmp/existing-managed-worktree/",
+          continue: false,
+        },
       });
 
       expect(response.status).toBe(200);
@@ -1144,7 +1147,10 @@ describe("internal event and tool-call routes", () => {
         threadId: thread.id,
         turnId: "turn-new-environment",
         tool: "update_environment_directory",
-        arguments: { path: "/tmp/new-unmanaged-worktree" },
+        arguments: {
+          path: "/tmp/new-unmanaged-worktree",
+          continue: false,
+        },
       });
       const provisionCommand = await waitForQueuedCommand(
         harness,
@@ -1262,7 +1268,7 @@ describe("internal event and tool-call routes", () => {
         threadId: thread.id,
         turnId: "turn-shared-directory",
         tool: "update_environment_directory",
-        arguments: { path: sharedPath },
+        arguments: { path: sharedPath, continue: false },
       });
       const provisionCommand = await waitForQueuedCommand(
         harness,

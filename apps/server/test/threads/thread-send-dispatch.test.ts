@@ -24,6 +24,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TelemetryService } from "../../src/services/system/telemetry.js";
 import * as queuedDispatch from "../../src/services/threads/queued-message-dispatch.js";
 import * as threadEvents from "../../src/services/threads/thread-events.js";
+import * as threadQueuedMessages from "../../src/services/threads/thread-queued-messages.js";
 import { runQueuedMessageDispatch } from "../../src/services/threads/queued-message-dispatch.js";
 import {
   createAutomaticQueuedMessageGroupEligibility,
@@ -41,6 +42,7 @@ import {
   internalAuthHeaders,
   listQueuedThreadCommands,
   reportQueuedCommandError,
+  reportQueuedCommandSuccess,
   waitForQueuedCommand,
 } from "../helpers/commands.js";
 import { createMockHubSocket } from "../helpers/mock-hub-socket.js";
@@ -1313,6 +1315,80 @@ describe("idle cold-start activation", () => {
     });
   });
 
+  it("changes directories without stored execution options when continuation is disabled", async () => {
+    await withTestHarness(async (harness) => {
+      const { environment, thread } = seedColdIdleThreadFixture({
+        harness,
+        value: 6,
+      });
+      const targetEnvironment = seedEnvironment(harness.deps, {
+        hostId: environment.hostId,
+        projectId: environment.projectId,
+        path: "/tmp/send-dispatch-no-execution",
+        status: "ready",
+      });
+      seedTurnStarted(harness.deps, {
+        environmentId: environment.id,
+        providerThreadId: "provider-send-dispatch-6",
+        sequence: 1,
+        threadId: thread.id,
+        turnId: "turn_no_execution",
+      });
+      const result = await handleUpdateEnvironmentDirectoryToolCall(
+        harness.deps,
+        {
+          currentEnvironment: environment,
+          input: { path: targetEnvironment.path, continue: false },
+          thread,
+          turnId: "turn_no_execution",
+        },
+      );
+
+      expect(result.success, JSON.stringify(result)).toBe(true);
+      expect(getThread(harness.db, thread.id)).toMatchObject({
+        environmentId: targetEnvironment.id,
+      });
+      expect(listQueuedThreadMessages(harness.db, thread.id)).toEqual([]);
+    });
+  });
+
+  it("returns a tool failure when continuation execution settings cannot resolve", async () => {
+    await withTestHarness(async (harness) => {
+      const { environment, thread } = seedColdIdleThreadFixture({
+        harness,
+        value: 7,
+      });
+      const targetEnvironment = seedEnvironment(harness.deps, {
+        hostId: environment.hostId,
+        projectId: environment.projectId,
+        path: "/tmp/send-dispatch-missing-model",
+        status: "ready",
+      });
+      seedTurnStarted(harness.deps, {
+        environmentId: environment.id,
+        providerThreadId: "provider-send-dispatch-7",
+        sequence: 1,
+        threadId: thread.id,
+        turnId: "turn_missing_model",
+      });
+
+      const result = await handleUpdateEnvironmentDirectoryToolCall(
+        harness.deps,
+        {
+          currentEnvironment: environment,
+          input: { path: targetEnvironment.path },
+          thread,
+          turnId: "turn_missing_model",
+        },
+      );
+
+      expect(result).toMatchObject({ success: false });
+      expect(getThread(harness.db, thread.id)?.environmentId).toBe(
+        environment.id,
+      );
+    });
+  });
+
   it("does not continue when directory update requests continue false", async () => {
     await withTestHarness(async (harness) => {
       const { environment, thread } = seedProviderThreadFixture({
@@ -1357,6 +1433,58 @@ describe("idle cold-start activation", () => {
     });
   });
 
+  it("cancels directory continuation when the thread is stopped", async () => {
+    await withTestHarness(async (harness) => {
+      const { environment, thread } = seedProviderThreadFixture({
+        harness,
+        value: 8,
+      });
+      const targetEnvironment = seedEnvironment(harness.deps, {
+        hostId: environment.hostId,
+        projectId: environment.projectId,
+        path: "/tmp/send-dispatch-stopped",
+        status: "ready",
+      });
+      applyLoggedThreadLifecycleEvent(harness.deps, {
+        event: { type: "run.started" },
+        threadId: thread.id,
+      });
+      seedTurnStarted(harness.deps, {
+        environmentId: environment.id,
+        providerThreadId: "provider-send-dispatch-8",
+        sequence: 3,
+        threadId: thread.id,
+        turnId: "turn_before_stop",
+      });
+      await handleUpdateEnvironmentDirectoryToolCall(harness.deps, {
+        currentEnvironment: environment,
+        input: { path: targetEnvironment.path },
+        thread,
+        turnId: "turn_before_stop",
+      });
+      expect(listQueuedThreadMessages(harness.db, thread.id)).toHaveLength(1);
+
+      const stopPromise = harness.app.request(
+        `/api/v1/threads/${thread.id}/stop`,
+        { method: "POST" },
+      );
+      const stop = await waitForQueuedCommand(
+        harness,
+        (queued) =>
+          queued.command.type === "thread.stop" &&
+          queued.command.threadId === thread.id,
+      );
+      expect(listQueuedThreadMessages(harness.db, thread.id)).toEqual([]);
+      await reportQueuedCommandSuccess(harness, stop, {
+        providerCheckpointId: null,
+      });
+      expect((await stopPromise).status).toBe(200);
+      expect(
+        listQueuedThreadCommands(harness, "turn.submit", thread.id),
+      ).toHaveLength(0);
+    });
+  });
+
   it("automatically continues provider work after an environment directory update", async () => {
     await withTestHarness(async (harness) => {
       const { environment, thread } = seedProviderThreadFixture({
@@ -1390,6 +1518,10 @@ describe("idle cold-start activation", () => {
         },
       );
       expect(updateResult).toMatchObject({ success: true });
+      expect(updateResult.contentItems?.[0]).toMatchObject({
+        type: "inputText",
+        text: expect.stringContaining("End this turn so BB can continue"),
+      });
       expect(getThread(harness.db, thread.id)).toMatchObject({
         environmentId: targetEnvironment.id,
       });
@@ -1401,11 +1533,13 @@ describe("idle cold-start activation", () => {
       expect(JSON.parse(queuedContinuation[0]!.content)).toEqual([
         {
           type: "text",
-          text: "Please continue with the user's request using the updated working directory.",
+          text: "Continue the current task in the updated working directory.",
           mentions: [],
-          visibility: "agent-only",
         },
       ]);
+      expect(
+        threadQueuedMessages.toThreadQueuedMessage(queuedContinuation[0]!),
+      ).toMatchObject({ initiator: "system", editable: false });
       await runQueuedMessageDispatch(harness.deps, {
         kind: "thread-ready",
         threadId: thread.id,
