@@ -7,6 +7,9 @@ import {
   findProjectEnvironmentByHostPath,
   getEnvironment,
   getThread,
+  getActiveStoredTurnId,
+  wasThreadTurnManuallyStopped,
+  hasThreadTurnRequestAfterStart,
   updateThread,
   type EnvironmentRow,
 } from "@bb/db";
@@ -86,6 +89,7 @@ type ReadyEnvironment = EnvironmentRow & { path: string; status: "ready" };
 type AttachEnvironmentResult =
   | { kind: "attached"; changed: boolean }
   | { kind: "environment_changed" }
+  | { kind: "continuation_stopped" }
   | { kind: "thread_unavailable"; message: string };
 
 function toolCallTextResponse(
@@ -192,6 +196,23 @@ function attachReadyEnvironment(
 
       if (latestThread.environmentId !== args.currentEnvironment.id) {
         return { kind: "environment_changed" };
+      }
+      if (args.continue) {
+        const currentTurnId = getActiveStoredTurnId(tx, latestThread.id);
+        if (
+          latestThread.status !== "active" ||
+          currentTurnId !== args.turnId ||
+          wasThreadTurnManuallyStopped(tx, {
+            threadId: latestThread.id,
+            turnId: args.turnId,
+          }) ||
+          hasThreadTurnRequestAfterStart(tx, {
+            threadId: latestThread.id,
+            turnId: args.turnId,
+          })
+        ) {
+          return { kind: "continuation_stopped" };
+        }
       }
 
       updateThread(tx, deps.hub, latestThread.id, {
@@ -436,5 +457,9 @@ export async function handleUpdateEnvironmentDirectoryToolCall(
       );
     case "thread_unavailable":
       return toolCallFailure(attachResult.message);
+    case "continuation_stopped":
+      return toolCallFailure(
+        "Directory switch cancelled because the turn was stopped before it completed.",
+      );
   }
 }
