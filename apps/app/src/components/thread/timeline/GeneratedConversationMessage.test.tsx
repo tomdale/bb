@@ -88,6 +88,41 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+function renderDeliveredQuestionResult(
+  text: string,
+  toolName = "AskUserQuestion",
+) {
+  const { wrapper } = createQueryClientTestHarness();
+  return render(
+    <MemoryRouter>
+      <RouteNavigationProvider>
+        <ConversationMessageContent
+          role="user"
+          initiator="system"
+          originKind={null}
+          senderThreadId={null}
+          senderThreadTitle={null}
+          senderIsPluginSideChat={false}
+          systemMessageKind="tool-result-delivered"
+          systemMessageSubject={{
+            kind: "tool-call",
+            toolName,
+            suppress: false,
+          }}
+          attachments={null}
+          mentions={[]}
+          text={text}
+          turnRequest={{ kind: "message", status: "accepted" }}
+          threadId="thr_parent"
+          workspaceRootPath="/workspace"
+          projectId="proj_demo"
+        />
+      </RouteNavigationProvider>
+    </MemoryRouter>,
+    { wrapper },
+  );
+}
+
 describe("GeneratedConversationMessage images", () => {
   it("routes images in generated system messages through the current thread", () => {
     renderChildCompleted("![report](reports/result.png)");
@@ -272,6 +307,61 @@ function mockContinuationSensitiveOverflow(): () => void {
 
   return notifyResize;
 }
+
+describe("delivered AskUserQuestion results", () => {
+  const result = {
+    questions: [
+      {
+        question: "Pick a color — testing a standard single-select question.",
+        header: "Color",
+        options: [
+          { label: "Red", description: "Warm, energetic." },
+          { label: "Blue", description: "Calm, cool." },
+        ],
+        multiSelect: false,
+      },
+      {
+        question: "Which languages do you use?",
+        header: "Languages",
+        options: [
+          { label: "Rust", description: "Systems and web." },
+          { label: "TypeScript", description: "Web and servers." },
+        ],
+        multiSelect: true,
+      },
+    ],
+    answers: {
+      "Pick a color — testing a standard single-select question.": "Red",
+      "Which languages do you use?": "Rust, TypeScript",
+    },
+  };
+
+  it("renders a delivered AskUserQuestion result as a compact card, with raw data disclosed on demand", () => {
+    const rawText = `Your earlier AskUserQuestion tool call has finished. Its result:\n\n${JSON.stringify(result)}`;
+    renderDeliveredQuestionResult(rawText);
+
+    fireEvent.click(screen.getByTitle("Delivered AskUserQuestion result"));
+
+    const card = screen.getByTestId("delivered-question-result");
+    expect(card.textContent).toContain("2 questions answered");
+    expect(card.textContent).toContain("Pick a color");
+    expect(card.textContent).toContain("Rust, TypeScript");
+    expect(card.querySelector("details")?.open).toBe(false);
+    fireEvent.click(screen.getByText("Tool details"));
+    expect(card.querySelector("details")?.open).toBe(true);
+    expect(card.textContent).toContain('"options"');
+  });
+
+  it("keeps other delivered tool results as normal Markdown messages", () => {
+    renderDeliveredQuestionResult(
+      "Your earlier lookup tool call has finished. Its result:\n\nA normal result",
+      "lookup",
+    );
+
+    expect(screen.queryByTestId("delivered-question-result")).toBeNull();
+    expect(screen.getByText(/Your earlier lookup/u)).toBeTruthy();
+  });
+});
 
 describe("GeneratedConversationMessage markdown body", () => {
   it("renders the source as a thread pill with title mentions resolved to display text", () => {
