@@ -39,13 +39,14 @@ const UPDATE_ENVIRONMENT_DIRECTORY_TIMEOUT_MS = 5 * 60 * 1000;
 const updateEnvironmentDirectoryInputSchema = z
   .object({
     path: z.string().trim().min(1),
+    continue: z.boolean().default(true),
   })
   .strict();
 
 export const UPDATE_ENVIRONMENT_DIRECTORY_TOOL: DynamicTool = {
   name: UPDATE_ENVIRONMENT_DIRECTORY_TOOL_NAME,
   description:
-    "Move this bb thread to a different working directory. Use this when the user asks to switch to a new checkout, worktree, or local directory. The path must be an absolute existing directory on the current host. The tool reuses this project's existing bb environment for that host/path, otherwise it creates an unmanaged environment after validating the path. Another project may hold its own environment for the same directory; that is allowed, except for a bb-managed worktree owned by another project, which this tool refuses. After a successful switch, stop using the current turn's filesystem context; BB automatically continues the thread from the new directory when this turn ends.",
+    "Move this bb thread to a different working directory. Use this when the user asks to switch to a new checkout, worktree, or local directory. The path must be an absolute existing directory on the current host. The tool reuses this project's existing bb environment for that host/path, otherwise it creates an unmanaged environment after validating the path. Another project may hold its own environment for the same directory; that is allowed, except for a bb-managed worktree owned by another project, which this tool refuses. Set continue to false to end after switching without a follow-up turn.",
   inputSchema: {
     type: "object",
     properties: {
@@ -53,6 +54,12 @@ export const UPDATE_ENVIRONMENT_DIRECTORY_TOOL: DynamicTool = {
         type: "string",
         description:
           "Absolute path to an existing directory on the current host.",
+      },
+      continue: {
+        type: "boolean",
+        description:
+          "Whether BB should automatically continue the thread after switching directories. Defaults to true.",
+        default: true,
       },
     },
     required: ["path"],
@@ -147,7 +154,7 @@ function resolveReadyEnvironment(
 }
 
 function successMessage(path: string): string {
-  return `Environment directory updated to ${path}. BB will continue this turn from the updated directory as soon as the current turn ends.`;
+  return `Environment directory updated to ${path}.`;
 }
 
 function attachReadyEnvironment(
@@ -157,6 +164,7 @@ function attachReadyEnvironment(
     createdEnvironment: boolean;
     targetEnvironment: ReadyEnvironment;
     execution: ResolvedThreadExecutionOptions;
+    continue: boolean;
     thread: Thread;
     turnId: string;
   },
@@ -187,27 +195,29 @@ function attachReadyEnvironment(
       updateThread(tx, deps.hub, latestThread.id, {
         environmentId: args.targetEnvironment.id,
       });
-      createQueuedThreadMessageInTransaction(tx, {
-        threadId: latestThread.id,
-        content: [
-          {
-            type: "text",
-            text: "Please continue with the user's request using the updated working directory.",
-            mentions: [],
-            visibility: "agent-only",
-          },
-        ],
-        senderThreadId: null,
-        requestedBy: null,
-        model: args.execution.model,
-        reasoningLevel: args.execution.reasoningLevel,
-        permissionMode: args.execution.permissionMode,
-        serviceTier: args.execution.serviceTier,
-        waitingOn: { kind: "thread-busy" },
-        sendAt: null,
-        payload: { kind: "inline" },
-        systemNotice: null,
-      });
+      if (args.continue) {
+        createQueuedThreadMessageInTransaction(tx, {
+          threadId: latestThread.id,
+          content: [
+            {
+              type: "text",
+              text: "Please continue with the user's request using the updated working directory.",
+              mentions: [],
+              visibility: "agent-only",
+            },
+          ],
+          senderThreadId: null,
+          requestedBy: null,
+          model: args.execution.model,
+          reasoningLevel: args.execution.reasoningLevel,
+          permissionMode: args.execution.permissionMode,
+          serviceTier: args.execution.serviceTier,
+          waitingOn: { kind: "thread-busy" },
+          sendAt: null,
+          payload: { kind: "inline" },
+          systemNotice: null,
+        });
+      }
       appendThreadEventInTransaction(tx, {
         threadId: latestThread.id,
         environmentId: args.targetEnvironment.id,
@@ -388,6 +398,7 @@ export async function handleUpdateEnvironmentDirectoryToolCall(
       createdEnvironment,
       targetEnvironment,
       execution,
+      continue: input.data.continue,
       thread: args.thread,
       turnId: args.turnId,
     });
@@ -399,7 +410,7 @@ export async function handleUpdateEnvironmentDirectoryToolCall(
 
   switch (attachResult.kind) {
     case "attached":
-      if (attachResult.changed) {
+      if (attachResult.changed && input.data.continue) {
         deps.hub.notifyThread(args.thread.id, ["queue-changed"]);
         requestQueuedMessageDispatch(deps, {
           kind: "thread-ready",

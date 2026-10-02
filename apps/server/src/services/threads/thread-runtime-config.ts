@@ -40,7 +40,7 @@ import {
 import { resolveDeprecatedWorkspaceProvisionType } from "../environments/environment-response.js";
 
 const UPDATE_ENVIRONMENT_DIRECTORY_INSTRUCTIONS =
-  "If the user asks you to move this thread to another checkout, worktree, or directory, make sure the target directory exists, then call `update_environment_directory` with its absolute path. After it succeeds, stop using the current turn's filesystem context; BB automatically continues the thread from the new directory when this turn ends.";
+  "If the user asks you to move this thread to another checkout, worktree, or directory, make sure the target directory exists, then call `update_environment_directory` with its absolute path. BB continues automatically by default; set `continue: false` to end without a follow-up turn.";
 
 const PLUGIN_INSTRUCTION_CONTRIBUTION_MAX_CHARS = 4096;
 

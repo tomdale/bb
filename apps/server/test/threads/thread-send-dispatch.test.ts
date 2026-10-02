@@ -1313,6 +1313,50 @@ describe("idle cold-start activation", () => {
     });
   });
 
+  it("does not continue when directory update requests continue false", async () => {
+    await withTestHarness(async (harness) => {
+      const { environment, thread } = seedProviderThreadFixture({
+        harness,
+        value: 5,
+      });
+      const targetEnvironment = seedEnvironment(harness.deps, {
+        hostId: environment.hostId,
+        projectId: environment.projectId,
+        path: "/tmp/send-dispatch-no-continue",
+        status: "ready",
+      });
+      applyLoggedThreadLifecycleEvent(harness.deps, {
+        event: { type: "run.started" },
+        threadId: thread.id,
+      });
+      seedTurnStarted(harness.deps, {
+        environmentId: environment.id,
+        providerThreadId: "provider-send-dispatch-5",
+        sequence: 3,
+        threadId: thread.id,
+        turnId: "turn_no_continue",
+      });
+      const result = await handleUpdateEnvironmentDirectoryToolCall(
+        harness.deps,
+        {
+          currentEnvironment: environment,
+          input: { path: targetEnvironment.path, continue: false },
+          thread,
+          turnId: "turn_no_continue",
+        },
+      );
+
+      expect(result.success, JSON.stringify(result)).toBe(true);
+      expect(getThread(harness.db, thread.id)).toMatchObject({
+        environmentId: targetEnvironment.id,
+      });
+      expect(listQueuedThreadMessages(harness.db, thread.id)).toEqual([]);
+      expect(
+        listQueuedThreadCommands(harness, "turn.submit", thread.id),
+      ).toHaveLength(0);
+    });
+  });
+
   it("automatically continues provider work after an environment directory update", async () => {
     await withTestHarness(async (harness) => {
       const { environment, thread } = seedProviderThreadFixture({
