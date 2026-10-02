@@ -25,6 +25,8 @@ import {
   findStoredTimelineWindowByteBudgetFloor,
   findTimelineWindowBudgetFloorSequence,
   getActiveStoredTurnId,
+  hasThreadTurnRequestAfterStart,
+  wasThreadTurnManuallyStopped,
   getFirstParentedTimelineBoundarySequence,
   getHighWaterMarks,
   getLastStoredProviderThreadId,
@@ -321,6 +323,115 @@ function createContextWindowUsageData(
 }
 
 describe("events", () => {
+  it("detects manual stop after a turn starts", () => {
+    const { db, thread } = setup();
+    insertEvents(db, noopNotifier, [
+      {
+        threadId: thread.id,
+        sequence: 1,
+        type: "client/turn/requested",
+        ...daemonThreadEventFields,
+        scope: threadScope(),
+        data: JSON.stringify({
+          direction: "outbound",
+          requestId: "req_directory_switch",
+          source: "tell",
+          initiator: "user",
+          senderThreadId: null,
+          input: [],
+          target: { kind: "new-turn" },
+          request: { method: "turn/start", params: {} },
+          execution: {
+            model: "gpt-5",
+            permissionMode: "full",
+            reasoningLevel: "medium",
+            serviceTier: "default",
+          },
+        }),
+      },
+      {
+        threadId: thread.id,
+        sequence: 2,
+        type: "turn/started",
+        ...daemonThreadEventFields,
+        scope: turnScope("turn_directory_switch"),
+        providerThreadId: "provider_directory_switch",
+        data: JSON.stringify({
+          providerThreadId: "provider_directory_switch",
+        }),
+      },
+    ]);
+
+    expect(
+      wasThreadTurnManuallyStopped(db, {
+        threadId: thread.id,
+        turnId: "turn_directory_switch",
+      }),
+    ).toBe(false);
+    expect(
+      hasThreadTurnRequestAfterStart(db, {
+        threadId: thread.id,
+        turnId: "turn_directory_switch",
+      }),
+    ).toBe(false);
+    expect(
+      hasThreadTurnRequestAfterStart(db, {
+        threadId: thread.id,
+        turnId: "missing_turn",
+      }),
+    ).toBe(true);
+    insertEvents(db, noopNotifier, [
+      {
+        threadId: thread.id,
+        sequence: 3,
+        type: "system/thread/interrupted",
+        ...daemonThreadEventFields,
+        data: JSON.stringify({ reason: "manual-stop" }),
+      },
+    ]);
+    expect(
+      wasThreadTurnManuallyStopped(db, {
+        threadId: thread.id,
+        turnId: "turn_directory_switch",
+      }),
+    ).toBe(true);
+    for (const [index, kind] of ["steer", "auto"].entries()) {
+      insertEvents(db, noopNotifier, [
+        {
+          threadId: thread.id,
+          sequence: 4 + index,
+          type: "client/turn/requested",
+          ...daemonThreadEventFields,
+          scope: threadScope(),
+          data: JSON.stringify({
+            target: { kind, expectedTurnId: "turn_directory_switch" },
+          }),
+        },
+      ]);
+      expect(
+        hasThreadTurnRequestAfterStart(db, {
+          threadId: thread.id,
+          turnId: "turn_directory_switch",
+        }),
+      ).toBe(false);
+    }
+    insertEvents(db, noopNotifier, [
+      {
+        threadId: thread.id,
+        sequence: 6,
+        type: "client/turn/requested",
+        ...daemonThreadEventFields,
+        scope: threadScope(),
+        data: JSON.stringify({ target: { kind: "new-turn" } }),
+      },
+    ]);
+    expect(
+      hasThreadTurnRequestAfterStart(db, {
+        threadId: thread.id,
+        turnId: "turn_directory_switch",
+      }),
+    ).toBe(true);
+  });
   it("preserves reported cache counts through daemon append and stored event decoding", () => {
     const { db, thread } = setup();
     const scope = turnScope("turn-cache-test");

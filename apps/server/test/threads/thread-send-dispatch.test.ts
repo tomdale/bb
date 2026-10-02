@@ -1,5 +1,6 @@
 import {
   archiveThread,
+  createQueuedThreadMessage,
   getAppSettings,
   updateHost,
   getQueuedThreadMessage,
@@ -22,8 +23,13 @@ import {
 import { groupHostDaemonEvents } from "@bb/host-daemon-contract";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TelemetryService } from "../../src/services/system/telemetry.js";
+import * as pluginThreadEvents from "../../src/services/plugins/plugin-thread-events.js";
 import * as queuedDispatch from "../../src/services/threads/queued-message-dispatch.js";
 import * as threadEvents from "../../src/services/threads/thread-events.js";
+import {
+  appendClientTurnEvent,
+  getActiveTurnId,
+} from "../../src/services/threads/thread-events.js";
 import * as threadQueuedMessages from "../../src/services/threads/thread-queued-messages.js";
 import { runQueuedMessageDispatch } from "../../src/services/threads/queued-message-dispatch.js";
 import {
@@ -1389,6 +1395,362 @@ describe("idle cold-start activation", () => {
     });
   });
 
+  it("allows a directory switch after steering the originating turn", async () => {
+    await withTestHarness(async (harness) => {
+      const { environment, thread } = seedProviderThreadFixture({
+        harness,
+        value: 11,
+        status: "active",
+      });
+      seedTurnStarted(harness.deps, {
+        environmentId: environment.id,
+        threadId: thread.id,
+        turnId: "turn_steered_switch",
+      });
+      await sendThreadMessage(harness.deps, {
+        thread,
+        environment,
+        payload: {
+          input: textInput("Move to the target checkout"),
+          mode: "steer",
+        },
+        trigger: "user",
+      });
+      const target = seedEnvironment(harness.deps, {
+        hostId: environment.hostId,
+        projectId: thread.projectId,
+        path: "/tmp/send-dispatch-steered-switch",
+        status: "ready",
+      });
+      const result = await handleUpdateEnvironmentDirectoryToolCall(
+        harness.deps,
+        {
+          currentEnvironment: environment,
+          input: { path: target.path },
+          thread,
+          turnId: "turn_steered_switch",
+        },
+      );
+      expect(result.success).toBe(true);
+      expect(getThread(harness.db, thread.id)?.environmentId).toBe(target.id);
+      expect(listQueuedThreadMessages(harness.db, thread.id)).toHaveLength(1);
+    });
+  });
+
+  it("emits one dispatch notification after a system notice waits for turn start", async () => {
+    await withTestHarness(async (harness) => {
+      const { environment, thread } = seedProviderThreadFixture({
+        harness,
+        value: 13,
+        status: "active",
+      });
+      const notice = createQueuedThreadMessage(harness.db, harness.hub, {
+        threadId: thread.id,
+        content: textInput("system continuation"),
+        model: "gpt-5",
+        reasoningLevel: "medium",
+        permissionMode: "full",
+        serviceTier: "default",
+        waitingOn: null,
+        sendAt: null,
+        payload: { kind: "inline" },
+        systemNotice: { kind: "turn-continuation", subject: null },
+      });
+      const dispatched = vi.spyOn(
+        pluginThreadEvents,
+        "emitPluginMessageDispatched",
+      );
+      await sendQueuedMessageNow(harness.deps, {
+        mode: "auto",
+        queuedMessageId: notice.id,
+        threadId: thread.id,
+      });
+      expect(dispatched).not.toHaveBeenCalled();
+      expect(getQueuedThreadMessage(harness.db, notice.id)).toMatchObject({
+        claimedAt: null,
+        waitingOn: JSON.stringify({ kind: "turn-starting" }),
+      });
+      expect(
+        listQueuedThreadCommands(harness, "turn.submit", thread.id),
+      ).toHaveLength(0);
+      seedTurnStarted(harness.deps, {
+        environmentId: environment.id,
+        threadId: thread.id,
+        turnId: "turn_waited_notice",
+      });
+      await sendQueuedMessageNow(harness.deps, {
+        mode: "auto",
+        queuedMessageId: notice.id,
+        threadId: thread.id,
+      });
+      expect(dispatched).toHaveBeenCalledTimes(1);
+      expect(dispatched.mock.calls[0][0].id).toBe(notice.id);
+      expect(getQueuedThreadMessage(harness.db, notice.id)).toBeNull();
+      expect(
+        listQueuedThreadCommands(harness, "turn.submit", thread.id),
+      ).toHaveLength(1);
+    });
+  });
+
+  it("does not dispatch a claimed continuation after idle Stop cancels it", async () => {
+    await withTestHarness(async (harness) => {
+      const { environment, thread } = seedProviderThreadFixture({
+        harness,
+        value: 12,
+        status: "active",
+      });
+      const turnId = "turn_claimed_switch";
+      seedTurnStarted(harness.deps, {
+        environmentId: environment.id,
+        threadId: thread.id,
+        turnId,
+      });
+      const target = seedEnvironment(harness.deps, {
+        hostId: environment.hostId,
+        projectId: thread.projectId,
+        path: "/tmp/send-dispatch-claimed-switch",
+        status: "ready",
+      });
+      const result = await handleUpdateEnvironmentDirectoryToolCall(
+        harness.deps,
+        {
+          currentEnvironment: environment,
+          input: { path: target.path },
+          thread,
+          turnId,
+        },
+      );
+      expect(result.success).toBe(true);
+      const [continuation] = listQueuedThreadMessages(harness.db, thread.id);
+      let resume!: () => void;
+      let entered!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        resume = resolve;
+      });
+      const preparing = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const original =
+        harness.deps.providerRegistry.whenRegistrationsSettled.bind(
+          harness.deps.providerRegistry,
+        );
+      vi.spyOn(
+        harness.deps.providerRegistry,
+        "whenRegistrationsSettled",
+      ).mockImplementationOnce(async () => {
+        entered();
+        await gate;
+        return original();
+      });
+      applyLoggedThreadLifecycleEvent(harness.deps, {
+        event: { type: "run.succeeded" },
+        threadId: thread.id,
+      });
+      const dispatch = runQueuedMessageDispatch(harness.deps, {
+        kind: "thread-ready",
+        threadId: thread.id,
+      });
+      try {
+        await preparing;
+        expect(
+          getQueuedThreadMessage(harness.db, continuation.id)?.claimedAt,
+        ).not.toBeNull();
+        const stopPromise = harness.app.request(
+          `/api/v1/threads/${thread.id}/stop`,
+          { method: "POST" },
+        );
+        const stop = await waitForQueuedCommand(
+          harness,
+          ({ command }) =>
+            command.type === "thread.stop" && command.threadId === thread.id,
+        );
+        await reportQueuedCommandSuccess(harness, stop, {
+          providerCheckpointId: null,
+        });
+        expect((await stopPromise).status).toBe(200);
+        expect(getQueuedThreadMessage(harness.db, continuation.id)).toBeNull();
+      } finally {
+        resume();
+        await dispatch;
+      }
+      expect(getThread(harness.db, thread.id)?.status).toBe("idle");
+      expect(
+        listQueuedThreadCommands(harness, "turn.submit", thread.id),
+      ).toHaveLength(0);
+      expect(
+        listEvents(harness.db, { threadId: thread.id }).filter(
+          (event) =>
+            event.type === "client/turn/requested" &&
+            JSON.parse(event.data).initiator === "system",
+        ),
+      ).toEqual([]);
+    });
+  });
+
+  it("rejects a directory continuation when its originating turn has already ended", async () => {
+    await withTestHarness(async (harness) => {
+      const { environment, thread } = seedProviderThreadFixture({
+        harness,
+        value: 10,
+      });
+      const targetEnvironment = seedEnvironment(harness.deps, {
+        hostId: environment.hostId,
+        projectId: environment.projectId,
+        path: "/tmp/send-dispatch-ended-turn",
+        status: "ready",
+      });
+      applyLoggedThreadLifecycleEvent(harness.deps, {
+        event: { type: "run.started" },
+        threadId: thread.id,
+      });
+      appendClientTurnEvent(harness.deps, {
+        threadId: thread.id,
+        environmentId: environment.id,
+        type: "client/turn/requested",
+        input: textInput("switch directory"),
+        target: { kind: "new-turn" },
+        execution: {
+          model: "gpt-5",
+          reasoningLevel: "medium",
+          permissionMode: "full",
+          serviceTier: "default",
+          source: "client/turn/requested",
+        },
+        initiator: "user",
+        senderThreadId: null,
+        requestMethod: "turn/start",
+        source: "tell",
+      });
+      seedTurnStarted(harness.deps, {
+        environmentId: environment.id,
+        providerThreadId: "provider-send-dispatch-10",
+        sequence: 3,
+        threadId: thread.id,
+        turnId: "turn_ended_before_switch",
+      });
+      applyLoggedThreadLifecycleEvent(harness.deps, {
+        event: { type: "run.succeeded" },
+        threadId: thread.id,
+      });
+      appendClientTurnEvent(harness.deps, {
+        threadId: thread.id,
+        environmentId: environment.id,
+        type: "client/turn/requested",
+        input: textInput("follow-up turn"),
+        target: { kind: "new-turn" },
+        execution: {
+          model: "gpt-5",
+          reasoningLevel: "medium",
+          permissionMode: "full",
+          serviceTier: "default",
+          source: "client/turn/requested",
+        },
+        initiator: "user",
+        senderThreadId: null,
+        requestMethod: "turn/start",
+        source: "tell",
+      });
+      seedTurnStarted(harness.deps, {
+        environmentId: environment.id,
+        providerThreadId: "provider-send-dispatch-later",
+        sequence: 20,
+        threadId: thread.id,
+        turnId: "turn_later",
+      });
+      applyLoggedThreadLifecycleEvent(harness.deps, {
+        event: { type: "run.started" },
+        threadId: thread.id,
+      });
+
+      const result = await handleUpdateEnvironmentDirectoryToolCall(
+        harness.deps,
+        {
+          currentEnvironment: environment,
+          input: { path: targetEnvironment.path },
+          thread,
+          turnId: "turn_ended_before_switch",
+        },
+      );
+
+      expect(result.success).toBe(false);
+      expect(listQueuedThreadMessages(harness.db, thread.id)).toEqual([]);
+      expect(getThread(harness.db, thread.id)?.environmentId).toBe(
+        environment.id,
+      );
+    });
+  });
+
+  it("rejects a directory continuation when Stop wins during environment preparation", async () => {
+    await withTestHarness(async (harness) => {
+      const { environment, thread } = seedProviderThreadFixture({
+        harness,
+        value: 9,
+      });
+      const targetPath = "/tmp/send-dispatch-stop-race";
+      applyLoggedThreadLifecycleEvent(harness.deps, {
+        event: { type: "run.started" },
+        threadId: thread.id,
+      });
+      seedTurnStarted(harness.deps, {
+        environmentId: environment.id,
+        providerThreadId: "provider-send-dispatch-9",
+        sequence: 3,
+        threadId: thread.id,
+        turnId: "turn_stop_race",
+      });
+      const currentThread = getThread(harness.db, thread.id);
+      if (!currentThread) throw new Error("Expected a current thread");
+      const updatePromise = handleUpdateEnvironmentDirectoryToolCall(
+        harness.deps,
+        {
+          currentEnvironment: environment,
+          input: { path: targetPath },
+          thread: currentThread,
+          turnId: "turn_stop_race",
+        },
+      );
+      const provision = await waitForQueuedCommand(
+        harness,
+        ({ command }) =>
+          command.type === "environment.attach" && command.path === targetPath,
+      );
+      const stopPromise = harness.app.request(
+        `/api/v1/threads/${thread.id}/stop`,
+        { method: "POST" },
+      );
+      const stop = await waitForQueuedCommand(
+        harness,
+        (queued) =>
+          queued.command.type === "thread.stop" &&
+          queued.command.threadId === thread.id,
+      );
+      const completedTurn = getActiveTurnId(harness.deps, thread.id);
+      if (completedTurn !== "turn_stop_race") {
+        throw new Error("Expected original turn to remain active during Stop");
+      }
+
+      await reportQueuedCommandSuccess(harness, provision, {
+        path: targetPath,
+        isGitRepo: true,
+        isWorktree: false,
+        branchName: "main",
+        defaultBranch: "main",
+        transcript: [],
+      });
+      const updateResult = await updatePromise;
+      expect(updateResult.success).toBe(false);
+      expect(listQueuedThreadMessages(harness.db, thread.id)).toEqual([]);
+      expect(getThread(harness.db, thread.id)?.environmentId).toBe(
+        environment.id,
+      );
+
+      await reportQueuedCommandSuccess(harness, stop, {
+        providerCheckpointId: null,
+      });
+      expect((await stopPromise).status).toBe(200);
+    });
+  });
+
   it("does not continue when directory update requests continue false", async () => {
     await withTestHarness(async (harness) => {
       const { environment, thread } = seedProviderThreadFixture({
@@ -1433,57 +1795,66 @@ describe("idle cold-start activation", () => {
     });
   });
 
-  it("cancels directory continuation when the thread is stopped", async () => {
-    await withTestHarness(async (harness) => {
-      const { environment, thread } = seedProviderThreadFixture({
-        harness,
-        value: 8,
-      });
-      const targetEnvironment = seedEnvironment(harness.deps, {
-        hostId: environment.hostId,
-        projectId: environment.projectId,
-        path: "/tmp/send-dispatch-stopped",
-        status: "ready",
-      });
-      applyLoggedThreadLifecycleEvent(harness.deps, {
-        event: { type: "run.started" },
-        threadId: thread.id,
-      });
-      seedTurnStarted(harness.deps, {
-        environmentId: environment.id,
-        providerThreadId: "provider-send-dispatch-8",
-        sequence: 3,
-        threadId: thread.id,
-        turnId: "turn_before_stop",
-      });
-      await handleUpdateEnvironmentDirectoryToolCall(harness.deps, {
-        currentEnvironment: environment,
-        input: { path: targetEnvironment.path },
-        thread,
-        turnId: "turn_before_stop",
-      });
-      expect(listQueuedThreadMessages(harness.db, thread.id)).toHaveLength(1);
+  it.each(["active", "idle"])(
+    "cancels directory continuation when the thread is stopped while %s",
+    async (status) => {
+      await withTestHarness(async (harness) => {
+        const { environment, thread } = seedProviderThreadFixture({
+          harness,
+          value: 8,
+        });
+        const targetEnvironment = seedEnvironment(harness.deps, {
+          hostId: environment.hostId,
+          projectId: environment.projectId,
+          path: "/tmp/send-dispatch-stopped",
+          status: "ready",
+        });
+        applyLoggedThreadLifecycleEvent(harness.deps, {
+          event: { type: "run.started" },
+          threadId: thread.id,
+        });
+        seedTurnStarted(harness.deps, {
+          environmentId: environment.id,
+          providerThreadId: "provider-send-dispatch-8",
+          sequence: 3,
+          threadId: thread.id,
+          turnId: "turn_before_stop",
+        });
+        await handleUpdateEnvironmentDirectoryToolCall(harness.deps, {
+          currentEnvironment: environment,
+          input: { path: targetEnvironment.path },
+          thread,
+          turnId: "turn_before_stop",
+        });
+        expect(listQueuedThreadMessages(harness.db, thread.id)).toHaveLength(1);
+        if (status === "idle") {
+          applyLoggedThreadLifecycleEvent(harness.deps, {
+            event: { type: "run.succeeded" },
+            threadId: thread.id,
+          });
+        }
 
-      const stopPromise = harness.app.request(
-        `/api/v1/threads/${thread.id}/stop`,
-        { method: "POST" },
-      );
-      const stop = await waitForQueuedCommand(
-        harness,
-        (queued) =>
-          queued.command.type === "thread.stop" &&
-          queued.command.threadId === thread.id,
-      );
-      expect(listQueuedThreadMessages(harness.db, thread.id)).toEqual([]);
-      await reportQueuedCommandSuccess(harness, stop, {
-        providerCheckpointId: null,
+        const stopPromise = harness.app.request(
+          `/api/v1/threads/${thread.id}/stop`,
+          { method: "POST" },
+        );
+        const stop = await waitForQueuedCommand(
+          harness,
+          (queued) =>
+            queued.command.type === "thread.stop" &&
+            queued.command.threadId === thread.id,
+        );
+        expect(listQueuedThreadMessages(harness.db, thread.id)).toEqual([]);
+        await reportQueuedCommandSuccess(harness, stop, {
+          providerCheckpointId: null,
+        });
+        expect((await stopPromise).status).toBe(200);
+        expect(
+          listQueuedThreadCommands(harness, "turn.submit", thread.id),
+        ).toHaveLength(0);
       });
-      expect((await stopPromise).status).toBe(200);
-      expect(
-        listQueuedThreadCommands(harness, "turn.submit", thread.id),
-      ).toHaveLength(0);
-    });
-  });
+    },
+  );
 
   it("automatically continues provider work after an environment directory update", async () => {
     await withTestHarness(async (harness) => {
