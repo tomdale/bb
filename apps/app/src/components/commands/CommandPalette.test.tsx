@@ -279,6 +279,8 @@ function LocationProbe() {
   return <output data-testid="location">{location.pathname}</output>;
 }
 
+const threadUpdatedAt = Date.now();
+
 function makeThread(
   id: string,
   overrides: Partial<ThreadListEntry> = {},
@@ -305,7 +307,7 @@ function makeThread(
     lastReadAt: null,
     latestAttentionAt: 1,
     createdAt: 1,
-    updatedAt: Date.now(),
+    updatedAt: threadUpdatedAt,
     activity: {
       activeWorkflowCount: 0,
       activeBackgroundAgentCount: 0,
@@ -2086,6 +2088,7 @@ describe("CommandPalette", () => {
       makePluginRegistrationSet({
         commandPaletteActions: [
           {
+            target: "app",
             id: "open-issue",
             title: "Open issue",
             defaultShortcut: null,

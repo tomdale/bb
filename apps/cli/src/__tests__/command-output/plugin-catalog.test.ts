@@ -1,3 +1,4 @@
+import { sep } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   collectLogPayloads,
@@ -29,6 +30,7 @@ const searchResult = {
   official: true,
   author: null,
   installed: false,
+  conflictingInstallSource: null,
   installs: null,
   compatible: true,
   incompatibleReason: null,
@@ -127,6 +129,25 @@ describe("bb plugin catalog", () => {
     expect(output).not.toContain("Marketplace");
   });
 
+  it("names the installed plugin that holds a listing's id", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      json({
+        results: [
+          {
+            ...searchResult,
+            conflictingInstallSource: "path:/Users/me/git/linear",
+          },
+        ],
+      }),
+    );
+
+    await runCommand(["plugin", "search", "lin"], register);
+
+    const output = collectLogPayloads(vi.mocked(console.log)).join("\n");
+    expect(output).toContain("id in use by path:/Users/me/git/linear");
+    expect(output).not.toContain("compatible");
+  });
+
   it("names the marketplace once a third-party listing appears", async () => {
     vi.mocked(fetch).mockResolvedValueOnce(
       json({
@@ -193,7 +214,8 @@ describe("bb plugin catalog", () => {
 
     expect(fetch).toHaveBeenCalledTimes(1);
     const body = JSON.parse(String(vi.mocked(fetch).mock.calls[0]?.[1]?.body));
-    expect(body.source).toMatch(/^path:.*\/linear$/);
+    expect(body.source.startsWith("path:")).toBe(true);
+    expect(body.source.endsWith(`${sep}linear`)).toBe(true);
   });
 
   it("installs a pasted GitHub repository URL as a direct source", async () => {

@@ -712,7 +712,17 @@ function TestProviderModelPicker({
   className,
 }: ExperimentalProviderModelPickerProps) {
   const [draft, setDraft] = useState(value);
-  useEffect(() => setDraft(value), [value]);
+  const { providerId, model, reasoningLevel, serviceTier } = value;
+  useEffect(
+    () =>
+      setDraft({
+        providerId,
+        model,
+        reasoningLevel,
+        ...(serviceTier === undefined ? {} : { serviceTier }),
+      }),
+    [providerId, model, reasoningLevel, serviceTier],
+  );
   const reasoningLevels = [
     "none",
     "low",
@@ -776,7 +786,7 @@ function TestProviderModelPicker({
           onChange={(event) =>
             setDraft((current) => {
               const serviceTier = event.target.value;
-              if (serviceTier !== "fast" && serviceTier !== "default") {
+              if (serviceTier === "") {
                 const next = { ...current };
                 delete next.serviceTier;
                 return next;

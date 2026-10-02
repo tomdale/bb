@@ -170,7 +170,9 @@ them when it starts, when it becomes active, and every five minutes.
 
 Open Settings → Machines and choose Add a machine. Run the generated one-line
 installer on the computer that should
-execute work. It installs and enrolls a host daemon; when bb connect is paired,
+execute work. Choose Windows in the dialog for a PowerShell command; a Windows
+machine needs Node.js 22.19 or newer and Git for Windows, and its daemon starts
+when you sign in to Windows. It installs and enrolls a host daemon; when bb connect is paired,
 the installer also configures the machine credential used to reach the server
 through the account gate. Without bb connect, open the server through a
 Tailscale Serve URL before generating the installer; the loopback listener is
@@ -193,6 +195,14 @@ slightly early through a paired tunnel is an accepted tradeoff. npm installs
 the package into the machine's bb data directory, not its system-wide global
 prefix, so enrollment needs neither `sudo` nor a PATH change.
 
+The Connect gate consumes platform authentication cookies without forwarding
+them to tunnels, including public installer requests and port shares. Tenant
+responses may set host-only cookies outside the `better-auth.*` and
+`bb-connect.*` namespaces (including their `__Secure-` variants); cookies
+with a `Domain` attribute are dropped. Only the gate can renew platform
+cookies. Public installer responses are served as sandboxed plain text, or
+as an attachment for `/install/bb-app.tgz`, with content sniffing disabled.
+
 Each joined server gets its own daemon instance, data directory
 (`~/.bb-machines/<server-host>`, override with `BB_DATA_DIR` when running the
 installer), local API port, and launchd/systemd service. The installer persists
@@ -202,6 +212,19 @@ serve several bb servers at once, and joining never touches a full local bb
 install's `~/.bb`. Each instance keeps its own `bb-app` under that data
 directory and self-updates against its own server, so servers running different
 bb versions on one machine remain isolated.
+
+On Linux, the installer uses the current user's systemd manager (or a system
+unit when run as root on a non-container systemd host). If the user bus is not
+reachable from the installer's environment, it retries using the current
+user's runtime path reported by `loginctl`. If the bus remains unavailable on
+a systemd host, installation fails before enrolling or creating a unit; rerun
+it from a systemd user session. In containers and on machines without systemd
+as init, the installer runs a detached daemon instead. Set
+`BB_INSTALL_SKIP_SERVICE=1` only when a detached daemon is acceptable: no
+service starts it after a reboot. The temporary daemon used
+for a first join is not supervised. When the installer starts a previously
+joined daemon without a service, its launcher restarts it after crashes and
+self-updates while the launcher remains running.
 
 The installed launchd/systemd service enables `--auto-update`. If session open
 reports a newer server protocol, the daemon downloads the server artifact,

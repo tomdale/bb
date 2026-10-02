@@ -24,10 +24,7 @@ import {
 } from "./ConversationMessageMentions.js";
 import { ExpandableTimelineRow } from "./ExpandableTimelineRow.js";
 import { NESTED_TIMELINE_GROUP_LINE_CLASS_NAME } from "./timeline-nested-group-line.js";
-import type {
-  TimelineTitleActionResolver,
-  TimelineTitleLinkResolver,
-} from "./TimelineTitleView.js";
+import type { TimelineTitleActionResolver } from "./TimelineTitleView.js";
 import type {
   ThreadTimelineLinkHandler,
   ThreadTimelineLocalFileLinkHandler,
@@ -37,7 +34,6 @@ import { TurnRequestLabel } from "./TurnRequestLabel.js";
 import { useOverflowMeasurement } from "./conversation-message-overflow.js";
 import { PromptMentionPill } from "./ConversationMessageMentions.js";
 import { useThreadTitleDisplayText } from "@/components/thread/ThreadTitleMentions.js";
-import { getThreadRoutePath } from "@/lib/route-paths";
 import {
   boundedMarkdownPreview,
   closeUnterminatedMarkdownCodeSpan,
@@ -53,7 +49,6 @@ interface GeneratedConversationMessageProps {
   onOpenLocalFileLink?: ThreadTimelineLocalFileLinkHandler;
   projectId?: string;
   resolveMentionLink?: PromptMentionLinkResolver;
-  resolveSegmentLinkHref?: TimelineTitleLinkResolver;
   onTitleAction?: TimelineTitleActionResolver;
   sourceKind: GeneratedConversationSourceKind;
   sourceName: string;
@@ -359,7 +354,6 @@ function generatedConversationIconName(
 
 interface GeneratedAgentSourceTitleProps {
   onTitleAction?: TimelineTitleActionResolver;
-  resolveSegmentLinkHref?: TimelineTitleLinkResolver;
   sourceIsPluginSideChat: boolean;
   sourceName: string;
   sourceProjectId: string | null;
@@ -369,7 +363,6 @@ interface GeneratedAgentSourceTitleProps {
 
 function GeneratedAgentSourceTitle({
   onTitleAction,
-  resolveSegmentLinkHref,
   sourceIsPluginSideChat,
   sourceName,
   sourceProjectId,
@@ -379,18 +372,6 @@ function GeneratedAgentSourceTitle({
   const sourceDisplayName = useThreadTitleDisplayText(sourceName);
   const sourceTitleAction =
     title.action && onTitleAction ? onTitleAction(title.action) : null;
-  const sourceLinkHref =
-    sourceThreadId !== null && !sourceIsPluginSideChat
-      ? sourceProjectId !== null
-        ? getThreadRoutePath({
-            projectId: sourceProjectId,
-            threadId: sourceThreadId,
-          })
-        : (resolveSegmentLinkHref?.({
-            kind: "thread",
-            threadId: sourceThreadId,
-          }) ?? null)
-      : null;
   const leadIn = title.segments[0]?.text ?? "Message from";
 
   return (
@@ -414,7 +395,7 @@ function GeneratedAgentSourceTitle({
             label: sourceDisplayName,
           }}
           serializedText={`@thread:${sourceThreadId}`}
-          linkHref={sourceLinkHref ?? undefined}
+          interactive={!sourceIsPluginSideChat || sourceTitleAction !== null}
           onActivate={sourceTitleAction ?? undefined}
         />
       )}
@@ -455,7 +436,6 @@ export const GeneratedConversationMessage = memo(
     onOpenLocalFileLink,
     projectId,
     resolveMentionLink,
-    resolveSegmentLinkHref,
     onTitleAction,
     sourceKind,
     sourceName,
@@ -516,7 +496,6 @@ export const GeneratedConversationMessage = memo(
       sourceKind === "agent" ? (
         <GeneratedAgentSourceTitle
           onTitleAction={onTitleAction}
-          resolveSegmentLinkHref={resolveSegmentLinkHref}
           sourceIsPluginSideChat={sourceIsPluginSideChat}
           sourceName={sourceName}
           sourceProjectId={sourceProjectId}
@@ -585,13 +564,11 @@ export const GeneratedConversationMessage = memo(
                   linkRouting={linkRouting}
                   promptMentions={{
                     mentions: collapsedPreviewBody.mentions,
-                    resolveLinkHref: resolveSegmentLinkHref,
                     resolveMentionLink,
                   }}
                   threadMentions={{
                     mentions: collapsedPreviewBody.mentions,
                     preserveSoftBreaks: true,
-                    resolveLinkHref: resolveSegmentLinkHref,
                   }}
                   className={COLLAPSED_MARKDOWN_PREVIEW_CLASS}
                 />
@@ -626,13 +603,11 @@ export const GeneratedConversationMessage = memo(
                 linkRouting={linkRouting}
                 promptMentions={{
                   mentions: messageMentions,
-                  resolveLinkHref: resolveSegmentLinkHref,
                   resolveMentionLink,
                 }}
                 threadMentions={{
                   mentions: messageMentions,
                   preserveSoftBreaks: true,
-                  resolveLinkHref: resolveSegmentLinkHref,
                 }}
               />
             ) : (
@@ -663,7 +638,6 @@ export const GeneratedConversationMessage = memo(
         messageMentions,
         onOpenLocalFileLink,
         projectId,
-        resolveSegmentLinkHref,
         resolveMentionLink,
         sourceKind,
         suppressGeneratedAgentImages,
@@ -679,7 +653,6 @@ export const GeneratedConversationMessage = memo(
         collapsedPreview={collapsedPreview}
         expandable={expandable}
         leadingIcon={leadingIcon}
-        resolveSegmentLinkHref={resolveSegmentLinkHref}
         onTitleAction={onTitleAction}
         renderBody={renderBody}
       />

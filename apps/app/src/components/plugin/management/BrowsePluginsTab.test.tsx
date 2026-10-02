@@ -54,6 +54,7 @@ const MEMORY_ENTRY: PluginCatalogSearchEntry = {
     url: "https://github.com/get-bb",
   },
   installed: false,
+  conflictingInstallSource: null,
   installs: 4_210,
   compatible: true,
   incompatibleReason: null,
@@ -477,7 +478,7 @@ describe("BrowsePluginsTab", () => {
     await screen.findByTestId("plugin-browse-shelves");
     expect(cardOrder()).toHaveLength(6);
     fireEvent.click(
-      screen.getAllByRole("link", { name: "See all Memory & Context" })[0]!,
+      screen.getAllByRole("link", { name: "View all Memory & Context" })[0]!,
     );
     expect(cardOrder()).toHaveLength(8);
     expect(screen.getByTestId("location-search").textContent).toBe(
@@ -665,7 +666,7 @@ describe("BrowsePluginsTab", () => {
     const installed = await screen.findByRole("button", {
       name: "Memory installed — 4,210 installs",
     });
-    expect(installed.querySelector('[data-icon="Download"]')).toBeTruthy();
+    expect(installed.querySelector('[data-icon="Check"]')).toBeTruthy();
     expect(installed.textContent).toContain("4.2K");
     expect(installed.getAttribute("aria-disabled")).toBe("true");
     expect(

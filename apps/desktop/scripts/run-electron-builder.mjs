@@ -19,11 +19,11 @@ const generatedConfigPath = resolve(
   desktopPackageRoot,
   ".electron-builder.generated.json",
 );
-const electronBuilderBin = resolve(
+const electronBuilderCli = resolve(
   desktopPackageRoot,
   "node_modules",
-  ".bin",
   "electron-builder",
+  "cli.js",
 );
 
 const codeSigningKeys = ["CSC_LINK", "CSC_KEY_PASSWORD"];
@@ -159,7 +159,7 @@ function createSigningPlan(env) {
   };
 }
 
-function resolveElectronBuilderConfig(baseConfig, env) {
+function resolveElectronBuilderConfig(baseConfig, env, electronBuilderArgs) {
   const signingPlan = createSigningPlan(env);
   const releaseChannel = resolveDesktopReleaseChannel(env);
   const buildProfile = resolveDesktopBuildProfile(env.BB_DESKTOP_BUILD_PROFILE);
@@ -189,6 +189,16 @@ function resolveElectronBuilderConfig(baseConfig, env) {
     executableName: releaseConfig.linuxExecutableName,
     icon: "assets/" + releaseConfig.iconFileName,
   };
+  config.win = {
+    ...config.win,
+    icon: "assets/" + releaseConfig.iconFileName,
+  };
+  if (electronBuilderArgs.includes("--win")) {
+    config.extraMetadata = {
+      ...config.extraMetadata,
+      name: releaseConfig.windowsInstallName,
+    };
+  }
   config.appId = releaseConfig.appId;
   config.artifactName = releaseConfig.artifactName;
   config.productName = releaseConfig.applicationName;
@@ -235,8 +245,8 @@ async function removeGeneratedConfig() {
 
 async function runElectronBuilder(args, signingPlan) {
   const child = spawn(
-    electronBuilderBin,
-    ["--config", generatedConfigPath, ...args],
+    process.execPath,
+    [electronBuilderCli, "--config", generatedConfigPath, ...args],
     {
       cwd: desktopPackageRoot,
       env: createElectronBuilderEnv(signingPlan),
@@ -267,6 +277,7 @@ async function main() {
   const { config, signingPlan } = resolveElectronBuilderConfig(
     baseConfig,
     process.env,
+    electronBuilderArgs,
   );
 
   if (printConfig) {
@@ -275,10 +286,11 @@ async function main() {
   }
 
   if (
-    electronBuilderArgs.includes("--linux") &&
+    (electronBuilderArgs.includes("--linux") ||
+      electronBuilderArgs.includes("--win")) &&
     !electronBuilderArgs.includes("--mac")
   ) {
-    console.log("macOS signing is not applicable for Linux-only builds.");
+    console.log("macOS signing is not applicable for this build.");
   } else {
     logSigningPlan(signingPlan);
   }
