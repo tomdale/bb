@@ -1313,7 +1313,7 @@ describe("idle cold-start activation", () => {
     });
   });
 
-  it("resumes provider continuity after an environment directory update", async () => {
+  it("automatically continues provider work after an environment directory update", async () => {
     await withTestHarness(async (harness) => {
       const { environment, thread } = seedProviderThreadFixture({
         harness,
@@ -1324,6 +1324,10 @@ describe("idle cold-start activation", () => {
         projectId: environment.projectId,
         path: "/tmp/send-dispatch-switched",
         status: "ready",
+      });
+      applyLoggedThreadLifecycleEvent(harness.deps, {
+        event: { type: "run.started" },
+        threadId: thread.id,
       });
       seedTurnStarted(harness.deps, {
         environmentId: environment.id,
@@ -1345,37 +1349,36 @@ describe("idle cold-start activation", () => {
       expect(getThread(harness.db, thread.id)).toMatchObject({
         environmentId: targetEnvironment.id,
       });
-      seedStoredEvent(harness.deps, {
+      const queuedContinuation = listQueuedThreadMessages(
+        harness.db,
+        thread.id,
+      );
+      expect(queuedContinuation).toHaveLength(1);
+      expect(JSON.parse(queuedContinuation[0]!.content)).toEqual([
+        {
+          type: "text",
+          text: "Please continue with the user's request using the updated working directory.",
+          mentions: [],
+          visibility: "agent-only",
+        },
+      ]);
+      await runQueuedMessageDispatch(harness.deps, {
+        kind: "thread-ready",
         threadId: thread.id,
-        environmentId: targetEnvironment.id,
-        providerThreadId: `provider-send-dispatch-4`,
-        sequence: 5,
-        type: "turn/completed",
-        scope: turnScope("turn_after_switch"),
-        data: {
-          providerThreadId: `provider-send-dispatch-4`,
-          status: "completed",
-        },
       });
-      const switchedThread = getThread(harness.db, thread.id);
-      if (!switchedThread) {
-        throw new Error("Expected switched thread to exist");
-      }
+      expect(listQueuedThreadMessages(harness.db, thread.id)).toHaveLength(1);
+      expect(
+        listQueuedThreadCommands(harness, "turn.submit", thread.id),
+      ).toHaveLength(0);
 
-      await sendThreadMessage(harness.deps, {
-        environment: targetEnvironment,
-        payload: {
-          input: textInput("start after switch"),
-          mode: "start",
-          model: "gpt-5",
-          permissionMode: "full",
-          reasoningLevel: "medium",
-          serviceTier: "default",
-        },
-        thread: switchedThread,
-        trigger: "user",
+      applyLoggedThreadLifecycleEvent(harness.deps, {
+        event: { type: "run.succeeded" },
+        threadId: thread.id,
       });
-
+      await runQueuedMessageDispatch(harness.deps, {
+        kind: "thread-ready",
+        threadId: thread.id,
+      });
       await waitForQueuedCommand(
         harness,
         (queued) =>
