@@ -109,40 +109,6 @@ function renderDirectoryContinuation(text: string) {
   );
 }
 
-function renderDeliveredQuestionResult(
-  text: string,
-  toolName = "AskUserQuestion",
-) {
-  const { wrapper } = createQueryClientTestHarness();
-  return render(
-    <MemoryRouter>
-      <RouteNavigationProvider>
-        <ConversationMessageContent
-          role="user"
-          initiator="system"
-          originKind={null}
-          senderThreadId={null}
-          senderThreadTitle={null}
-          senderIsPluginSideChat={false}
-          systemMessageKind="tool-result-delivered"
-          systemMessageSubject={{
-            kind: "tool-call",
-            toolName,
-            suppress: false,
-          }}
-          attachments={null}
-          mentions={[]}
-          text={text}
-          turnRequest={{ kind: "message", status: "accepted" }}
-          threadId="thr_parent"
-          workspaceRootPath="/workspace"
-          projectId="proj_demo"
-        />
-      </RouteNavigationProvider>
-    </MemoryRouter>,
-    { wrapper },
-  );
-}
 describe("GeneratedConversationMessage images", () => {
   it("routes images in generated system messages through the current thread", () => {
     renderChildCompleted("![report](reports/result.png)");
