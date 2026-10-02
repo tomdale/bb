@@ -1,4 +1,5 @@
 import {
+  createQueuedThreadMessage,
   getThread,
   isThreadQueueAutoSendPaused,
   listEvents,
@@ -798,6 +799,57 @@ describe("thread runtime stop", () => {
         listEvents(harness.db, { threadId: thread.id }).filter(
           (event) => event.type === "system/thread/interrupted",
         ),
+      ).toHaveLength(0);
+    });
+  });
+
+  it("cancels an automatic directory continuation when the user stops the thread", async () => {
+    await withTestHarness(async (harness) => {
+      const { environment, thread } = seedThreadFixture(harness, {
+        thread: { status: "active", visibility: "hidden" },
+      });
+      seedTurnStarted(harness.deps, {
+        environmentId: environment.id,
+        threadId: thread.id,
+        turnId: "turn-directory-continuation",
+      });
+      createQueuedThreadMessage(harness.db, harness.hub, {
+        threadId: thread.id,
+        content: [
+          {
+            type: "text",
+            text: "Continue the current task in the updated working directory.",
+            mentions: [],
+          },
+        ],
+        model: "gpt-5",
+        reasoningLevel: "medium",
+        permissionMode: "full",
+        serviceTier: "default",
+        waitingOn: { kind: "thread-busy" },
+        sendAt: null,
+        payload: { kind: "inline" },
+        systemNotice: { kind: "turn-continuation", subject: null },
+      });
+
+      const responsePromise = harness.app.request(
+        `/api/v1/threads/${thread.id}/stop`,
+        { method: "POST" },
+      );
+      const stop = await waitForQueuedCommand(
+        harness,
+        ({ command }) =>
+          command.type === "thread.stop" && command.threadId === thread.id,
+      );
+      expect(listQueuedThreadMessages(harness.db, thread.id)).toEqual([]);
+      await reportQueuedCommandSuccess(harness, stop, {
+        providerCheckpointId: null,
+      });
+
+      expect((await responsePromise).status).toBe(200);
+      expect(listQueuedThreadMessages(harness.db, thread.id)).toEqual([]);
+      expect(
+        listQueuedThreadCommands(harness, "turn.submit", thread.id),
       ).toHaveLength(0);
     });
   });
