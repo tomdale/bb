@@ -443,7 +443,9 @@ export function registerThreadDataRoutes(app: Hono, deps: AppDeps): void {
     const threadId = context.req.param("id");
     requirePublicThread(deps.db, threadId);
     return context.json(
-      listQueuedThreadMessages(deps.db, threadId).map(toThreadQueuedMessage),
+      listQueuedThreadMessages(deps.db, threadId, { visibleOnly: true }).map(
+        toThreadQueuedMessage,
+      ),
     );
   });
 
