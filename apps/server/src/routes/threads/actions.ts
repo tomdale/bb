@@ -35,7 +35,10 @@ import {
   emitPluginMessageCancelled,
   emitPluginThreadUnarchived,
 } from "../../services/plugins/plugin-thread-events.js";
-import { toThreadQueuedMessage } from "../../services/threads/thread-queued-messages.js";
+import {
+  isVisibleThreadQueuedMessage,
+  toThreadQueuedMessage,
+} from "../../services/threads/thread-queued-messages.js";
 import { retryFailedTurn } from "../../services/threads/turn-retry.js";
 import {
   requireConnectedHostSession,
@@ -94,7 +97,9 @@ function toQueuedMessageOrderResponse(
   switch (result.kind) {
     case "reordered":
     case "unchanged":
-      return result.queuedMessages.map(toThreadQueuedMessage);
+      return result.queuedMessages
+        .filter(isVisibleThreadQueuedMessage)
+        .map(toThreadQueuedMessage);
     case "not_found":
       throw new ApiError(404, "invalid_request", "Queued message not found");
     case "claimed":
@@ -168,7 +173,9 @@ function toQueuedMessageGroupBoundaryResponse(
   switch (result.kind) {
     case "updated":
     case "unchanged":
-      return result.queuedMessages.map(toThreadQueuedMessage);
+      return result.queuedMessages
+        .filter(isVisibleThreadQueuedMessage)
+        .map(toThreadQueuedMessage);
     case "not_found":
       throw new ApiError(404, "invalid_request", "Queued message not found");
     case "claimed":

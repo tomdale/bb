@@ -1,6 +1,7 @@
 import {
   promptInputSchema,
   queuedMessageWaitingOnSchema,
+  queuedMessageSystemNoticeSchema,
   threadQueuedMessageSchema,
 } from "@bb/domain";
 import type {
@@ -154,6 +155,16 @@ function toQueuedMessagePayload(
     attempt: row.retryAttempt,
     reason: row.retryReason,
   };
+}
+
+export function isVisibleThreadQueuedMessage(
+  row: Pick<StoredQueuedThreadMessageRow, "systemNotice">,
+): boolean {
+  return (
+    row.systemNotice === null ||
+    queuedMessageSystemNoticeSchema.parse(JSON.parse(row.systemNotice)).kind !==
+      "turn-continuation"
+  );
 }
 
 export function toThreadQueuedMessage(
