@@ -103,7 +103,7 @@ if (process.argv[2] === "install") {
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, "dev-browser.cjs"), "shim");
   fs.writeFileSync(path.join(dir, "..", "package.json"), JSON.stringify({ name: "dev-browser", version: config.version }));
-  fs.writeFileSync(path.join(process.cwd(), "node_modules", ".package-lock.json"), JSON.stringify({ packages: { "node_modules/dev-browser": { version: config.version, resolved: (config.resolvedBase ?? process.env.npm_config_registry) + "/dev-browser/-/dev-browser.tgz", integrity: config.integrity } } }));
+  fs.writeFileSync(path.join(process.cwd(), "node_modules", ".package-lock.json"), JSON.stringify({ packages: { "node_modules/dev-browser": { version: config.version, resolved: config.omitRegistryResolved && !process.argv.includes("--omit-lockfile-registry-resolved=false") ? undefined : (config.resolvedBase ?? process.env.npm_config_registry) + "/dev-browser/-/dev-browser.tgz", integrity: config.integrity } } }));
   process.exit(0);
 }
 if (process.argv[2] === "audit") { process.stdout.write(JSON.stringify(config.audit)); process.exit(config.auditExit ?? 0); }
@@ -229,7 +229,7 @@ describe("runtime installer", () => {
     );
     await access(installed.binary, constants.X_OK);
     expect(await npmCalls()).toEqual([
-      `install --ignore-scripts --no-audit --no-fund --omit=dev --loglevel=error --registry=${base}`,
+      `install --ignore-scripts --no-audit --no-fund --omit=dev --omit-lockfile-registry-resolved=false --loglevel=error --registry=${base}`,
       `audit signatures --json --registry=${base}`,
     ]);
     expect(requests).toEqual([attestationPath, "/SHA256SUMS", `/${asset}`]);
@@ -243,6 +243,12 @@ describe("runtime installer", () => {
     });
     expect(warm.binary).toBe(installed.binary);
     expect(requests).toHaveLength(3);
+  });
+  it("retains registry provenance when npm config omits resolved URLs", async () => {
+    await configureNpm({ omitRegistryResolved: true });
+    const installed = await install(await dataDir());
+    expect(installed.sha256).toBe(sha256(binaryContent));
+    expect(requests).toEqual([attestationPath, "/SHA256SUMS", `/${asset}`]);
   });
   it("reinstalls when the cached binary no longer matches the pin", async () => {
     const dir = await dataDir();
