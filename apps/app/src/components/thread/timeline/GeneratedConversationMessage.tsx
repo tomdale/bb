@@ -241,7 +241,7 @@ function systemMessageTitleSegments(
           ]
         : SYSTEM_MESSAGE_FALLBACK_SEGMENTS;
     case "turn-continuation":
-      return [verbSegment("Continuing after directory switch")];
+      return [verbSegment("Continued in new directory")];
     case "unlabeled":
       return SYSTEM_MESSAGE_FALLBACK_SEGMENTS;
   }
@@ -412,7 +412,8 @@ function systemMessageIsTitleOnly(
   }
   return (
     systemMessageKind === "ownership-assigned" ||
-    systemMessageKind === "ownership-removed"
+    systemMessageKind === "ownership-removed" ||
+    systemMessageKind === "turn-continuation"
   );
 }
 
