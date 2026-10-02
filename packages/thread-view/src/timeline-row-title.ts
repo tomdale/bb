@@ -454,9 +454,24 @@ function mapExecutionTitle(row: TimelineExecutionWorkRow): TimelineTitle {
       completedAt: row.completedAt,
     });
   }
+  const recapArgs =
+    status === "completed" && !isCommand && row.toolName === "WorkstreamsRecap"
+      ? row.toolArgs
+      : null;
+  const recapTitle =
+    recapArgs &&
+    (recapArgs.state === "complete" ||
+      recapArgs.state === "review" ||
+      recapArgs.state === "waiting") &&
+    typeof recapArgs.goal === "string" &&
+    (recapArgs.state === "waiting"
+      ? Array.isArray(recapArgs.tasks) && recapArgs.tasks.length > 0
+      : Array.isArray(recapArgs.latest) && recapArgs.latest.length > 0)
+      ? `${recapArgs.state === "review" ? "Ready for review" : recapArgs.state[0]!.toUpperCase() + recapArgs.state.slice(1)} · ${recapArgs.goal.replace(/[\r\n]+/gu, " ")}`
+      : null;
   const content = isCommand
     ? row.command
-    : formatToolCallCommand(row.toolName, row.toolArgs);
+    : (recapTitle ?? formatToolCallCommand(row.toolName, row.toolArgs));
   const explorationTitle =
     row.workKind === "command" ? mapSingleExplorationIntentTitle(row) : null;
   if (explorationTitle !== null) {
@@ -497,10 +512,13 @@ function mapExecutionTitle(row: TimelineExecutionWorkRow): TimelineTitle {
       });
     case "completed":
       return makeTitle({
-        segments: [
-          segment(isCommand ? "Ran" : "Ran tool"),
-          segment(content, { em: true, truncate: true }),
-        ],
+        segments:
+          recapTitle !== null
+            ? [segment(recapTitle, { em: true, truncate: true })]
+            : [
+                segment(isCommand ? "Ran" : "Ran tool"),
+                segment(content, { em: true, truncate: true }),
+              ],
         decorations: [
           ...badges,
           ...filterNull([durationDecoration(row.startedAt, row.completedAt)]),

@@ -1193,6 +1193,7 @@ function TimelineExpandableBody({
       return (
         <WorkRowBodyWithPluginRenderer
           row={row}
+          onOpenLocalFileLink={onOpenLocalFileLink}
           resolveImageViewSrc={resolveImageViewSrc}
           workspaceRootPath={workspaceRootPath}
         />
@@ -1217,10 +1218,12 @@ function TimelineExpandableBody({
 }
 
 function WorkRowBodyWithPluginRenderer({
+  onOpenLocalFileLink,
   row,
   resolveImageViewSrc,
   workspaceRootPath,
 }: {
+  onOpenLocalFileLink: ThreadTimelineLocalFileLinkHandler | undefined;
   row: TimelineViewWorkRow;
   resolveImageViewSrc: ThreadTimelineImageViewSrcResolver | undefined;
   workspaceRootPath: string | undefined;
@@ -1230,11 +1233,12 @@ function WorkRowBodyWithPluginRenderer({
     () => (
       <WorkRowBody
         row={row}
+        onOpenLocalFileLink={onOpenLocalFileLink}
         resolveImageViewSrc={resolveImageViewSrc}
         workspaceRootPath={workspaceRootPath}
       />
     ),
-    [resolveImageViewSrc, row, workspaceRootPath],
+    [onOpenLocalFileLink, resolveImageViewSrc, row, workspaceRootPath],
   );
   if (slot !== null && isPluginRenderableWorkRow(row)) {
     return (

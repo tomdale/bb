@@ -465,6 +465,23 @@ describe("buildTimelineRowTitle", () => {
     ).toBe("Ran tool repository_context (2s)");
   });
 
+  it("renders a completed recap's state and goal without a generic tool prefix", () => {
+    const title = buildTimelineRowTitle(
+      {
+        ...toolRow(),
+        toolName: "WorkstreamsRecap",
+        toolArgs: {
+          state: "complete",
+          goal: "Added compact recap rendering",
+          latest: ["Shows the recap inline"],
+        },
+      },
+      DEFAULT_OPTIONS,
+    );
+
+    expect(title.plain).toBe("Complete · Added compact recap rendering (2s)");
+  });
+
   it("can render completed work leaves with muted summary title treatment", () => {
     const title = buildTimelineRowTitle(commandRow(), {
       summaryStyle: "background",
