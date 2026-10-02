@@ -455,6 +455,31 @@ function clearPreviousQueuedMessageGroupEdgeInTransaction(
     .run();
 }
 
+export function deleteQueuedSystemNoticesInTransaction(
+  db: DbTransaction,
+  threadId: string,
+  kind: QueuedMessageSystemNotice["kind"],
+): number {
+  const notices = db
+    .select()
+    .from(queuedThreadMessages)
+    .where(
+      and(
+        eq(queuedThreadMessages.threadId, threadId),
+        sql`json_extract(${queuedThreadMessages.systemNotice}, '$.kind') = ${kind}`,
+      ),
+    )
+    .all();
+  for (const notice of notices) {
+    clearPreviousQueuedMessageGroupEdgeInTransaction(db, notice);
+    clearQueuedMessageGroupEdgeInTransaction(db, notice);
+    db.delete(queuedThreadMessages)
+      .where(eq(queuedThreadMessages.id, notice.id))
+      .run();
+  }
+  return notices.length;
+}
+
 function clearQueuedMessageGroupEdgeInTransaction(
   db: DbTransaction,
   queuedMessage: QueuedThreadMessageRow,

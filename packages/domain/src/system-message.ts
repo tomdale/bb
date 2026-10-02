@@ -22,6 +22,7 @@ const systemMessageKindValues = [
   "child-interrupted",
   "child-outcome-batch",
   "tool-result-delivered",
+  "turn-continuation",
   "unlabeled",
 ] as const;
 export const systemMessageKindSchema = z.enum(systemMessageKindValues);

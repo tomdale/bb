@@ -262,6 +262,8 @@ function systemMessageTitleSegments(
             verbSegment("result"),
           ]
         : SYSTEM_MESSAGE_FALLBACK_SEGMENTS;
+    case "turn-continuation":
+      return [verbSegment("Continuing after directory switch")];
     case "unlabeled":
       return SYSTEM_MESSAGE_FALLBACK_SEGMENTS;
   }
@@ -357,6 +359,8 @@ function systemMessageIconName(systemMessageKind: SystemMessageKind): IconName {
       return "ListTodo";
     case "tool-result-delivered":
       return "Toolbox";
+    case "turn-continuation":
+      return "FolderOpen";
     case "unlabeled":
       return "Info";
   }
