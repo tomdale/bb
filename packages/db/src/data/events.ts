@@ -3840,6 +3840,79 @@ export function listThreadTurnInterruptionEventStates(
   });
 }
 
+export function hasThreadTurnRequestAfterStart(
+  db: DbQueryConnection,
+  args: { threadId: string; turnId: string },
+): boolean {
+  const turnStarted = db
+    .select({ sequence: events.sequence })
+    .from(events)
+    .where(
+      and(
+        eq(events.threadId, args.threadId),
+        eq(events.turnId, args.turnId),
+        eq(events.type, "turn/started"),
+      ),
+    )
+    .orderBy(desc(events.sequence))
+    .limit(1)
+    .get();
+  if (!turnStarted) return true;
+
+  return db
+    .select({ id: events.id })
+    .from(events)
+    .where(
+      and(
+        eq(events.threadId, args.threadId),
+        eq(events.type, "client/turn/requested"),
+        gt(events.sequence, turnStarted.sequence),
+        sql`NOT (
+          COALESCE(json_extract(${events.data}, '$.target.kind'), '') IN ('steer', 'auto')
+          AND COALESCE(json_extract(${events.data}, '$.target.expectedTurnId'), '') = ${args.turnId}
+        )`,
+      ),
+    )
+    .limit(1)
+    .get() !== undefined;
+}
+
+export function wasThreadTurnManuallyStopped(
+  db: DbQueryConnection,
+  args: { threadId: string; turnId: string },
+): boolean {
+  const latestTurnStart = db
+    .select({ sequence: events.sequence })
+    .from(events)
+    .where(
+      and(
+        eq(events.threadId, args.threadId),
+        eq(events.turnId, args.turnId),
+        eq(events.type, "turn/started"),
+      ),
+    )
+    .orderBy(desc(events.sequence))
+    .limit(1)
+    .get();
+  if (!latestTurnStart) return false;
+
+  return (
+    db
+      .select({ id: events.id })
+      .from(events)
+      .where(
+        and(
+          eq(events.threadId, args.threadId),
+          eq(events.type, "system/thread/interrupted"),
+          gt(events.sequence, latestTurnStart.sequence),
+          sql`json_extract(${events.data}, '$.reason') = 'manual-stop'`,
+        ),
+      )
+      .limit(1)
+      .get() !== undefined
+  );
+}
+
 export function listThreadIdsStoppedSinceLastTurnStart(
   db: DbConnection,
   args: ListThreadIdsStoppedSinceLastTurnStartArgs,

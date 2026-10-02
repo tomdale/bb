@@ -219,6 +219,7 @@ export type UpdateQueuedThreadMessageResult =
   | { kind: "updated"; queuedMessage: QueuedThreadMessageRow }
   | { kind: "not_found" }
   | { kind: "claimed" }
+  | { kind: "not_editable" }
   | { kind: "stale" };
 
 export type ReleaseQueuedMessageClaimArgs =
@@ -347,6 +348,8 @@ function queuedMessageGroupingEnvelopeMatches(
 ): boolean {
   return (
     firstQueuedMessage !== null &&
+    firstQueuedMessage.systemNotice === null &&
+    queuedMessage.systemNotice === null &&
     queuedMessage.senderThreadId === firstQueuedMessage.senderThreadId &&
     queuedMessage.model === firstQueuedMessage.model &&
     queuedMessage.reasoningLevel === firstQueuedMessage.reasoningLevel &&
@@ -702,6 +705,9 @@ export function updateQueuedThreadMessage(
       const existing = getQueuedThreadMessage(tx, input.id);
       if (!existing || existing.threadId !== input.threadId) {
         return { kind: "not_found" };
+      }
+      if (existing.systemNotice !== null) {
+        return { kind: "not_editable" };
       }
       if (isQueuedThreadMessageClaimed(existing)) {
         return { kind: "claimed" };
