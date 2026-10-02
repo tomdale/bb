@@ -23,6 +23,11 @@ import {
   shiftMentionsToTextRange,
 } from "./ConversationMessageMentions.js";
 import { ExpandableTimelineRow } from "./ExpandableTimelineRow.js";
+import {
+  DeliveredQuestionResult,
+  deliveredQuestionResultPreview,
+  parseDeliveredQuestionResult,
+} from "./DeliveredQuestionResult.js";
 import { NESTED_TIMELINE_GROUP_LINE_CLASS_NAME } from "./timeline-nested-group-line.js";
 import type { TimelineTitleActionResolver } from "./TimelineTitleView.js";
 import type {
@@ -456,6 +461,14 @@ export const GeneratedConversationMessage = memo(
       [mentions, messageText.length, trimStartLength],
     );
     const requestLabel = turnRequestLabel(turnRequest);
+    const deliveredQuestionResult =
+      sourceKind === "system" &&
+      systemMessageKind === "tool-result-delivered" &&
+      systemMessageSubject?.kind === "tool-call" &&
+      !systemMessageSubject.suppress &&
+      systemMessageSubject.toolName === "AskUserQuestion"
+        ? parseDeliveredQuestionResult(messageText)
+        : null;
     const linkRouting = useMemo<MarkdownLinkRouting | undefined>(
       () =>
         buildMarkdownMessageLinkRouting({
@@ -508,8 +521,14 @@ export const GeneratedConversationMessage = memo(
       attachmentItems.filePaths.length > 0 ||
       attachmentItems.imageItems.length > 0 ||
       requestLabel !== null;
-    const collapsedPreviewSource =
-      generatedConversationCollapsedPreview(messageText);
+    const collapsedPreviewSource = deliveredQuestionResult
+      ? {
+          hasAdditionalBodyLines: false,
+          parseAsMarkdown: false,
+          text: deliveredQuestionResultPreview(deliveredQuestionResult),
+          wasCapped: false,
+        }
+      : generatedConversationCollapsedPreview(messageText);
     const collapsedPreviewTextRef = useRef<HTMLElement | null>(null);
     const setCollapsedPreviewTextRef = useCallback(
       (element: HTMLElement | null) => {
@@ -524,7 +543,8 @@ export const GeneratedConversationMessage = memo(
     });
     const expandable =
       !titleOnly &&
-      (hasExpandedOnlyContent ||
+      (deliveredQuestionResult !== null ||
+        hasExpandedOnlyContent ||
         collapsedPreviewSource.hasAdditionalBodyLines ||
         collapsedPreviewSource.wasCapped ||
         collapsedPreviewOverflowMeasurement === "overflowing");
@@ -588,7 +608,12 @@ export const GeneratedConversationMessage = memo(
       () => (
         <div className={NESTED_TIMELINE_GROUP_LINE_CLASS_NAME}>
           <div className="pl-2 text-sm leading-relaxed text-foreground">
-            {messageText ? (
+            {deliveredQuestionResult ? (
+              <DeliveredQuestionResult
+                result={deliveredQuestionResult}
+                rawText={messageText}
+              />
+            ) : messageText ? (
               <MarkdownPreview
                 allowHtml
                 content={messageText}
@@ -631,6 +656,7 @@ export const GeneratedConversationMessage = memo(
         linkRouting,
         messageText,
         messageMentions,
+        deliveredQuestionResult,
         onOpenLocalFileLink,
         projectId,
         resolveMentionLink,
