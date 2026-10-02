@@ -13,7 +13,6 @@ import { LazyTerminalOutputBlock } from "./LazyTerminalOutputBlock.js";
 import { TimelineDetailScroll } from "./TimelineDetailScroll.js";
 import { LazyTimelineFileDiffBlock } from "./LazyTimelineFileDiffBlock.js";
 import { ToolCallDetailBlock } from "./ToolCallDetailBlock.js";
-import { parseRecapToolArgs, RecapToolOutput } from "./RecapToolOutput.js";
 import { QuestionWorkRowBody } from "./QuestionWorkRowBody.js";
 import { WorkflowWorkRowBody } from "./WorkflowWorkRowBody.js";
 import {
@@ -27,13 +26,9 @@ import {
   type TimelineWorkRowFullOutputState,
 } from "./useTimelineWorkRowFullOutput.js";
 import { buildThreadHostFileContentUrl } from "@/lib/file-content-urls";
-import type {
-  ThreadTimelineImageViewSrcResolver,
-  ThreadTimelineLocalFileLinkHandler,
-} from "./types.js";
+import type { ThreadTimelineImageViewSrcResolver } from "./types.js";
 
 interface WorkRowBodyProps {
-  onOpenLocalFileLink?: ThreadTimelineLocalFileLinkHandler;
   resolveImageViewSrc?: ThreadTimelineImageViewSrcResolver;
   row: TimelineViewWorkRow;
   workspaceRootPath: string | undefined;
@@ -209,41 +204,23 @@ function CommandWorkRowBody({ row }: CommandWorkRowBodyProps) {
   );
 }
 
-function ToolWorkRowBody({
-  row,
-  onOpenLocalFileLink,
-}: ToolWorkRowBodyProps & {
-  onOpenLocalFileLink?: ThreadTimelineLocalFileLinkHandler;
-}) {
+function ToolWorkRowBody({ row }: ToolWorkRowBodyProps) {
   const fullOutput = useTimelineWorkRowFullOutput(row);
-  const recap =
-    row.toolName === "WorkstreamsRecap" && row.status === "completed"
-      ? parseRecapToolArgs(row.toolArgs)
-      : null;
   return (
     <div className="space-y-1">
       <PresentationDetail presentation={row.presentation} />
-      {recap ? (
-        <RecapToolOutput
-          args={row.toolArgs ?? {}}
-          output={fullOutput.output}
-          onOpenLocalFileLink={onOpenLocalFileLink}
-        />
-      ) : (
-        <ToolCallDetailBlock
-          toolName={row.toolName}
-          args={row.toolArgs}
-          output={fullOutput.output}
-          streaming={row.status === "pending"}
-        />
-      )}
+      <ToolCallDetailBlock
+        toolName={row.toolName}
+        args={row.toolArgs}
+        output={fullOutput.output}
+        streaming={row.status === "pending"}
+      />
       <OutputPreviewNote fullOutput={fullOutput} row={row} />
     </div>
   );
 }
 
 export function WorkRowBody({
-  onOpenLocalFileLink,
   resolveImageViewSrc,
   row,
   workspaceRootPath,
@@ -252,9 +229,7 @@ export function WorkRowBody({
     case "command":
       return <CommandWorkRowBody row={row} />;
     case "tool":
-      return (
-        <ToolWorkRowBody row={row} onOpenLocalFileLink={onOpenLocalFileLink} />
-      );
+      return <ToolWorkRowBody row={row} />;
     case "file-change":
       return (
         <div className="space-y-2">
