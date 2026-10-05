@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  buildPersonalDeployEnv,
   findBusyThreads,
   parseDeployArguments,
   parseProcessTable,
@@ -46,6 +47,24 @@ function fakeBundle(path: string, marker: string) {
 function bundleMarker(path: string) {
   return readFileSync(join(path, "Contents", "marker"), "utf8");
 }
+
+it("relaunches independently of the calling agent session", () => {
+  const sourceEnv = {
+    PATH: "/tools/bin",
+    OPENAI_API_KEY: "test-provider-key",
+    BB_THREAD_ID: "thr_deploy",
+    BB_PROJECT_ID: "proj_deploy",
+    BB_ENVIRONMENT_ID: "env_deploy",
+    BB_THREAD_STORAGE: "/thread-storage",
+    ELECTRON_RUN_AS_NODE: "1",
+    PI_BB_TOOLS_FILE: "/previous-session/tools.json",
+  };
+  expect(buildPersonalDeployEnv(sourceEnv)).toEqual({
+    PATH: "/tools/bin",
+    OPENAI_API_KEY: "test-provider-key",
+  });
+  expect(sourceEnv.PI_BB_TOOLS_FILE).toBe("/previous-session/tools.json");
+});
 
 describe("deploy arguments", () => {
   it("builds, smokes, replaces, and waits by default", () => {

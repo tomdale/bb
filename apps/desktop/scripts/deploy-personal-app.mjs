@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { resolvePackagedAppBinary } from "./packaged-app-paths.mjs";
 import {
   PERSONAL_PROFILE,
+  buildPersonalDeployEnv,
   deployUsage,
   findBusyThreads,
   parseDeployArguments,
@@ -31,13 +32,6 @@ const repoRoot = resolve(packageRoot, "..", "..");
 const serverUrl = `http://${PERSONAL_PROFILE.serverBindHost}:${PERSONAL_PROFILE.defaultServerPort}`;
 const QUIT_TIMEOUT_MS = 120_000;
 const HEALTH_TIMEOUT_MS = 180_000;
-const THREAD_ENV_KEYS = [
-  "BB_THREAD_ID",
-  "BB_PROJECT_ID",
-  "BB_ENVIRONMENT_ID",
-  "BB_THREAD_STORAGE",
-  "ELECTRON_RUN_AS_NODE",
-];
 
 const sleep = (ms) =>
   new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
@@ -55,6 +49,7 @@ function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: repoRoot,
     stdio: "inherit",
+    env: cleanEnv(),
     ...options,
   });
   if (result.status !== 0) {
@@ -69,9 +64,7 @@ function bbCli() {
 }
 
 function cleanEnv() {
-  const env = { ...process.env };
-  for (const key of THREAD_ENV_KEYS) delete env[key];
-  return env;
+  return buildPersonalDeployEnv(process.env);
 }
 
 function listThreads() {
@@ -209,6 +202,7 @@ function createRestartEffects(config) {
       log(`opening ${config.appPath}`);
       const result = spawnSync("/usr/bin/open", [config.appPath], {
         encoding: "utf8",
+        env: cleanEnv(),
       });
       if (result.status !== 0) {
         log(`open failed: ${result.stderr.trim()}`);

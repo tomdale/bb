@@ -83,6 +83,9 @@ export const PERSONAL_PROFILE: {
   serverBindHost: string;
 };
 export const BUSY_THREAD_STATUSES: ReadonlySet<string>;
+export function buildPersonalDeployEnv(
+  sourceEnv: Record<string, string | undefined>,
+): Record<string, string | undefined>;
 export function deployUsage(): string;
 export function parseDeployArguments(argv: readonly string[]): DeployOptions;
 export function resolveDeployPaths(args?: {

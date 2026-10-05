@@ -10,6 +10,21 @@ export const BUSY_THREAD_STATUSES = new Set(["starting", "active", "stopping"]);
 
 const DEFAULT_WAIT_TIMEOUT_MINUTES = 60;
 
+export function buildPersonalDeployEnv(sourceEnv) {
+  const env = { ...sourceEnv };
+  for (const key of [
+    "BB_THREAD_ID",
+    "BB_PROJECT_ID",
+    "BB_ENVIRONMENT_ID",
+    "BB_THREAD_STORAGE",
+    "ELECTRON_RUN_AS_NODE",
+    "PI_BB_TOOLS_FILE",
+  ]) {
+    delete env[key];
+  }
+  return env;
+}
+
 const USAGE = `Usage: deploy-personal-app [options]
 
 Builds bb Personal from this checkout while the installed app keeps running,

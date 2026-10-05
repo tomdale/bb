@@ -126,6 +126,16 @@ function modelIds(result: { models: { id: string }[] }): string[] {
 }
 
 describe("pi catalog freshness", () => {
+  it("loads models when the parent has a deleted session tools file", async () => {
+    const paths = setUpFakeCatalog({});
+    process.env.PI_BB_TOOLS_FILE = join(paths.workspace, "deleted-tools.json");
+
+    const catalog = await getPiCatalog(paths.workspace, paths.extensionPath);
+    expect(modelIds(await catalog.listModels())).toEqual([
+      "fake-provider/fake-model",
+    ]);
+  }, 60_000);
+
   it("serves models added after the child started without respawning it", async () => {
     const paths = setUpFakeCatalog({});
 
