@@ -240,6 +240,8 @@ function systemMessageTitleSegments(
             verbSegment("result"),
           ]
         : SYSTEM_MESSAGE_FALLBACK_SEGMENTS;
+    case "turn-continuation":
+      return [verbSegment("Continued in new directory")];
     case "unlabeled":
       return SYSTEM_MESSAGE_FALLBACK_SEGMENTS;
   }
@@ -327,6 +329,8 @@ function systemMessageIconName(systemMessageKind: SystemMessageKind): IconName {
       return "ListTodo";
     case "tool-result-delivered":
       return "Toolbox";
+    case "turn-continuation":
+      return "FolderOpen";
     case "unlabeled":
       return "Info";
   }
@@ -408,7 +412,8 @@ function systemMessageIsTitleOnly(
   }
   return (
     systemMessageKind === "ownership-assigned" ||
-    systemMessageKind === "ownership-removed"
+    systemMessageKind === "ownership-removed" ||
+    systemMessageKind === "turn-continuation"
   );
 }
 

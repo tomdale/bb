@@ -972,7 +972,7 @@ describe("core environment orchestration", () => {
           currentEnvironment: current,
           thread: { ...fixture.thread, environmentId: currentId },
           turnId: "turn_directory",
-          input: { path: "/tmp/same-project-worktree" },
+          input: { path: "/tmp/same-project-worktree", continue: false },
         },
       );
       expect(result.success).toBe(true);

@@ -1,6 +1,7 @@
 import {
   promptInputSchema,
   queuedMessageWaitingOnSchema,
+  queuedMessageSystemNoticeSchema,
   threadQueuedMessageSchema,
 } from "@bb/domain";
 import type {
@@ -156,6 +157,16 @@ function toQueuedMessagePayload(
   };
 }
 
+export function isVisibleThreadQueuedMessage(
+  row: Pick<StoredQueuedThreadMessageRow, "systemNotice">,
+): boolean {
+  return (
+    row.systemNotice === null ||
+    queuedMessageSystemNoticeSchema.parse(JSON.parse(row.systemNotice)).kind !==
+      "turn-continuation"
+  );
+}
+
 export function toThreadQueuedMessage(
   row: StoredQueuedThreadMessageRow,
 ): ThreadQueuedMessage {
@@ -186,7 +197,10 @@ export function toThreadQueuedMessage(
     payload: toQueuedMessagePayload(row),
     // An `inline` draft stops being editable the moment the drain claims it:
     // the row is on its way to a provider and a rewrite would be lost.
-    editable: row.payloadKind === "inline" && row.claimedAt === null,
+    editable:
+      row.payloadKind === "inline" &&
+      row.systemNotice === null &&
+      row.claimedAt === null,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   });

@@ -16,6 +16,7 @@ import {
   sql,
 } from "drizzle-orm";
 import {
+  deleteQueuedSystemNoticesInTransaction,
   deleteThread,
   environments,
   events,
@@ -580,6 +581,16 @@ function markThreadStoppingWithEventInTransaction(
     return false;
   }
   deps.hub.notifyThread(args.threadId, ["status-changed"]);
+  if (
+    args.reason === "manual-stop" &&
+    deleteQueuedSystemNoticesInTransaction(
+      deps.db,
+      args.threadId,
+      "turn-continuation",
+    ) > 0
+  ) {
+    deps.hub.notifyThread(args.threadId, ["queue-changed"]);
+  }
   appendThreadInterruptedEventInTransaction(deps.db, {
     threadId: args.threadId,
     reason: args.reason,
@@ -1525,6 +1536,7 @@ export function requestThreadStopForCurrentState(
   thread: RequestThreadStopForCurrentStateThread,
   environment: RequestThreadStopForCurrentStateEnvironment | null,
 ): void {
+  cancelDirectoryContinuation(deps, thread.id);
   if (hasLiveThreadRuntime(deps, thread)) {
     if (environment === null) {
       return;
@@ -1547,12 +1559,25 @@ export function requestThreadStopForCurrentState(
   }
 }
 
+function cancelDirectoryContinuation(
+  deps: Pick<AppDeps, "db" | "hub">,
+  threadId: string,
+): void {
+  const deleted = deps.db.transaction(
+    (tx) =>
+      deleteQueuedSystemNoticesInTransaction(tx, threadId, "turn-continuation"),
+    { behavior: "immediate" },
+  );
+  if (deleted > 0) deps.hub.notifyThread(threadId, ["queue-changed"]);
+}
+
 export async function stopThreadForCurrentState(
   deps: RequestThreadStopForCurrentStateDeps,
   thread: RequestThreadStopForCurrentStateThread,
   environment: RequestThreadStopForCurrentStateEnvironment | null,
   options?: { requireStopped: true },
 ): Promise<void> {
+  cancelDirectoryContinuation(deps, thread.id);
   await revokeThreadDesktopBrowserControl(deps, thread.id);
   const failure = await threadStopRequestDeduper.run(thread.id, () =>
     stopThreadUntilSettled(deps, thread.id, environment),

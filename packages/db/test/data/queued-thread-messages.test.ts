@@ -12,6 +12,7 @@ import {
   getQueuedThreadMessage,
   listIdleThreadsWithQueuedMessages,
   listQueuedThreadMessages,
+  listQueuedThreadMessageCountsByThreadIds,
   releaseQueuedMessageClaim,
   releaseStaleQueuedMessageClaims,
   reorderQueuedThreadMessage,
@@ -130,6 +131,130 @@ describe("queued thread messages", () => {
       serviceTier: before?.serviceTier,
       sortKey: before?.sortKey,
     });
+  });
+
+  it("groups the visible prefix behind a hidden continuation without consuming it", () => {
+    const { db, thread } = setup();
+    const messages = [true, false, false].map((hidden) =>
+      createQueuedThreadMessage(db, noopNotifier, {
+        threadId: thread.id,
+        content: defaultInput,
+        model: "gpt-5",
+        reasoningLevel: "medium",
+        permissionMode: "full",
+        serviceTier: "default",
+        waitingOn: { kind: "thread-busy" },
+        sendAt: null,
+        payload: { kind: "inline" },
+        systemNotice: hidden
+          ? { kind: "turn-continuation", subject: null }
+          : null,
+      }),
+    );
+    const result = setQueuedThreadMessageGroupBoundary({
+      db,
+      notifier: noopNotifier,
+      threadId: thread.id,
+      expectedGroupedPrefixQueuedMessageIds: [messages[1].id, messages[2].id],
+      groupBoundaryQueuedMessageId: messages[2].id,
+    });
+    expect(result.kind).toBe("updated");
+    expect(
+      listQueuedThreadMessages(db, thread.id).map((row) => row.groupWithNext),
+    ).toEqual([false, true, false]);
+    expect(
+      claimNextQueuedThreadMessageGroup(
+        db,
+        noopNotifier,
+        thread.id,
+        () => true,
+      )?.map((row) => row.id),
+    ).toEqual([messages[0].id]);
+    expect(
+      claimNextQueuedThreadMessageGroup(
+        db,
+        noopNotifier,
+        thread.id,
+        () => true,
+      )?.map((row) => row.id),
+    ).toEqual([messages[1].id, messages[2].id]);
+  });
+
+  it("clears visible grouping when a reorder inserts an unrelated message behind a hidden row", () => {
+    const { db, thread } = setup();
+    const messages = [true, false, false, false].map((hidden) => createQueuedThreadMessage(db, noopNotifier, {
+      threadId: thread.id, content: defaultInput, model: "gpt-5", reasoningLevel: "medium", permissionMode: "full", serviceTier: "default", waitingOn: { kind: "thread-busy" }, sendAt: null, payload: { kind: "inline" }, systemNotice: hidden ? { kind: "turn-continuation", subject: null } : null,
+    }));
+    expect(setQueuedThreadMessageGroupBoundary({ db, notifier: noopNotifier, threadId: thread.id, expectedGroupedPrefixQueuedMessageIds: [messages[1].id, messages[2].id], groupBoundaryQueuedMessageId: messages[2].id }).kind).toBe("updated");
+    expect(reorderQueuedThreadMessage({ db, notifier: noopNotifier, threadId: thread.id, queuedMessageId: messages[3].id, previousQueuedMessageId: messages[1].id, nextQueuedMessageId: messages[2].id }).kind).toBe("reordered");
+    expect(listQueuedThreadMessages(db, thread.id).map((row) => ({ id: row.id, grouped: row.groupWithNext }))).toEqual([messages[0], messages[1], messages[3], messages[2]].map((row) => ({ id: row.id, grouped: false })));
+    expect(claimNextQueuedThreadMessageGroup(db, noopNotifier, thread.id, () => true)?.map((row) => row.id)).toEqual([messages[0].id]);
+    expect(claimNextQueuedThreadMessageGroup(db, noopNotifier, thread.id, () => true)?.map((row) => row.id)).toEqual([messages[1].id]);
+  });
+
+  it("hides only directory continuations from visible queue lists and counts", () => {
+    const { db, thread } = setup();
+    const messages = [
+      null,
+      { kind: "turn-continuation" as const, subject: null },
+      { kind: "unlabeled" as const, subject: null },
+    ].map((systemNotice) =>
+      createQueuedThreadMessage(db, noopNotifier, {
+        threadId: thread.id,
+        content: defaultInput,
+        model: "gpt-5",
+        reasoningLevel: "medium",
+        permissionMode: "full",
+        serviceTier: "default",
+        waitingOn: { kind: "thread-busy" },
+        sendAt: null,
+        payload: { kind: "inline" },
+        systemNotice,
+      }),
+    );
+    expect(listQueuedThreadMessages(db, thread.id)).toHaveLength(3);
+    expect(
+      listQueuedThreadMessages(db, thread.id, { visibleOnly: true }).map(
+        (row) => row.id,
+      ),
+    ).toEqual([messages[0].id, messages[2].id]);
+    expect(
+      listQueuedThreadMessageCountsByThreadIds(db, {
+        threadIds: [thread.id],
+        visibleOnly: true,
+      }),
+    ).toMatchObject([{ queuedMessageCount: 2 }]);
+    expect(
+      listQueuedThreadMessageCountsByThreadIds(db, { threadIds: [thread.id] }),
+    ).toMatchObject([{ queuedMessageCount: 3 }]);
+  });
+
+  it("refuses to edit a system notice even when it is unclaimed", () => {
+    const { db, thread } = setup();
+    const continuation = createQueuedThreadMessage(db, noopNotifier, {
+      threadId: thread.id,
+      content: textInput("continue in the new directory"),
+      model: "gpt-5",
+      reasoningLevel: "medium",
+      permissionMode: "full",
+      serviceTier: "default",
+      waitingOn: { kind: "thread-busy" },
+      sendAt: null,
+      payload: { kind: "inline" },
+      systemNotice: { kind: "turn-continuation", subject: null },
+    });
+
+    expect(
+      updateQueuedThreadMessage(db, noopNotifier, {
+        content: textInput("replace it"),
+        expectedUpdatedAt: continuation.updatedAt,
+        id: continuation.id,
+        threadId: thread.id,
+      }),
+    ).toEqual({ kind: "not_editable" });
+    expect(getQueuedThreadMessage(db, continuation.id)?.content).toBe(
+      JSON.stringify(textInput("continue in the new directory")),
+    );
   });
 
   it("rejects a second update based on the same queued message version", () => {
@@ -680,7 +805,7 @@ describe("queued thread messages", () => {
     ]);
   });
 
-  it("claims the contiguous lead group together", () => {
+  it("keeps system and user rows out of each other's groups", () => {
     const { db, thread } = setup();
     const firstQueuedMessage = createQueuedThreadMessage(db, noopNotifier, {
       threadId: thread.id,
@@ -705,6 +830,30 @@ describe("queued thread messages", () => {
       sendAt: null,
       payload: { kind: "inline" },
       systemNotice: null,
+    });
+    const firstSystemMessage = createQueuedThreadMessage(db, noopNotifier, {
+      threadId: thread.id,
+      content: textInput("system message"),
+      model: "gpt-5",
+      reasoningLevel: "medium",
+      permissionMode: "full",
+      serviceTier: "default",
+      waitingOn: { kind: "thread-busy" },
+      sendAt: null,
+      payload: { kind: "inline" },
+      systemNotice: { kind: "turn-continuation", subject: null },
+    });
+    const secondSystemMessage = createQueuedThreadMessage(db, noopNotifier, {
+      threadId: thread.id,
+      content: textInput("another system notice"),
+      model: "gpt-5",
+      reasoningLevel: "medium",
+      permissionMode: "full",
+      serviceTier: "default",
+      waitingOn: { kind: "thread-busy" },
+      sendAt: null,
+      payload: { kind: "inline" },
+      systemNotice: { kind: "unlabeled", subject: null },
     });
     const thirdQueuedMessage = createQueuedThreadMessage(db, noopNotifier, {
       threadId: thread.id,
@@ -739,11 +888,21 @@ describe("queued thread messages", () => {
     expect(
       claimedQueuedMessages?.map((queuedMessage) => queuedMessage.id),
     ).toEqual([firstQueuedMessage.id, secondQueuedMessage.id]);
+    expect(firstSystemMessage.groupWithNext).toBe(false);
+    const claimedContinuation = claimNextQueuedThreadMessageGroup(
+      db,
+      noopNotifier,
+      thread.id,
+      () => true,
+    );
+    expect(claimedContinuation?.map((row) => row.id)).toEqual([
+      firstSystemMessage.id,
+    ]);
     expect(
       listQueuedThreadMessages(db, thread.id).map(
         (queuedMessage) => queuedMessage.id,
       ),
-    ).toEqual([thirdQueuedMessage.id]);
+    ).toEqual([secondSystemMessage.id, thirdQueuedMessage.id]);
   });
 
   it("pauses ordinary turn-end rows without pausing system notices", () => {
@@ -1400,6 +1559,55 @@ describe("queued thread messages", () => {
       { id: secondQueuedMessage.id, groupWithNext: false },
     ]);
   });
+
+  it.each(["system-first", "user-first", "both-system"])(
+    "rejects system notice grouping with %s provenance",
+    (order) => {
+      const { db, thread } = setup();
+      const messages = [0, 1].map((index) =>
+        createQueuedThreadMessage(db, noopNotifier, {
+          threadId: thread.id,
+          content: index === 0 ? defaultInput : altInput,
+          model: "gpt-5",
+          reasoningLevel: "medium",
+          permissionMode: "full",
+          serviceTier: "default",
+          waitingOn: null,
+          sendAt: null,
+          payload: { kind: "inline" },
+          systemNotice:
+            order === "both-system" ||
+            (order === "system-first" ? index === 0 : index === 1)
+              ? { kind: "turn-continuation", subject: null }
+              : null,
+        }),
+      );
+      const result = setQueuedThreadMessageGroupBoundary({
+        db,
+        notifier: noopNotifier,
+        threadId: thread.id,
+        expectedGroupedPrefixQueuedMessageIds: messages.map((row) => row.id),
+        groupBoundaryQueuedMessageId: messages[1].id,
+      });
+      expect(result.kind).toBe("invalid_execution_options");
+      expect(
+        listQueuedThreadMessages(db, thread.id).every(
+          (row) => !row.groupWithNext,
+        ),
+      ).toBe(true);
+      expect(
+        claimNextQueuedThreadMessageGroup(
+          db,
+          noopNotifier,
+          thread.id,
+          () => true,
+        )?.map((row) => row.id),
+      ).toEqual([messages[0].id]);
+      expect(
+        listQueuedThreadMessages(db, thread.id).map((row) => row.id),
+      ).toEqual([messages[1].id]);
+    },
+  );
 
   it("rejects grouped prefixes that mix execution options", () => {
     const { db, thread } = setup();

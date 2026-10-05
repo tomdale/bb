@@ -81,6 +81,34 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+function renderDirectoryContinuation(text: string) {
+  const { wrapper } = createQueryClientTestHarness();
+  return render(
+    <MemoryRouter>
+      <RouteNavigationProvider>
+        <ConversationMessageContent
+          role="user"
+          initiator="system"
+          originKind={null}
+          senderThreadId={null}
+          senderThreadTitle={null}
+          senderIsPluginSideChat={false}
+          systemMessageKind="turn-continuation"
+          systemMessageSubject={null}
+          attachments={null}
+          mentions={[]}
+          text={text}
+          turnRequest={{ kind: "message", status: "accepted" }}
+          threadId="thr_directory"
+          workspaceRootPath="/workspace"
+          projectId="proj_demo"
+        />
+      </RouteNavigationProvider>
+    </MemoryRouter>,
+    { wrapper },
+  );
+}
+
 describe("GeneratedConversationMessage images", () => {
   it("routes images in generated system messages through the current thread", () => {
     renderChildCompleted("![report](reports/result.png)");
@@ -615,6 +643,19 @@ describe("GeneratedConversationMessage markdown body", () => {
 });
 
 describe("GeneratedConversationMessage markdown body (system)", () => {
+  it("labels an automatic directory continuation as system work", () => {
+    renderDirectoryContinuation(
+      "Continue the current task in the updated working directory.",
+    );
+
+    expect(screen.getByText("Continued in new directory")).toBeTruthy();
+    expect(
+      screen.queryByText(
+        "Continue the current task in the updated working directory.",
+      ),
+    ).toBeNull();
+  });
+
   it("keeps the continuation width stable when it makes the preview overflow", () => {
     const notifyResize = mockContinuationSensitiveOverflow();
     renderChildCompleted();
