@@ -12,7 +12,9 @@ import { fileURLToPath } from "node:url";
 import { resolvePackagedAppBinary } from "./packaged-app-paths.mjs";
 import {
   PERSONAL_PROFILE,
-  buildPersonalDeployEnv,
+  buildAppLaunchEnv,
+  buildDeployToolEnv,
+  bundledBbCliPath,
   deployUsage,
   findBusyThreads,
   parseDeployArguments,
@@ -59,25 +61,31 @@ function run(command, args, options = {}) {
   }
 }
 
-function bbCli() {
-  return process.env.BB_CLI?.trim() ? process.env.BB_CLI : "bb";
+function cleanEnv() {
+  return buildDeployToolEnv(process.env);
 }
 
-function cleanEnv() {
-  return buildPersonalDeployEnv(process.env);
+function runBb(args, options) {
+  return spawnSync(
+    process.execPath,
+    [bundledBbCliPath(resolveDeployPaths().appPath), ...args],
+    { encoding: "utf8", env: cleanEnv(), ...options },
+  );
+}
+
+function launchdValue(name) {
+  const result = spawnSync("/bin/launchctl", ["getenv", name], {
+    encoding: "utf8",
+  });
+  const value = result.status === 0 ? result.stdout.trim() : "";
+  return value.length > 0 ? value : null;
 }
 
 function listThreads() {
-  const result = spawnSync(
-    bbCli(),
-    ["thread", "list", "--json", "--include-hidden"],
-    {
-      encoding: "utf8",
-      env: cleanEnv(),
-      maxBuffer: 256 * 1024 * 1024,
-      timeout: 30_000,
-    },
-  );
+  const result = runBb(["thread", "list", "--json", "--include-hidden"], {
+    maxBuffer: 256 * 1024 * 1024,
+    timeout: 30_000,
+  });
   if (result.status !== 0) {
     return {
       ok: false,
@@ -202,7 +210,9 @@ function createRestartEffects(config) {
       log(`opening ${config.appPath}`);
       const result = spawnSync("/usr/bin/open", [config.appPath], {
         encoding: "utf8",
-        env: cleanEnv(),
+        env: buildAppLaunchEnv(process.env, {
+          sshAuthSock: launchdValue("SSH_AUTH_SOCK"),
+        }),
       });
       if (result.status !== 0) {
         log(`open failed: ${result.stderr.trim()}`);
@@ -242,10 +252,9 @@ function report(config, result) {
   if (config.reportThreadId === null) return;
   const messagePath = join(config.stateDir, "report-message.md");
   writeFileSync(messagePath, `${summary}\n\n${details}\n`);
-  const told = spawnSync(
-    bbCli(),
+  const told = runBb(
     ["thread", "tell", config.reportThreadId, "--message-file", messagePath],
-    { encoding: "utf8", env: cleanEnv(), timeout: 60_000 },
+    { timeout: 60_000 },
   );
   log(
     told.status === 0

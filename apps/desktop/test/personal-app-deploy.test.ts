@@ -10,7 +10,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  buildPersonalDeployEnv,
+  APP_LAUNCH_PATH,
+  buildAppLaunchEnv,
+  buildDeployToolEnv,
+  bundledBbCliPath,
   findBusyThreads,
   parseDeployArguments,
   parseProcessTable,
@@ -48,22 +51,67 @@ function bundleMarker(path: string) {
   return readFileSync(join(path, "Contents", "marker"), "utf8");
 }
 
-it("relaunches independently of the calling agent session", () => {
-  const sourceEnv = {
-    PATH: "/tools/bin",
-    OPENAI_API_KEY: "test-provider-key",
-    BB_THREAD_ID: "thr_deploy",
-    BB_PROJECT_ID: "proj_deploy",
-    BB_ENVIRONMENT_ID: "env_deploy",
-    BB_THREAD_STORAGE: "/thread-storage",
-    ELECTRON_RUN_AS_NODE: "1",
-    PI_BB_TOOLS_FILE: "/previous-session/tools.json",
-  };
-  expect(buildPersonalDeployEnv(sourceEnv)).toEqual({
-    PATH: "/tools/bin",
-    OPENAI_API_KEY: "test-provider-key",
+const agentSessionEnv = {
+  HOME: "/Users/u",
+  USER: "u",
+  LOGNAME: "u",
+  SHELL: "/bin/zsh",
+  TMPDIR: "/var/folders/t/",
+  LANG: "en_US.UTF-8",
+  LC_CTYPE: "UTF-8",
+  __CF_USER_TEXT_ENCODING: "0x1F5:0x0:0x0",
+  PATH: "/Users/u/Code/bb/node_modules/.bin:/tools/bin",
+  SSH_AUTH_SOCK: "/thread/agent.sock",
+  AI_GATEWAY_API_KEY: "test-gateway-key",
+  BB_THREAD_ID: "thr_deploy",
+  BB_SERVER_URL: "http://127.0.0.1:38886",
+  BB_CLI: "/Applications/bb Personal.app/bb",
+  BB_DESKTOP_BUILD_PROFILE: "lab",
+  ELECTRON_RUN_AS_NODE: "1",
+  PI_BB_TOOLS_FILE: "/previous-session/tools.json",
+  PI_SESSION_FILE: "/sessions/pi_deploy.jsonl",
+};
+
+describe("environments", () => {
+  it("launches the app with only what a Finder launch provides", () => {
+    expect(
+      buildAppLaunchEnv(agentSessionEnv, {
+        sshAuthSock: "/private/tmp/com.apple.launchd.x/Listeners",
+      }),
+    ).toEqual({
+      HOME: "/Users/u",
+      USER: "u",
+      LOGNAME: "u",
+      SHELL: "/bin/zsh",
+      TMPDIR: "/var/folders/t/",
+      LANG: "en_US.UTF-8",
+      LC_CTYPE: "UTF-8",
+      __CF_USER_TEXT_ENCODING: "0x1F5:0x0:0x0",
+      PATH: APP_LAUNCH_PATH,
+      SSH_AUTH_SOCK: "/private/tmp/com.apple.launchd.x/Listeners",
+    });
+    expect(buildAppLaunchEnv(agentSessionEnv)).not.toHaveProperty(
+      "SSH_AUTH_SOCK",
+    );
   });
-  expect(sourceEnv.PI_BB_TOOLS_FILE).toBe("/previous-session/tools.json");
+
+  it("drops bb and Pi session state from the deploy tool's own commands", () => {
+    const env = buildDeployToolEnv(agentSessionEnv);
+    expect(Object.keys(env).filter((key) => /^(BB_|PI_)/u.test(key))).toEqual(
+      [],
+    );
+    expect(env).not.toHaveProperty("ELECTRON_RUN_AS_NODE");
+    expect(env.PATH).toBe(agentSessionEnv.PATH);
+    expect(agentSessionEnv.PI_BB_TOOLS_FILE).toBe(
+      "/previous-session/tools.json",
+    );
+  });
+
+  it("runs the bb CLI bundled with the installed app", () => {
+    expect(bundledBbCliPath("/Applications/bb Personal.app")).toBe(
+      "/Applications/bb Personal.app/Contents/Resources/app.asar.unpacked/node_modules/bb-app/host-daemon/dist/bb",
+    );
+  });
 });
 
 describe("deploy arguments", () => {

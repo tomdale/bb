@@ -10,17 +10,40 @@ export const BUSY_THREAD_STATUSES = new Set(["starting", "active", "stopping"]);
 
 const DEFAULT_WAIT_TIMEOUT_MINUTES = 60;
 
-export function buildPersonalDeployEnv(sourceEnv) {
-  const env = { ...sourceEnv };
-  for (const key of [
-    "BB_THREAD_ID",
-    "BB_PROJECT_ID",
-    "BB_ENVIRONMENT_ID",
-    "BB_THREAD_STORAGE",
-    "ELECTRON_RUN_AS_NODE",
-    "PI_BB_TOOLS_FILE",
-  ]) {
-    delete env[key];
+const AGENT_SCOPED_ENV = /^(?:BB_|PI_)/u;
+
+const APP_LAUNCH_ENV_KEYS = [
+  "HOME",
+  "USER",
+  "LOGNAME",
+  "SHELL",
+  "TMPDIR",
+  "LANG",
+  "__CF_USER_TEXT_ENCODING",
+];
+
+export const APP_LAUNCH_PATH = "/usr/bin:/bin:/usr/sbin:/sbin";
+
+export function buildDeployToolEnv(sourceEnv) {
+  return Object.fromEntries(
+    Object.entries(sourceEnv).filter(
+      ([key]) => !AGENT_SCOPED_ENV.test(key) && key !== "ELECTRON_RUN_AS_NODE",
+    ),
+  );
+}
+
+export function buildAppLaunchEnv(sourceEnv, { sshAuthSock = null } = {}) {
+  const env = { PATH: APP_LAUNCH_PATH };
+  for (const [key, value] of Object.entries(sourceEnv)) {
+    if (
+      value !== undefined &&
+      (APP_LAUNCH_ENV_KEYS.includes(key) || key.startsWith("LC_"))
+    ) {
+      env[key] = value;
+    }
+  }
+  if (sshAuthSock !== null) {
+    env.SSH_AUTH_SOCK = sshAuthSock;
   }
   return env;
 }
@@ -30,8 +53,9 @@ const USAGE = `Usage: deploy-personal-app [options]
 Builds bb Personal from this checkout while the installed app keeps running,
 then hands the restart to a detached process that waits until no thread is
 starting, running, or stopping, quits the app through its normal shutdown,
-replaces /Applications/bb Personal.app, relaunches it, and rolls back to the
-previous app if the new one does not answer /health.
+replaces /Applications/bb Personal.app, relaunches it with the environment a
+Finder launch gets, and rolls back to the previous app if the new one does not
+answer /health.
 
 Options:
   --skip-build            Deploy the existing release/personal artifact
@@ -117,6 +141,20 @@ export function parseDeployArguments(argv) {
     }
   }
   return options;
+}
+
+export function bundledBbCliPath(appPath) {
+  return join(
+    appPath,
+    "Contents",
+    "Resources",
+    "app.asar.unpacked",
+    "node_modules",
+    "bb-app",
+    "host-daemon",
+    "dist",
+    "bb",
+  );
 }
 
 export function resolveDeployPaths({

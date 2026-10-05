@@ -243,8 +243,11 @@ a thread inside the running Personal app. The build and smoke run while the app
 keeps serving. The restart is handed to a detached process that waits until no
 thread is starting, active, or stopping (hidden threads included), sends the app
 SIGTERM so it saves its windows and stops its server and host daemon as on a
-normal quit, replaces the bundle, relaunches it with `open`, and waits for a new
-`launchId` from `/health`. If the new build does not answer within three
+normal quit, replaces the bundle, relaunches it with `open` and only the
+environment a Finder launch gets (home, user, shell, locale, the system `PATH`,
+and launchd's `SSH_AUTH_SOCK`), and waits for a new `launchId` from `/health`.
+The calling thread's `BB_*`, `PI_*`, provider keys, and `node_modules/.bin`
+path entries never reach the relaunched app or its agents. If the new build does not answer within three
 minutes, it restores the previous bundle and relaunches that. Options:
 `--skip-build` deploys the existing artifact, `--skip-smoke` skips the smoke,
 `--restart-only` restarts the installed app without replacing it, `--force`

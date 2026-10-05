@@ -83,9 +83,15 @@ export const PERSONAL_PROFILE: {
   serverBindHost: string;
 };
 export const BUSY_THREAD_STATUSES: ReadonlySet<string>;
-export function buildPersonalDeployEnv(
+export const APP_LAUNCH_PATH: string;
+export function buildDeployToolEnv(
   sourceEnv: Record<string, string | undefined>,
 ): Record<string, string | undefined>;
+export function buildAppLaunchEnv(
+  sourceEnv: Record<string, string | undefined>,
+  options?: { sshAuthSock?: string | null },
+): Record<string, string>;
+export function bundledBbCliPath(appPath: string): string;
 export function deployUsage(): string;
 export function parseDeployArguments(argv: readonly string[]): DeployOptions;
 export function resolveDeployPaths(args?: {
