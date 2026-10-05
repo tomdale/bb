@@ -2,6 +2,7 @@ import { sleep, waitForChildExit } from "./child-process-helpers.mjs";
 import { appendOutput, formatProcessOutput } from "./smoke-output.mjs";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
+import { createServer as createTcpServer } from "node:net";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
