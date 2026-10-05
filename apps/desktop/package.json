@@ -18,6 +18,7 @@
     "desktop:version-feed": "tsx scripts/generate-version-feed.mts",
     "dev": "pnpm run prepare-runtime && pnpm run build && node --conditions=source --import tsx scripts/run-electron-dev.mjs",
     "package": "pnpm run prepare-runtime && pnpm run build && node scripts/run-electron-builder.mjs --mac --dir --arm64",
+    "deploy:personal": "node scripts/deploy-personal-app.mjs",
     "package:personal": "BB_DESKTOP_BUILD_PROFILE=personal pnpm exec turbo run build --filter=@bb/desktop && BB_DESKTOP_BUILD_PROFILE=personal node scripts/run-electron-builder.mjs --mac --dir --arm64",
     "package:lab": "BB_DESKTOP_BUILD_PROFILE=lab pnpm exec turbo run build --filter=@bb/desktop && BB_DESKTOP_BUILD_PROFILE=lab node scripts/run-electron-builder.mjs --mac --dir --arm64",
     "package:linux": "pnpm run prepare-runtime && pnpm run build && node scripts/run-electron-builder.mjs --linux --dir --x64",

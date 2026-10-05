@@ -122,6 +122,10 @@ Electron data/preferences. Both disable desktop updates. Lab ignores inherited
 runtime/server/host identity and CLI targets and accepts only documented
 `BB_LAB_*` directory and port overrides; see `docs/configuration.md`.
 
+`pnpm --filter @bb/desktop run deploy:personal` rebuilds and smokes Personal,
+then restarts the installed app into the new build once no thread is busy,
+rolling back if it does not come up; see `docs/configuration.md`.
+
 The `smoke:packaged:personal` and `smoke:packaged:lab` tasks exercise the
 packaged Electron attach/preload path against a synthetic compatible HTTP
 server and disposable preference/data directories; they do not start the

@@ -237,6 +237,25 @@ rebuilding and packaging this checkout. Artifacts go to
 with `pnpm exec turbo run smoke:packaged:personal --filter=@bb/desktop` and
 `pnpm exec turbo run smoke:packaged:lab --filter=@bb/desktop`.
 
+`pnpm --filter @bb/desktop run deploy:personal` rebuilds Personal, smokes it,
+and installs it over `/Applications/bb Personal.app`, and is safe to run from
+a thread inside the running Personal app. The build and smoke run while the app
+keeps serving. The restart is handed to a detached process that waits until no
+thread is starting, active, or stopping (hidden threads included), sends the app
+SIGTERM so it saves its windows and stops its server and host daemon as on a
+normal quit, replaces the bundle, relaunches it with `open`, and waits for a new
+`launchId` from `/health`. If the new build does not answer within three
+minutes, it restores the previous bundle and relaunches that. Options:
+`--skip-build` deploys the existing artifact, `--skip-smoke` skips the smoke,
+`--restart-only` restarts the installed app without replacing it, `--force`
+restarts without waiting for threads, `--wait-timeout <minutes>` (default 60)
+bounds the wait, after which the restart is abandoned and the staged build is
+kept, and `--report-thread <id>` sends the outcome to a thread once the app is
+back, which resumes an agent that started the deploy. `--dry-run` prints the
+plan. State, logs, the staged build, and the previous bundle live under
+`${XDG_STATE_HOME:-~/.local/state}/bb-personal-deploy/`; `last-deploy.json`
+records the latest outcome.
+
 ## Common Keys
 
 | Key                            | Command                                            | When to set             | Used for                                                                                                                                                                                                                                                                                                                                                                                                       |

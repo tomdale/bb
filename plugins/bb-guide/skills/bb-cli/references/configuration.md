@@ -33,6 +33,12 @@ Build the checkout's private macOS desktop variants with
 artifacts under `apps/desktop/release/<profile>/`. See `docs/configuration.md`
 for path and port safety.
 
+To update the installed Personal app from a thread running inside it, run
+`pnpm --filter @bb/desktop run deploy:personal --report-thread "$BB_THREAD_ID"`
+from the checkout and end the turn: the restart waits for every busy thread,
+including the caller, and the outcome arrives as a message once the app is
+back. `--dry-run` shows what would happen first.
+
 ## App settings
 
 - Read `references/app-settings.md` for every general key, experiment, default,
