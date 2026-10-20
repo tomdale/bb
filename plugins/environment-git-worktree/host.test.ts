@@ -55,6 +55,8 @@ async function createSourceRepository(repositoryName = "repo"): Promise<{
   await mkdir(sourcePath, { recursive: true });
   await mkdir(dataDir, { recursive: true });
   await git(sourcePath, "init", "--initial-branch=main");
+  await git(sourcePath, "config", "commit.gpgSign", "false");
+  await git(sourcePath, "config", "tag.gpgSign", "false");
   await writeFile(join(sourcePath, "README.md"), "hello\n");
   await git(sourcePath, "add", ".");
   await git(sourcePath, "commit", "-m", "initial");
@@ -74,6 +76,8 @@ async function createDetachedSingleBranchRepository(): Promise<{
   await mkdir(originPath, { recursive: true });
   await mkdir(dataDir, { recursive: true });
   await git(originPath, "init", "--initial-branch=main");
+  await git(originPath, "config", "commit.gpgSign", "false");
+  await git(originPath, "config", "tag.gpgSign", "false");
   await writeFile(join(originPath, "README.md"), "hello\n");
   await git(originPath, "add", ".");
   await git(originPath, "commit", "-m", "initial");

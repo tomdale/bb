@@ -337,6 +337,8 @@ describe("plugin update service and routes", () => {
     await git(repo, ["init", "-q", "-b", "main"]);
     await git(repo, ["config", "user.email", "test@example.com"]);
     await git(repo, ["config", "user.name", "Test"]);
+    await git(repo, ["config", "commit.gpgSign", "false"]);
+    await git(repo, ["config", "tag.gpgSign", "false"]);
     await commitPlugin(repo, "1.0.0");
     afterArtifactPromoted = undefined;
     materializationCount = 0;
@@ -1338,6 +1340,8 @@ describe("plugin update service and routes", () => {
     await git(tagged, ["init", "-q", "-b", "main"]);
     await git(tagged, ["config", "user.email", "test@example.com"]);
     await git(tagged, ["config", "user.name", "Test"]);
+    await git(tagged, ["config", "commit.gpgSign", "false"]);
+    await git(tagged, ["config", "tag.gpgSign", "false"]);
     await writeFile(
       join(tagged, "package.json"),
       JSON.stringify({
