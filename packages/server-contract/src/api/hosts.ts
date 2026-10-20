@@ -31,8 +31,26 @@ export const hostDirectoryListingSchema = z.object({
   directory: z.string(),
   parent: z.string().nullable(),
   entries: z.array(hostDirectoryEntrySchema),
+  roots: z.array(z.string()),
 });
 export type HostDirectoryListing = z.infer<typeof hostDirectoryListingSchema>;
+
+export const hostDiscoveredRepoSchema = z.object({
+  path: z.string().min(1),
+  name: z.string().min(1),
+  lastActivityAt: z.string().datetime(),
+  originUrl: z.string().min(1).nullable(),
+  projectId: z.string().min(1).nullable(),
+});
+export type HostDiscoveredRepo = z.infer<typeof hostDiscoveredRepoSchema>;
+
+export const hostDiscoveredReposResponseSchema = z.object({
+  repos: z.array(hostDiscoveredRepoSchema),
+  truncated: z.boolean(),
+});
+export type HostDiscoveredReposResponse = z.infer<
+  typeof hostDiscoveredReposResponseSchema
+>;
 
 export const hostCloneDefaultPathQuerySchema = z.object({
   projectId: z.string().min(1),

@@ -1,17 +1,27 @@
-import { useLayoutEffect, useState, type RefObject } from "react";
+import {
+  useLayoutEffect,
+  useState,
+  type MouseEvent,
+  type RefObject,
+} from "react";
 import { cn } from "@bb/shared-ui/lib/utils";
+import { useBottomAnchoredScroll } from "@/components/ui/bottom-anchored-scroll-body";
 
 interface UseOverflowMeasurementArgs {
   elementRef: RefObject<HTMLElement | null>;
   enabled: boolean;
+  axis: "horizontal" | "vertical";
   measurementKey: string;
 }
 
 type OverflowMeasurement = "unmeasured" | "fits" | "overflowing";
 
-type OverflowMeasurementListener = (
-  measurement: Exclude<OverflowMeasurement, "unmeasured">,
-) => void;
+interface OverflowAxes {
+  horizontal: boolean;
+  vertical: boolean;
+}
+
+type OverflowMeasurementListener = (measurement: OverflowAxes) => void;
 
 const overflowListenersByElement = new Map<
   HTMLElement,
@@ -19,13 +29,11 @@ const overflowListenersByElement = new Map<
 >();
 let sharedOverflowResizeObserver: ResizeObserver | null = null;
 
-function readOverflowMeasurement(
-  element: HTMLElement,
-): Exclude<OverflowMeasurement, "unmeasured"> {
-  return element.scrollHeight > element.clientHeight + 1 ||
-    element.scrollWidth > element.clientWidth + 1
-    ? "overflowing"
-    : "fits";
+function readOverflowMeasurement(element: HTMLElement): OverflowAxes {
+  return {
+    horizontal: element.scrollWidth > element.clientWidth + 1,
+    vertical: element.scrollHeight > element.clientHeight + 1,
+  };
 }
 
 function measureOverflowElements(elements: readonly HTMLElement[]): void {
@@ -94,6 +102,7 @@ interface ConversationMessageInlineOverflowToggleProps {
 export function useOverflowMeasurement({
   elementRef,
   enabled,
+  axis,
   measurementKey,
 }: UseOverflowMeasurementArgs): OverflowMeasurement {
   const [measurement, setMeasurement] =
@@ -113,7 +122,7 @@ export function useOverflowMeasurement({
 
     const applyMeasurement: OverflowMeasurementListener = (nextMeasurement) => {
       if (!element.isConnected) return;
-      setMeasurement(nextMeasurement);
+      setMeasurement(nextMeasurement[axis] ? "overflowing" : "fits");
     };
     if (typeof ResizeObserver === "undefined") {
       applyMeasurement(readOverflowMeasurement(element));
@@ -121,7 +130,7 @@ export function useOverflowMeasurement({
     }
 
     return observeOverflow(element, applyMeasurement);
-  }, [elementRef, enabled, measurementKey]);
+  }, [elementRef, enabled, axis, measurementKey]);
 
   return measurement;
 }
@@ -130,15 +139,40 @@ export function useIsOverflowing(args: UseOverflowMeasurementArgs): boolean {
   return useOverflowMeasurement(args) === "overflowing";
 }
 
+function useContentHoldingToggle(
+  expanding: boolean,
+  onToggle: () => void,
+): (event: MouseEvent<HTMLButtonElement>) => void {
+  const bottomAnchor = useBottomAnchoredScroll();
+  return (event) => {
+    const scrollArea = bottomAnchor?.getScrollElement();
+    const row = event.currentTarget.closest<HTMLElement>(
+      "[data-timeline-row-id]",
+    );
+    if (!bottomAnchor || !scrollArea || !row) {
+      onToggle();
+      return;
+    }
+    const rowTopVisible =
+      row.getBoundingClientRect().top >= scrollArea.getBoundingClientRect().top;
+    bottomAnchor.holdContentPosition({
+      edge: expanding || rowTopVisible ? "top" : "bottom",
+      element: row,
+      update: onToggle,
+    });
+  };
+}
+
 export function ConversationMessageOverflowToggle({
   expanded,
   onToggle,
 }: ConversationMessageOverflowToggleProps) {
+  const handleClick = useContentHoldingToggle(!expanded, onToggle);
   return (
     <div className="mt-1 flex justify-end">
       <button
         type="button"
-        onClick={onToggle}
+        onClick={handleClick}
         className="cursor-pointer text-xs font-medium text-muted-foreground hover:text-foreground"
         aria-expanded={expanded}
       >
@@ -154,6 +188,7 @@ export function ConversationMessageInlineOverflowToggle({
   label,
   onToggle,
 }: ConversationMessageInlineOverflowToggleProps) {
+  const handleClick = useContentHoldingToggle(true, onToggle);
   return (
     <span className="pointer-events-none absolute inset-x-0 bottom-0 flex h-[1lh] items-stretch justify-end">
       <span
@@ -164,7 +199,7 @@ export function ConversationMessageInlineOverflowToggle({
       />
       <button
         type="button"
-        onClick={onToggle}
+        onClick={handleClick}
         className={cn(
           "pointer-events-auto cursor-pointer whitespace-nowrap pl-1.5 text-xs font-medium text-muted-foreground hover:text-foreground",
           buttonBackgroundClassName,

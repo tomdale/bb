@@ -24,11 +24,7 @@ import {
   type PublicApiSchema,
 } from "@bb/server-contract";
 import type { Hono } from "hono";
-import {
-  createStandaloneBuiltinCompactCommandInput,
-  type Thread,
-  type ThreadQueuedMessage,
-} from "@bb/domain";
+import { type ThreadQueuedMessage } from "@bb/domain";
 import type { AppDeps } from "../../types.js";
 import { ApiError } from "../../errors.js";
 import {
@@ -45,16 +41,22 @@ import {
   requirePublicThread,
 } from "../../services/lib/entity-lookup.js";
 import { parseSafeRelativeRoutePath } from "../relative-route-path.js";
-import { validatePromptAttachmentReferences } from "../../services/projects/attachments.js";
+import { resolvePromptAttachmentReferences } from "../../services/projects/attachments.js";
+import {
+  compactThreadContext,
+  threadTargetHostId,
+} from "../../services/threads/dispatch-attempt.js";
 import {
   createQueuedMessageForThread,
+  holdQueuedMessageForEdit,
+  releaseQueuedMessageEditHold,
+  requestEditReleasedQueuedMessageDispatch,
   sendQueuedMessageNow,
 } from "../../services/threads/queued-messages.js";
 import {
   ensureThreadIsNotAwaitingUserInteraction,
   ensureThreadIsWritable,
   ensureThreadQueueIsWritable,
-  sendThreadMessage,
 } from "../../services/threads/thread-send.js";
 import { acceptThreadSendRequest } from "../../services/threads/thread-send-request.js";
 import { editThreadMessage } from "../../services/threads/thread-edit-message.js";
@@ -133,38 +135,6 @@ function toQueuedMessageOrderResponse(
         "Queued messages with different execution options cannot be grouped",
       );
   }
-}
-
-async function compactThreadContext(
-  deps: AppDeps,
-  thread: Thread,
-): Promise<void> {
-  ensureThreadIsWritable(thread);
-  if (!deps.providerRegistry.supportsManualCompaction(thread.providerId)) {
-    throw new ApiError(
-      409,
-      "invalid_request",
-      `Provider "${thread.providerId}" does not support manual context compaction`,
-    );
-  }
-  if (thread.status !== "idle" && thread.status !== "error") {
-    throw new ApiError(
-      409,
-      "invalid_request",
-      "Context can only be compacted while the thread is idle or errored",
-    );
-  }
-
-  const environment = await requireThreadCommandEnvironment(deps, { thread });
-  await sendThreadMessage(deps, {
-    environment,
-    payload: {
-      input: createStandaloneBuiltinCompactCommandInput(),
-      mode: "start",
-    },
-    thread,
-    trigger: "user",
-  });
 }
 
 function toQueuedMessageGroupBoundaryResponse(
@@ -329,14 +299,15 @@ export function registerThreadActionRoutes(app: Hono, deps: AppDeps): void {
   patch(routes.updateQueuedMessage, async (context, payload) => {
     const thread = requirePublicThread(deps.db, context.req.param("id"));
     ensureThreadQueueIsWritable(thread);
-    await validatePromptAttachmentReferences({
+    const input = await resolvePromptAttachmentReferences({
       db: deps.db,
       dataDir: deps.config.dataDir,
       input: payload.input,
       projectId: thread.projectId,
+      hostId: threadTargetHostId(deps, thread),
     });
     const result = updateQueuedThreadMessage(deps.db, deps.hub, {
-      content: payload.input,
+      content: input,
       expectedUpdatedAt: payload.expectedUpdatedAt,
       id: context.req.param("queuedMessageId"),
       threadId: thread.id,
@@ -365,7 +336,33 @@ export function registerThreadActionRoutes(app: Hono, deps: AppDeps): void {
         "Queued message changed since editing began",
       );
     }
+    if (result.releasedEditHold) {
+      requestEditReleasedQueuedMessageDispatch(deps, {
+        queuedMessageId: result.queuedMessage.id,
+        threadId: thread.id,
+      });
+    }
     return context.json(toThreadQueuedMessage(result.queuedMessage));
+  });
+
+  post(routes.holdQueuedMessageForEdit, (context) => {
+    const thread = requirePublicThread(deps.db, context.req.param("id"));
+    ensureThreadQueueIsWritable(thread);
+    return context.json(
+      holdQueuedMessageForEdit(deps, {
+        queuedMessageId: context.req.param("queuedMessageId"),
+        threadId: thread.id,
+      }),
+    );
+  });
+
+  del(routes.releaseQueuedMessageEditHold, (context) => {
+    const thread = requirePublicThread(deps.db, context.req.param("id"));
+    releaseQueuedMessageEditHold(deps, {
+      queuedMessageId: context.req.param("queuedMessageId"),
+      threadId: thread.id,
+    });
+    return context.json({ ok: true });
   });
 
   del(routes.deleteQueuedMessage, (context) => {

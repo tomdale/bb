@@ -6,8 +6,10 @@ import {
   useMemo,
   useRef,
   useState,
+  type HTMLAttributes,
   type ReactNode,
 } from "react";
+import { HOVER_REVEAL_NO_HOVER_VISIBLE_CLASS } from "@bb/shared-ui/hover-reveal";
 import { cn } from "@bb/shared-ui/lib/utils";
 import {
   observedBorderBoxBlockSize,
@@ -29,10 +31,10 @@ interface ChevronProps {
   className?: string;
 }
 
-const COLLAPSIBLE_HEADER_COLLAPSED_TONE_CLASS = `text-muted-foreground ${CONTROL_HOVER_TRANSITION} hover:text-foreground focus-visible:text-foreground`;
+export const COLLAPSIBLE_HEADER_COLLAPSED_TONE_CLASS = `text-muted-foreground ${CONTROL_HOVER_TRANSITION} hover:text-foreground focus-visible:text-foreground`;
 const COLLAPSIBLE_HEADER_EXPANDED_TONE_CLASS = "text-foreground";
 export const COLLAPSIBLE_HEADER_STATIC_TONE_CLASS = "text-muted-foreground";
-const COLLAPSIBLE_HEADER_BUTTON_BASE_CLASS =
+export const COLLAPSIBLE_HEADER_BUTTON_BASE_CLASS =
   "inline-flex max-w-full items-center gap-1 overflow-hidden py-0.5 text-left text-sm";
 const COLLAPSIBLE_HEADER_TEXT_CLASS = "min-w-0 truncate";
 
@@ -109,14 +111,24 @@ export function CollapsibleHeader({
             ? "rotate-90"
             : forceChevronVisible
               ? "opacity-100"
-              : "opacity-0 group-hover/toggle:opacity-100 group-focus-visible/toggle:opacity-100 max-md:pointer-coarse:opacity-100",
+              : cn(
+                  "opacity-0 group-hover/toggle:opacity-100 group-focus-visible/toggle:opacity-100",
+                  HOVER_REVEAL_NO_HOVER_VISIBLE_CLASS,
+                ),
         )}
       />
     </button>
   );
 }
 
+export type ExpandablePanelIntentHandlers = Pick<
+  HTMLAttributes<HTMLDivElement>,
+  "onFocus" | "onPointerDown" | "onPointerEnter" | "onPointerLeave"
+>;
+
 interface ExpandablePanelProps {
+  animate?: boolean;
+  intentHandlers?: ExpandablePanelIntentHandlers;
   isExpanded: boolean;
   summaryContent: ReactNode;
   headerToneClass: string;
@@ -132,6 +144,7 @@ interface ExpandablePanelProps {
 }
 
 interface AnimatedExpandablePanelContentProps {
+  animate: boolean;
   collapsedContent: ReactNode;
   contentClassName?: string;
   isBodyExpanded: boolean;
@@ -139,6 +152,7 @@ interface AnimatedExpandablePanelContentProps {
 }
 
 function AnimatedExpandablePanelContent({
+  animate,
   collapsedContent,
   contentClassName,
   isBodyExpanded,
@@ -152,16 +166,17 @@ function AnimatedExpandablePanelContent({
     if (previousBodyExpandedRef.current === isBodyExpanded) return;
     previousBodyExpandedRef.current = isBodyExpanded;
     if (typeof ResizeObserver === "undefined") return;
-    toggleAnimationDeadlineRef.current =
-      performance.now() + EXPANDABLE_PANEL_TRANSITION_MS;
+    toggleAnimationDeadlineRef.current = animate
+      ? performance.now() + EXPANDABLE_PANEL_TRANSITION_MS
+      : 0;
     const region = regionRef.current;
     const target = contentRef.current;
     if (region && target) {
       const height = target.offsetHeight;
-      region.style.transitionDuration = "";
+      region.style.transitionDuration = animate ? "" : "0s";
       region.style.height = `${height}px`;
     }
-  }, [isBodyExpanded]);
+  }, [animate, isBodyExpanded]);
 
   useBrowserLayoutEffect(() => {
     const region = regionRef.current;
@@ -223,6 +238,8 @@ function AnimatedExpandablePanelContent({
 }
 
 export function ExpandablePanel({
+  animate = true,
+  intentHandlers,
   isExpanded,
   summaryContent,
   headerToneClass,
@@ -259,6 +276,7 @@ export function ExpandablePanel({
       isFirstAnimationEffectRef.current = false;
       return;
     }
+    if (!animate) return;
     setLayoutAnimationInFlightCount((c) => c + 1);
     let released = false;
     const release = () => {
@@ -271,7 +289,7 @@ export function ExpandablePanel({
       window.clearTimeout(timer);
       release();
     };
-  }, [isBodyExpanded, setLayoutAnimationInFlightCount]);
+  }, [animate, isBodyExpanded, setLayoutAnimationInFlightCount]);
 
   useBrowserLayoutEffect(() => {
     if (!deferredIsExpanded) {
@@ -284,7 +302,7 @@ export function ExpandablePanel({
     if (isExpanded) {
       return;
     }
-    if (hasCollapsedContent) {
+    if (hasCollapsedContent || !animate) {
       renderedBodyRef.current = null;
       setIsClosing(false);
       return;
@@ -298,15 +316,21 @@ export function ExpandablePanel({
       setIsClosing(false);
     }, EXPANDABLE_PANEL_TRANSITION_MS);
     return () => clearTimeout(timeout);
-  }, [hasCollapsedContent, isExpanded]);
-  const renderedBody = deferredIsExpanded
-    ? expandedBody
-    : isClosing
-      ? renderedBodyRef.current
-      : null;
+  }, [animate, hasCollapsedContent, isExpanded]);
+  const renderedBody =
+    !isExpanded && !animate
+      ? null
+      : deferredIsExpanded
+        ? expandedBody
+        : isClosing
+          ? renderedBodyRef.current
+          : null;
 
   return (
-    <div className={cn("rounded-md text-muted-foreground", className)}>
+    <div
+      className={cn("rounded-md text-muted-foreground", className)}
+      {...intentHandlers}
+    >
       {}
       <div className="group/timeline-row">
         <CollapsibleHeader
@@ -323,6 +347,7 @@ export function ExpandablePanel({
       </div>
       {hasCollapsedContent ? (
         <AnimatedExpandablePanelContent
+          animate={animate}
           collapsedContent={collapsedContent}
           contentClassName={contentClassName}
           isBodyExpanded={isBodyExpanded}
@@ -331,6 +356,7 @@ export function ExpandablePanel({
       ) : (
         <div
           aria-hidden={!isBodyExpanded}
+          style={{ transitionDuration: animate ? undefined : "0s" }}
           className={cn(
             "grid transition-[grid-template-rows,opacity] duration-200 ease-out",
             isBodyExpanded
@@ -340,6 +366,7 @@ export function ExpandablePanel({
         >
           <div className="overflow-hidden">
             <div
+              style={{ transitionDuration: animate ? undefined : "0s" }}
               className={cn(
                 "px-2 pb-1 pt-0 transition-[transform,opacity] duration-200 ease-out",
                 isBodyExpanded

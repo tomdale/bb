@@ -1,11 +1,6 @@
 #!/usr/bin/env node
 
-import {
-  existsSync,
-  mkdirSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -526,6 +521,7 @@ async function handleRequest(
           grammarVersions: [THREAD_DELTA_GRAMMAR_V3, THREAD_DELTA_GRAMMAR_V3],
           steerMode: "inject",
           skills: { configure: true },
+          commands: { list: false },
         },
       };
       sendResult(request.id, result);
@@ -866,7 +862,9 @@ async function handleThreadConstruction(
     threadId: providerThreadId,
   });
   const relocate = piSessionNeedsRelocation(sourceFile, params.cwd);
-  const nextProviderThreadId = relocate ? `pi_${randomUUID()}` : providerThreadId;
+  const nextProviderThreadId = relocate
+    ? `pi_${randomUUID()}`
+    : providerThreadId;
   const targetFile = resolvePiSessionFilePath({
     env: process.env,
     threadId: nextProviderThreadId,
@@ -955,7 +953,7 @@ function startPiPrompt(
     images.length > 0 ? images : undefined,
   );
   void dispatch.settled.then((outcome) => {
-    if (outcome === null) {
+    if (outcome === null || outcome.boundaryDelivered) {
       return;
     }
     reportPromptSettled({

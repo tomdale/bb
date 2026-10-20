@@ -9,6 +9,7 @@ import type {
   PromptInput,
   QueuedMessagePayload,
   QueuedMessagePayloadKind,
+  QueuedMessageState,
   QueuedMessageWaitingOn,
   StartedOnBehalfOf,
   StartedOnBehalfOfInitiator,
@@ -22,7 +23,6 @@ import { resolveDispatchAuthor } from "./dispatch-author.js";
 interface StoredQueuedThreadMessageRow {
   origin: ThreadCreateOrigin | null;
   originPluginId: string | null;
-  claimedAt: number | null;
   content: string;
   createdAt: number;
   failureReason: string | null;
@@ -38,6 +38,7 @@ interface StoredQueuedThreadMessageRow {
   sendAt: number | null;
   serviceTier: string;
   senderThreadId: string | null;
+  state: QueuedMessageState;
   requestedByInitiator: StartedOnBehalfOfInitiator | null;
   requestedByThreadId: string | null;
   systemNotice: string | null;
@@ -160,10 +161,13 @@ function toQueuedMessagePayload(
 export function isVisibleThreadQueuedMessage(
   row: Pick<StoredQueuedThreadMessageRow, "systemNotice">,
 ): boolean {
+  if (row.systemNotice === null) return true;
+  const notice = queuedMessageSystemNoticeSchema.parse(
+    JSON.parse(row.systemNotice),
+  );
   return (
-    row.systemNotice === null ||
-    queuedMessageSystemNoticeSchema.parse(JSON.parse(row.systemNotice)).kind !==
-      "turn-continuation"
+    notice.kind !== "turn-continuation" &&
+    notice.kind !== "environment-directory-updated"
   );
 }
 
@@ -192,6 +196,7 @@ export function toThreadQueuedMessage(
     serviceTier: row.serviceTier,
     groupWithNext: row.groupWithNext,
     sendAt: row.sendAt,
+    state: row.state,
     waitingOn: parseStoredQueuedThreadMessageWaitingOn(row),
     failureReason: row.failureReason,
     payload: toQueuedMessagePayload(row),
@@ -200,7 +205,7 @@ export function toThreadQueuedMessage(
     editable:
       row.payloadKind === "inline" &&
       row.systemNotice === null &&
-      row.claimedAt === null,
+      row.state !== "claimed",
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   });

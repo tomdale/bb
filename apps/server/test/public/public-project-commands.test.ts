@@ -71,6 +71,7 @@ interface RegisterCommandRpcArgs {
   sessionId: string;
   commands: HostProviderCommand[];
   skills?: DiscoveredSkill[];
+  liveCommands?: { name: string; description: string }[];
   resolved?: ExperimentalNativeRootsResolveAnswer;
   resolveDelayMs?: number;
 }
@@ -89,8 +90,17 @@ function registerCommandRpc(
     hostId: args.hostId,
     sessionId: args.sessionId,
     handle: (request) => {
-      if (request.command.type === "host.list_files") {
-        return { ok: true, result: { files: [], truncated: false } };
+      if (request.command.type === "host.read_workspace_agent_context") {
+        stub.skillRequests.push(request);
+        return {
+          ok: true,
+          result: {
+            agentInstructions: null,
+            projectSkills: [],
+            projectSkillsTruncated: false,
+            sharedSkills: args.skills ?? [],
+          },
+        };
       }
       if (request.command.type === "plugin.host.call") {
         if (request.command.method !== "resolveNativeRoots") {
@@ -111,6 +121,9 @@ function registerCommandRpc(
       if (request.command.type === "host.list_commands") {
         stub.requests.push(request);
         return { ok: true, result: { commands: stub.commands } };
+      }
+      if (request.command.type === "provider.list_commands") {
+        return { ok: true, result: { commands: args.liveCommands ?? [] } };
       }
       if (request.command.type === "host.list_skills") {
         stub.skillRequests.push(request);
@@ -199,17 +212,13 @@ describe("public project command typeahead route", () => {
           description: "Review code from one shared source.",
           argumentHint: null,
         });
-        expect(stub.skillRequests[0]?.command).toEqual({
-          type: "host.list_skills",
-          providerId: "bb-shared",
-          cwd: "/tmp/shared-skills",
-          nativeRoots: {
-            skills: {
-              user: [root(".agents/skills")],
-              project: [root(".agents/skills")],
-            },
-            commands: { user: [], project: [] },
-            resolved: NO_RESOLVED_ROOTS,
+        expect(stub.skillRequests[0]?.command).toMatchObject({
+          includeAgentInstructions: false,
+          type: "host.read_workspace_agent_context",
+          rootPath: "/tmp/shared-skills",
+          sharedSkillRoots: {
+            user: [root(".agents/skills")],
+            project: [root(".agents/skills")],
           },
         });
       },
@@ -783,7 +792,7 @@ describe("public project command typeahead route", () => {
     });
   });
 
-  it("lists user-home commands for the personal project", async () => {
+  it("lists user-home skills and live provider commands for the personal project", async () => {
     await withTestHarness(async (harness) => {
       const { host, session } = seedHostSession(harness.deps, {
         id: "host-commands-personal",
@@ -793,10 +802,13 @@ describe("public project command typeahead route", () => {
         hostId: host.id,
         sessionId: session.id,
         commands: [skill("home-skill", "user")],
+        liveCommands: [
+          { name: "loop", description: "Run a prompt repeatedly" },
+        ],
       });
 
       const response = await harness.app.request(
-        `/api/v1/projects/${PERSONAL_PROJECT_ID}/commands?provider=codex&environmentId=`,
+        `/api/v1/projects/${PERSONAL_PROJECT_ID}/commands?provider=claude-code&environmentId=`,
       );
 
       expect(response.status).toBe(200);
@@ -804,15 +816,16 @@ describe("public project command typeahead route", () => {
       expect(body.commands.map((command) => command.name)).toEqual([
         "clear",
         "compact",
+        "loop",
         "home-skill",
       ]);
       expect(stub.requests[0]?.command).toEqual({
         type: "host.list_commands",
-        providerId: "codex",
+        providerId: "claude-code",
         cwd: null,
         nativeRoots: declaredNativeRootSet(
           harness.deps.providerRegistry,
-          "codex",
+          "claude-code",
         ),
       });
     });

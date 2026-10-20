@@ -109,6 +109,7 @@ export function makeThreadResponse(
     originKind: null,
     originPluginId: null,
     visibility: "visible",
+    parentNotifications: "auto",
     archivedAt: null,
     pinnedAt: null,
     deletedAt: null,
@@ -119,6 +120,7 @@ export function makeThreadResponse(
     runtime: { displayStatus: "idle" },
     activeBackgroundAgentCount: 0,
     canRestoreEnvironment: false,
+    canEditMessages: true,
     canSpawnChild: true,
     queuedMessageCount: 0,
     ...overrides,
@@ -323,6 +325,7 @@ export function makeQueueEntry(
     serviceTier: "default",
     groupWithNext: false,
     sendAt: null,
+    state: "waiting",
     waitingOn: {
       kind: "plugin",
       pluginId: "test-plugin",

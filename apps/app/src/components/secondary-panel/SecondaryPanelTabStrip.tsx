@@ -41,17 +41,18 @@ import { useIsCompactViewport } from "@bb/shared-ui/hooks/use-compact-viewport";
 import {
   OverflowFade,
   type OverflowFadeTone,
-} from "@/components/ui/overflow-fade";
+} from "@bb/shared-ui/overflow-fade";
 import { TabPill } from "@/components/ui/tab-pill";
-import { useDragClickSuppression } from "@/components/ui/use-drag-click-suppression";
+import { useDragClickSuppression } from "@bb/shared-ui/use-drag-click-suppression";
 import { cn } from "@bb/shared-ui/lib/utils";
 import {
   MACOS_APP_REGION_NO_DRAG_CLASS,
   MACOS_WINDOW_NO_DRAG_CLASS,
 } from "@/lib/bb-desktop";
-import type {
-  SecondaryPanelRenderableTab,
-  SecondaryPanelTabReorderHandler,
+import {
+  PANEL_TAB_DRAG_DISTANCE_PX,
+  type SecondaryPanelRenderableTab,
+  type SecondaryPanelTabReorderHandler,
 } from "./secondaryPanelTab";
 
 const CHEVRON_SCROLL_STEP_PX = 140;
@@ -156,7 +157,7 @@ export function SecondaryPanelTabStrip({
   } = useDragClickSuppression();
   const dragDisabled = tabs.length < 2;
   const mouseSensor = useSensor(MouseSensor, {
-    activationConstraint: { distance: 4 },
+    activationConstraint: { distance: PANEL_TAB_DRAG_DISTANCE_PX },
   });
   const touchSensor = useSensor(
     isPanelOpen && !dragDisabled ? TouchSensor : InertTouchSensor,
@@ -651,7 +652,8 @@ function PanelTab({
       enlargeCloseTargetOnCoarsePointer={
         tab.tab.kind === "workspace-file-preview" ||
         tab.tab.kind === "host-file-preview" ||
-        tab.tab.kind === "thread-storage-file-preview"
+        tab.tab.kind === "thread-storage-file-preview" ||
+        tab.tab.kind === "attachment-file-preview"
       }
       closeAction={
         tab.isPinned

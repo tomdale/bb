@@ -7,9 +7,7 @@ import {
 import { useAtom, useAtomValue, useStore } from "jotai";
 import {
   Fragment,
-  lazy,
   memo,
-  Suspense,
   useCallback,
   useContext,
   useEffect,
@@ -17,6 +15,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ComponentProps,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   type SetStateAction,
@@ -29,6 +28,7 @@ import {
 import { useIsMutating } from "@tanstack/react-query";
 import { BbHttpError } from "@/lib/sdk";
 import { useThread } from "@/hooks/queries/thread-queries";
+import { useIsSidebarFramed } from "@/components/ui/sidebar.js";
 import { useSplitWorkspaceActive } from "@/hooks/useSplitWorkspaceActive";
 import {
   dimInactiveSplitsAtom,
@@ -79,7 +79,7 @@ import {
   type PaneSecondaryPanelRegistry,
 } from "./PaneContext";
 import { LazyThreadDetailView as ThreadDetailView } from "./LazyThreadDetailView";
-import { RootComposeView } from "@/views/RootComposeView";
+import { LazyRootComposeView as RootComposeView } from "@/views/LazyRootComposeView";
 import { PluginPanelView } from "@/views/PluginPanelView";
 import {
   AppPageHeader,
@@ -118,31 +118,27 @@ import { SecondaryPanelHostLayoutContext } from "@/components/secondary-panel/Se
 import {
   CONTEXT_INACTIVE_TEXT_CLASS,
   CONTEXT_SELECTION_SURFACE_CLASS,
-} from "@/components/ui/context-selection";
+} from "@bb/shared-ui/context-selection";
 import { PaneMaximizeButton } from "./PaneMaximizeButton";
 import { wsManager } from "@/lib/ws";
 import { useImmediateRouteNavigate } from "@/components/ui/app-route-anchor";
 import { PluginDetailOpenerBoundary } from "@/components/plugin/plugin-detail-opener";
+import { defineSplit } from "@/lib/define-split";
+import { LazyPluginDetailPaneView } from "@/views/ToolsViewSplits";
 
-const LazyPluginPanelRightPanelHost = lazy(() =>
-  import("@/components/plugin/PluginPanelRightPanelHost").then(
-    ({ PluginPanelRightPanelHost }) => ({ default: PluginPanelRightPanelHost }),
-  ),
-);
-
-const LazyPluginDetailPaneView = lazy(() =>
-  import("@/views/ToolsView").then(({ PluginDetailPaneView }) => ({
-    default: PluginDetailPaneView,
-  })),
-);
-
-function PluginDetailPaneView({ pluginId }: { pluginId: string }) {
-  return (
-    <Suspense fallback={null}>
-      <LazyPluginDetailPaneView pluginId={pluginId} />
-    </Suspense>
-  );
-}
+const LazyPluginPanelRightPanelHost = defineSplit<
+  ComponentProps<
+    typeof import("@/components/plugin/PluginPanelRightPanelHost").PluginPanelRightPanelHost
+  >
+>({
+  id: "plugin-panel-right-panel-host",
+  load: () =>
+    import("@/components/plugin/PluginPanelRightPanelHost").then(
+      (module) => module.PluginPanelRightPanelHost,
+    ),
+  loading: () => null,
+  tier: "intent",
+});
 
 function PluginPagePanelHost({
   children,
@@ -161,11 +157,9 @@ function PluginPagePanelHost({
       key={`${props.pluginId}/${props.panelPath}`}
       isFocused={pane?.isFocused ?? true}
     >
-      <Suspense fallback={null}>
-        <LazyPluginPanelRightPanelHost {...props}>
-          {children}
-        </LazyPluginPanelRightPanelHost>
-      </Suspense>
+      <LazyPluginPanelRightPanelHost {...props}>
+        {children}
+      </LazyPluginPanelRightPanelHost>
     </PluginDetailOpenerBoundary>
   );
 }
@@ -894,6 +888,7 @@ interface SplitTreeProps {
 function SplitTree(props: SplitTreeProps) {
   const { node, path, isTopRow, isLeftEdge, isRightEdge, focusedPaneId } =
     props;
+  const isSidebarFramed = useIsSidebarFramed();
 
   if (node.type === "pane") {
     const isFocused = node.paneId === focusedPaneId;
@@ -948,6 +943,9 @@ function SplitTree(props: SplitTreeProps) {
           data-pane-focus-scrim=""
           className={cn(
             "pointer-events-none absolute inset-0 z-20 transition-colors",
+            isSidebarFramed &&
+              (isMaximized || isTopRow) &&
+              "top-[calc(var(--bb-window-frame-top)_+_1px)]",
             isFocused || !props.dimsInactiveSplits
               ? "bg-transparent"
               : "bg-background/30",
@@ -1166,7 +1164,7 @@ function StandalonePaneContent({
     );
   }
   if (content.kind === "plugin-detail") {
-    return <PluginDetailPaneView pluginId={content.pluginId} />;
+    return <LazyPluginDetailPaneView pluginId={content.pluginId} />;
   }
   const panelEntry = navPanelChrome.find(
     (candidate) =>
@@ -1334,6 +1332,10 @@ function NonThreadPaneContent({
       className={cn(
         "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
         !isBoundedPane && content.kind === "new-thread" && "-m-4 md:-m-5",
+        !isBoundedPane &&
+          !panel &&
+          content.kind !== "new-thread" &&
+          "pt-(--bb-window-frame-top)",
       )}
     >
       {isBoundedPane || panel ? (
@@ -1395,7 +1397,7 @@ function NonThreadPaneContent({
         {content.kind === "new-thread" ? (
           <RootComposeView />
         ) : content.kind === "plugin-detail" ? (
-          <PluginDetailPaneView pluginId={content.pluginId} />
+          <LazyPluginDetailPaneView pluginId={content.pluginId} />
         ) : (
           <PluginPanelView
             pluginId={content.pluginId}
@@ -1509,6 +1511,7 @@ function SplitDivider({
   onResize,
 }: SplitDividerProps) {
   const horizontal = dir === "row";
+  const isSidebarFramed = useIsSidebarFramed();
   const finishResizeRef = useRef<(() => void) | null>(null);
   useEffect(
     () => () => {
@@ -1620,7 +1623,7 @@ function SplitDivider({
       aria-orientation={horizontal ? "vertical" : "horizontal"}
       className={cn(
         "group relative z-[25] flex-shrink-0 transition-colors",
-        "bg-border-seam",
+        isSidebarFramed ? "bg-border" : "bg-border-seam",
         "hover:bg-ring/40 data-[dragging]:bg-ring/40",
         hidden && "invisible pointer-events-none",
         horizontal ? "w-px cursor-col-resize" : "h-px cursor-row-resize",

@@ -1,3 +1,4 @@
+import { ExpandableText } from "../expandable-text";
 import type { ReactNode, Ref } from "react";
 import { Button, type ButtonProps } from "../button";
 import { ScrollArea } from "../scroll-area";
@@ -212,26 +213,26 @@ export function ResourceBrowseGrid({
 export function ResourceSourceShelf({
   label,
   description,
-  hideDescriptionOnMobile = false,
+  hideDescriptionWhenNarrow = false,
   leading,
   browseAction,
   children,
 }: {
   label: ReactNode;
   description?: ReactNode;
-  hideDescriptionOnMobile?: boolean;
+  hideDescriptionWhenNarrow?: boolean;
   leading?: ReactNode;
   browseAction?: ReactNode;
   children: ReactNode;
 }) {
   return (
-    <section className="w-full max-w-full space-y-[var(--resource-source-shelf-section-gap)] text-popover-foreground">
+    <section className="@container/resource-shelf w-full max-w-full space-y-[var(--resource-source-shelf-section-gap)] text-popover-foreground">
       <div className="flex min-w-0 items-end gap-[var(--resource-source-shelf-label-gap)] px-[var(--resource-source-shelf-header-inset,var(--resource-source-shelf-inset))] text-xs text-muted-foreground">
         <div
           className={cn(
             "min-w-0 flex-1",
-            hideDescriptionOnMobile
-              ? "sm:space-y-[var(--resource-source-shelf-section-gap)]"
+            hideDescriptionWhenNarrow
+              ? "@min-[40rem]/resource-shelf:space-y-[var(--resource-source-shelf-section-gap)]"
               : "space-y-[var(--resource-source-shelf-section-gap)]",
           )}
         >
@@ -245,7 +246,9 @@ export function ResourceSourceShelf({
             <div
               className={cn(
                 "min-w-0 items-center gap-3",
-                hideDescriptionOnMobile ? "hidden sm:flex" : "flex",
+                hideDescriptionWhenNarrow
+                  ? "hidden @min-[40rem]/resource-shelf:flex"
+                  : "flex",
               )}
             >
               <p className="min-w-0 max-w-2xl text-xs leading-relaxed text-muted-foreground">
@@ -299,7 +302,7 @@ type ResourceBrowseCardProps = {
   leadingClassName?: string;
   title: ReactNode;
   description?: ReactNode;
-  descriptionLines?: 2 | 3;
+  descriptionLines?: 2 | 3 | "expandable";
   byline?: ReactNode;
   headerAction?: ReactNode;
   footerMeta?: ReactNode;
@@ -376,10 +379,18 @@ export function ResourceBrowseCard({
         <span
           className={cn(
             "pointer-events-none relative col-span-2 row-start-2 self-center text-left text-xs leading-snug text-muted-foreground",
-            descriptionLines === 3 ? "line-clamp-3" : "line-clamp-2",
+            descriptionLines === "expandable"
+              ? "break-words"
+              : descriptionLines === 3
+                ? "line-clamp-3"
+                : "line-clamp-2",
           )}
         >
-          {description}
+          {descriptionLines === "expandable" ? (
+            <ExpandableText>{description}</ExpandableText>
+          ) : (
+            description
+          )}
         </span>
       ) : null}
       {byline ? (

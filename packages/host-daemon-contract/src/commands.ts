@@ -28,6 +28,7 @@ import {
   jsonObjectSchema,
   jsonValueSchema,
   providerNativeRootSetSchema,
+  providerNativeRootsSchema,
   BRANCH_LIST_LIMIT_MAX,
   BRANCH_LIST_QUERY_MAX_LENGTH,
   FILE_LIST_EXCLUDE_NAME_MAX_LENGTH,
@@ -47,6 +48,7 @@ import {
 import { workspaceResolutionFailureSchema } from "./workspace.js";
 import { HOST_ARTIFACT_MAX_BYTES } from "./protocol.js";
 import {
+  commandListResultSchema as providerCommandListResultSchema,
   providerHealthResultSchema,
   providerInstallationStatusSchema,
   providerUsageResultSchema,
@@ -483,6 +485,7 @@ export type HostReadFileRelativeDotfilePolicy = z.infer<
 const hostReadFileRelativeCommandSchema = z
   .object({
     type: z.literal("host.read_file_relative"),
+    followRootSymlink: z.boolean(),
     rootPath: z.string().min(1),
     path: z.string().min(1),
     dotfiles: hostReadFileRelativeDotfilePolicySchema,
@@ -508,6 +511,7 @@ const fileListExcludeNamesSchema = z
 
 const hostListFilesCommandSchema = z.object({
   type: z.literal("host.list_files"),
+  followRootSymlink: z.boolean(),
   path: z.string().min(1),
   query: z.string().max(FILE_LIST_QUERY_MAX_LENGTH).optional(),
   limit: z.number().int().positive().max(FILE_LIST_LIMIT_MAX),
@@ -689,6 +693,7 @@ const directoryListingSchema = z.object({
   directory: z.string(),
   parent: z.string().nullable(),
   entries: z.array(directoryEntrySchema),
+  roots: z.array(z.string()),
 });
 
 const hostCommandSourceSchema = z.enum(["skill", "command"]);
@@ -745,6 +750,49 @@ const hostListSkillsCommandSchema = z
     nativeRoots: providerNativeRootSetSchema,
   })
   .strict();
+
+const hostReadWorkspaceAgentContextCommandSchema = z
+  .object({
+    type: z.literal("host.read_workspace_agent_context"),
+    includeAgentInstructions: z.boolean(),
+    projectSkillRead: z
+      .object({
+        limit: z.number().int().positive(),
+        maxFileBytes: z.number().int().positive(),
+        maxContentBytes: z.number().int().positive(),
+        excludeNames: z.array(z.string()),
+      })
+      .strict(),
+    rootPath: z.string().min(1),
+    sharedSkillRoots: providerNativeRootsSchema,
+  })
+  .strict();
+
+const workspaceProjectSkillFileSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal("budget-exceeded"),
+      directoryName: z.string().min(1),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("file"),
+      directoryName: z.string().min(1),
+      content: z.string(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("oversized"),
+      directoryName: z.string().min(1),
+      sizeBytes: z.number().int().nonnegative(),
+    })
+    .strict(),
+]);
+export type WorkspaceProjectSkillFile = z.infer<
+  typeof workspaceProjectSkillFileSchema
+>;
 
 export const deletableSkillScopeSchema = z.enum([
   "bb-user",
@@ -862,7 +910,17 @@ const providerListModelsCommandSchema = z.object({
   providerId: z.string().min(1),
   bridgeLaunch: hostDaemonBridgeLaunchSchema,
   cwd: z.string().min(1).optional(),
+  contributedEnv: z.array(hostDaemonContributedEnvEntrySchema),
 });
+
+const providerListCommandsCommandSchema = z
+  .object({
+    type: z.literal("provider.list_commands"),
+    providerId: z.string().min(1),
+    bridgeLaunch: hostDaemonBridgeLaunchSchema,
+    cwd: z.string().min(1).nullable(),
+  })
+  .strict();
 
 const providerHealthCommandSchema = z
   .object({
@@ -933,6 +991,7 @@ const environmentProvisionCancelCommandSchema =
 const workspaceStatusCommandSchema = hostDaemonWorkspaceTargetSchema.extend({
   type: z.literal("workspace.status"),
   mergeBaseBranch: gitBranchNameSchema.optional(),
+  maxFiles: z.number().int().positive(),
   maxUntrackedLineStatFiles: z.number().int().positive(),
   maxUntrackedLineStatBytes: z.number().int().positive(),
 });
@@ -1157,6 +1216,15 @@ const skillListResultSchema = z.object({
   skills: z.array(discoveredSkillSchema),
 });
 
+const hostReadWorkspaceAgentContextResultSchema = z
+  .object({
+    agentInstructions: z.string().nullable(),
+    projectSkills: z.array(workspaceProjectSkillFileSchema),
+    projectSkillsTruncated: z.boolean(),
+    sharedSkills: z.array(discoveredSkillSchema),
+  })
+  .strict();
+
 const deleteSkillResultSchema = z.object({
   deletedPath: z.string(),
 });
@@ -1226,6 +1294,31 @@ const threadStopResultSchema = z
   })
   .strict();
 const emptyCommandResultSchema = z.object({});
+const turnSubmitTraceSpanNameSchema = z.enum([
+  "lanes.entered",
+  "skills.staged",
+  "runtime.ready",
+  "input.staged",
+  "bridge.turnStarted",
+  "events.flushed",
+]);
+export type TurnSubmitTraceSpanName = z.infer<
+  typeof turnSubmitTraceSpanNameSchema
+>;
+const turnSubmitTraceSchema = z
+  .object({
+    spans: z.array(
+      z
+        .object({
+          name: turnSubmitTraceSpanNameSchema,
+          atMs: z.number().nonnegative(),
+        })
+        .strict(),
+    ),
+  })
+  .strict();
+export type TurnSubmitTrace = z.infer<typeof turnSubmitTraceSchema>;
+const turnSubmitResultSchema = z.object({ trace: turnSubmitTraceSchema });
 const projectPathResultSchema = z.object({ path: z.string().min(1) }).strict();
 const projectInspectResultSchema = projectPathResultSchema
   .extend({ gitRemoteUrl: z.string().min(1).nullable() })
@@ -1265,6 +1358,33 @@ const providerUsageCommandSchema = z
 const providerCliInstallResultSchema = z
   .object({
     events: z.array(providerCliInstallEventSchema),
+  })
+  .strict();
+
+export const discoveredRepoSchema = z
+  .object({
+    path: z.string().min(1),
+    name: z.string().min(1),
+    lastActivityAt: z.string().datetime(),
+    originUrl: z.string().min(1).nullable(),
+  })
+  .strict();
+export type DiscoveredRepo = z.infer<typeof discoveredRepoSchema>;
+
+export const discoverReposResultSchema = z
+  .object({
+    repos: z.array(discoveredRepoSchema),
+    truncated: z.boolean(),
+  })
+  .strict();
+export type DiscoverReposResult = z.infer<typeof discoverReposResultSchema>;
+
+const discoverReposCommandSchema = z
+  .object({
+    type: z.literal("host.discover_repos"),
+    maxDepth: z.number().int().min(1).max(8),
+    sinceDays: z.number().int().min(1).max(3650),
+    limit: z.number().int().min(1).max(200),
   })
   .strict();
 
@@ -1446,7 +1566,7 @@ export const hostDaemonCommandRegistry = {
   "turn.submit": defineHostDaemonCommandDescriptor({
     type: "turn.submit",
     schema: turnSubmitCommandSchema,
-    resultSchema: emptyCommandResultSchema,
+    resultSchema: turnSubmitResultSchema,
     transport: "settled",
     retryable: false,
     flushEventsBeforeResult: true,
@@ -1733,6 +1853,15 @@ export const hostDaemonCommandRegistry = {
     flushEventsBeforeResult: false,
     envLane: null,
   }),
+  "host.read_workspace_agent_context": defineHostDaemonCommandDescriptor({
+    type: "host.read_workspace_agent_context",
+    schema: hostReadWorkspaceAgentContextCommandSchema,
+    resultSchema: hostReadWorkspaceAgentContextResultSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: false,
+    envLane: null,
+  }),
   "host.delete_skill": defineHostDaemonCommandDescriptor({
     type: "host.delete_skill",
     schema: hostDeleteSkillCommandSchema,
@@ -1832,6 +1961,15 @@ export const hostDaemonCommandRegistry = {
     flushEventsBeforeResult: false,
     envLane: null,
   }),
+  "provider.list_commands": defineHostDaemonCommandDescriptor({
+    type: "provider.list_commands",
+    schema: providerListCommandsCommandSchema,
+    resultSchema: providerCommandListResultSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: false,
+    envLane: null,
+  }),
   "provider.health": defineHostDaemonCommandDescriptor({
     type: "provider.health",
     schema: providerHealthCommandSchema,
@@ -1863,6 +2001,15 @@ export const hostDaemonCommandRegistry = {
     type: "provider.usage",
     schema: providerUsageCommandSchema,
     resultSchema: providerUsageResultSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: false,
+    envLane: null,
+  }),
+  "host.discover_repos": defineHostDaemonCommandDescriptor({
+    type: "host.discover_repos",
+    schema: discoverReposCommandSchema,
+    resultSchema: discoverReposResultSchema,
     transport: "onlineRpc",
     retryable: true,
     flushEventsBeforeResult: false,

@@ -18,6 +18,7 @@ import type { ComposerTextEffectSource } from "@/lib/composer-text-effects";
 import { ComposerBannersSlot } from "@/components/plugin/PluginComposerBanners";
 import { PROMPT_STACK_TRACK_CLASS } from "@/components/promptbox/banner/PromptStackCard";
 import {
+  composerScopeIdentity,
   type PluginComposerHost,
   usePluginComposerViewModel,
 } from "@/components/plugin/plugin-composer-host";
@@ -111,6 +112,7 @@ export interface NewThreadModeConfig {
   environment: NewThreadEnvironmentConfig;
   worktree: NewThreadWorktreeConfig;
   permission: ExecutionPermissionConfig;
+  sessionOptionsControl?: ReactNode;
   environmentProviderInputsSlot?: ReactNode;
   machineProviderInputsSlot?: ReactNode;
   banner?: ReactNode;
@@ -183,7 +185,11 @@ export const NewThreadPromptBoxUI = memo(function NewThreadPromptBoxUI({
     promptBoxRef.current?.focusEnd();
     return promptBoxRef.current !== null;
   }, []);
-  const voice = usePromptVoice(promptBoxRef, pluginComposerHost ?? undefined);
+  const voice = usePromptVoice(
+    promptBoxRef,
+    pluginComposerHost ?? undefined,
+    pluginComposerHost ? composerScopeIdentity(pluginComposerHost.scope) : null,
+  );
   const attachmentCount = attachments.items?.length ?? 0;
   const [composerLayout, setComposerLayout] =
     useState<ComposerView["layout"]>("expanded");
@@ -294,7 +300,7 @@ const DefaultNewThreadComposer = memo(function DefaultNewThreadComposer({
       className="w-full"
     >
       <div
-        className={`mb-2 grid gap-2 empty:hidden ${PROMPT_STACK_TRACK_CLASS}`}
+        className={`mb-2 hidden gap-2 has-[>:not(:empty)]:grid ${PROMPT_STACK_TRACK_CLASS}`}
       >
         <ComposerBannersSlot ownerPlacement="before">
           {modeConfig.banner}
@@ -358,6 +364,7 @@ const DefaultNewThreadComposer = memo(function DefaultNewThreadComposer({
           />
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {modeConfig.sessionOptionsControl}
           <PermissionModePicker
             value={modeConfig.permission.value}
             options={modeConfig.permission.options}

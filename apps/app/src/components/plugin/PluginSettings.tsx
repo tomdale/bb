@@ -1,3 +1,4 @@
+import { ExpandableText } from "@bb/shared-ui/expandable-text";
 import { usePluginEnabledMutation } from "@/components/plugin/usePluginEnabledMutation";
 import { useEffect, useId, useState, type FocusEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -33,6 +34,7 @@ import {
 } from "@/hooks/queries/plugin-settings-queries";
 import { useSidebarNavigation } from "@/hooks/queries/sidebar-navigation-query";
 import { usePluginSlots } from "@/lib/plugin-slots";
+import { arePluginSettingsAvailable } from "@/lib/plugin-settings-availability";
 import { getMutationErrorMessage } from "@/lib/mutation-errors";
 import { PluginMachineServerAccessNotice } from "@/components/machines/MachineServerAccessNotice";
 import { invalidateMachineProviders } from "@/hooks/cache-owners/system-cache-effects";
@@ -161,9 +163,13 @@ function PluginSettingField({
         ariaDescribedBy={ariaDescribedBy}
         ariaInvalid={ariaInvalid}
         ariaLabel={descriptor.label}
-        valueLabel={value.length > 0 ? value : "Select…"}
+        valueLabel={
+          value.length > 0
+            ? (descriptor.experimental_optionLabels?.[value] ?? value)
+            : "Select…"
+        }
         options={descriptor.options.map((option) => ({
-          label: option,
+          label: descriptor.experimental_optionLabels?.[option] ?? option,
           value: option,
         }))}
         onSelect={onChange}
@@ -224,7 +230,7 @@ function PluginSettingField({
         aria-invalid={ariaInvalid}
         onChange={(event) => onChange(event.target.value)}
         onBlur={onBlur}
-        className="h-7 w-full text-xs sm:w-64"
+        className="h-7 w-full text-xs @min-[36rem]/settings:w-64"
       />
     );
   }
@@ -269,7 +275,7 @@ function PluginSettingField({
       placeholder={isSecret ? (secretIsSet ? "[set]" : "[not set]") : undefined}
       onChange={(event) => onChange(event.target.value)}
       onBlur={onBlur}
-      className="h-7 w-full text-xs sm:w-64"
+      className="h-7 w-full text-xs @min-[36rem]/settings:w-64"
     />
   );
 }
@@ -449,12 +455,6 @@ export function PluginSettingsForm({ pluginId }: { pluginId: string }) {
   );
 }
 
-const PLUGIN_STATUSES_WITH_SETTINGS = [
-  "running",
-  "needs-configuration",
-  "degraded",
-];
-
 function PluginSettingsFieldSkeleton() {
   return (
     <div className="min-w-0 space-y-2">
@@ -478,8 +478,8 @@ function PluginSettingsPageSkeleton() {
     >
       <span className="sr-only">Loading plugin settings…</span>
       <div aria-hidden>
-        <header className="flex items-center justify-between gap-4">
-          <div className="flex min-w-0 items-center gap-3">
+        <header className="flex items-start justify-between gap-4">
+          <div className="flex min-w-0 items-start gap-3">
             <Skeleton className="size-9 shrink-0" />
             <div className="min-w-0">
               <div className="flex h-7 items-center">
@@ -601,8 +601,8 @@ function PluginSettingsContent({
         pluginId={plugin.id}
         onBackToDetails={onBackToDetails}
       />
-      <header className="flex items-center justify-between gap-4">
-        <div className="flex min-w-0 items-center gap-3">
+      <header className="flex items-start justify-between gap-4">
+        <div className="flex min-w-0 items-start gap-3">
           <div className="size-9 shrink-0">
             <PluginIcon
               pluginId={plugin.id}
@@ -615,14 +615,14 @@ function PluginSettingsContent({
               {plugin.name ?? plugin.id}
             </h1>
             {plugin.description ? (
-              <p className="truncate text-xs text-subtle-foreground">
+              <ExpandableText className="text-xs text-subtle-foreground">
                 {plugin.description}
-              </p>
+              </ExpandableText>
             ) : null}
           </div>
         </div>
         <Switch
-          className="mr-[13px]"
+          className="mr-[13px] mt-1"
           checked={enabled}
           disabled={toggle.isPending}
           onCheckedChange={(next) => toggle.mutate(next)}
@@ -648,8 +648,7 @@ export function PluginSettingsDetail({ plugin }: { plugin: PluginListItem }) {
   const hasSettingsSections = settingsSections.some(
     (section) => section.pluginId === plugin.id,
   );
-  const settingsAvailable =
-    plugin.enabled && PLUGIN_STATUSES_WITH_SETTINGS.includes(plugin.status);
+  const settingsAvailable = arePluginSettingsAvailable(plugin);
   if (!plugin.hasSettings && !hasSettingsSections) return null;
 
   return (

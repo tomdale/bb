@@ -6,6 +6,7 @@ import {
 } from "../environments/environment-engine.js";
 import {
   and,
+  desc,
   eq,
   gte,
   inArray,
@@ -17,6 +18,7 @@ import {
 } from "drizzle-orm";
 import {
   deleteQueuedSystemNoticesInTransaction,
+  getLatestThreadSequence,
   deleteThread,
   environments,
   events,
@@ -24,11 +26,14 @@ import {
   getHost,
   getLatestThreadInterruptedReason,
   getThread,
+  hasThreadTurnRequestAfterStart,
+  hasStoredTerminalClientTurnRequestEvent,
   listThreadIdsStoppedSinceLastTurnStart,
   listThreadIdsWithLatestHostDaemonRestartInterruption,
   listThreadTurnInterruptionEventStates,
   markThreadStorageDeleted,
   threads,
+  wasThreadTurnManuallyStopped,
   type DbNotifier,
   type DbQueryConnection,
   type DbTransaction,
@@ -52,6 +57,7 @@ import type {
   LoggedWorkSessionDeps,
 } from "../../types.js";
 import { cancelEnvironmentProvisioningForThreadStopInTransaction } from "../environments/environment-provisioning-cancellation.js";
+import { ENVIRONMENT_DIRECTORY_UPDATE_OPERATION } from "./thread-environment-directory.js";
 import {
   emptyCommandResultSideEffects,
   type CommandResultFailureReportForType,
@@ -548,6 +554,7 @@ function appendProvisioningInterruptedEventInTransaction(
     entries: [buildProvisioningStoppedEntry()],
   });
   deps.hub.notifyThread(thread.id, ["events-appended"], {
+    timelineSequence: getLatestThreadSequence(deps.db, { threadId: thread.id }),
     eventTypes: ["system/thread-provisioning"],
   });
 }
@@ -564,6 +571,9 @@ function appendThreadInterruptedEventIfMissingInTransaction(
     reason: args.reason,
   });
   deps.hub.notifyThread(args.threadId, ["events-appended"], {
+    timelineSequence: getLatestThreadSequence(deps.db, {
+      threadId: args.threadId,
+    }),
     eventTypes: ["system/thread/interrupted"],
   });
   return true;
@@ -587,7 +597,13 @@ function markThreadStoppingWithEventInTransaction(
       deps.db,
       args.threadId,
       "turn-continuation",
-    ) > 0
+    ) +
+      deleteQueuedSystemNoticesInTransaction(
+        deps.db,
+        args.threadId,
+        "environment-directory-updated",
+      ) >
+      0
   ) {
     deps.hub.notifyThread(args.threadId, ["queue-changed"]);
   }
@@ -596,6 +612,9 @@ function markThreadStoppingWithEventInTransaction(
     reason: args.reason,
   });
   deps.hub.notifyThread(args.threadId, ["events-appended"], {
+    timelineSequence: getLatestThreadSequence(deps.db, {
+      threadId: args.threadId,
+    }),
     eventTypes: ["system/thread/interrupted"],
   });
   return true;
@@ -689,31 +708,12 @@ function hasTerminalClientTurnRequestEvent(
   deps: ThreadCommandResultSettlementDeps,
   command: ThreadFailureCommand,
 ): boolean {
-  if (command.type !== "turn.submit") {
-    return false;
-  }
-
   return (
-    deps.db
-      .select({ id: events.id })
-      .from(events)
-      .where(
-        and(
-          eq(events.threadId, command.threadId),
-          or(
-            and(
-              eq(events.type, "turn/input/accepted"),
-              sql`json_extract(${events.data}, '$.clientRequestId') = ${command.requestId}`,
-            ),
-            and(
-              eq(events.type, "client/turn/rejected"),
-              sql`json_extract(${events.data}, '$.requestId') = ${command.requestId}`,
-            ),
-          ),
-        ),
-      )
-      .limit(1)
-      .get() !== undefined
+    command.type === "turn.submit" &&
+    hasStoredTerminalClientTurnRequestEvent(deps.db, {
+      requestId: command.requestId,
+      threadId: command.threadId,
+    })
   );
 }
 
@@ -876,7 +876,7 @@ function settleThreadCommandFailure(
   if (outcome.applied) {
     args.deps.hub.notifyThread(thread.id, ["status-changed"]);
   }
-  if (isParentNotifiableChildThread(thread)) {
+  if (isParentNotifiableChildThread(thread, "failed")) {
     const parentThreadId = thread.parentThreadId;
     postCommitActions.push({
       run: (deps) =>
@@ -1278,6 +1278,7 @@ function dispatchThreadStartFromRequest(
 
   if (result.completedProvisionSequence !== null) {
     deps.hub.notifyThread(args.threadId, ["events-appended"], {
+      timelineSequence: result.completedProvisionSequence,
       eventTypes: ["system/thread-provisioning"],
     });
   }
@@ -1563,12 +1564,60 @@ function cancelDirectoryContinuation(
   deps: Pick<AppDeps, "db" | "hub">,
   threadId: string,
 ): void {
-  const deleted = deps.db.transaction(
-    (tx) =>
-      deleteQueuedSystemNoticesInTransaction(tx, threadId, "turn-continuation"),
+  const result = deps.db.transaction(
+    (tx) => {
+      const deleted =
+        deleteQueuedSystemNoticesInTransaction(
+          tx,
+          threadId,
+          "turn-continuation",
+        ) +
+        deleteQueuedSystemNoticesInTransaction(
+          tx,
+          threadId,
+          "environment-directory-updated",
+        );
+      const update = tx
+        .select({ turnId: events.turnId })
+        .from(events)
+        .where(
+          and(
+            eq(events.threadId, threadId),
+            eq(events.type, "system/operation"),
+            eq(events.scopeKind, "turn"),
+            sql`json_extract(${events.data}, '$.operation') = ${ENVIRONMENT_DIRECTORY_UPDATE_OPERATION}`,
+          ),
+        )
+        .orderBy(desc(events.sequence))
+        .limit(1)
+        .get();
+      const interrupted =
+        update?.turnId != null &&
+        !hasThreadTurnRequestAfterStart(tx, {
+          threadId,
+          turnId: update.turnId,
+        }) &&
+        !wasThreadTurnManuallyStopped(tx, {
+          threadId,
+          turnId: update.turnId,
+        });
+      if (interrupted) {
+        appendThreadInterruptedEventInTransaction(tx, {
+          threadId,
+          reason: "manual-stop",
+        });
+      }
+      return { deleted, interrupted };
+    },
     { behavior: "immediate" },
   );
-  if (deleted > 0) deps.hub.notifyThread(threadId, ["queue-changed"]);
+  if (result.deleted > 0) deps.hub.notifyThread(threadId, ["queue-changed"]);
+  if (result.interrupted) {
+    deps.hub.notifyThread(threadId, ["events-appended"], {
+      timelineSequence: getLatestThreadSequence(deps.db, { threadId }),
+      eventTypes: ["system/thread/interrupted"],
+    });
+  }
 }
 
 export async function stopThreadForCurrentState(
@@ -1775,6 +1824,9 @@ function interruptActiveTurnForThreadInTransaction(
     eventTypes.push("system/thread/interrupted");
   }
   deps.hub.notifyThread(args.threadId, ["events-appended", "status-changed"], {
+    timelineSequence: getLatestThreadSequence(deps.db, {
+      threadId: args.threadId,
+    }),
     eventTypes,
   });
 
@@ -1899,6 +1951,9 @@ function interruptActiveThreads(
       result.threadId,
       ["events-appended", "status-changed"],
       {
+        timelineSequence: getLatestThreadSequence(deps.db, {
+          threadId: result.threadId,
+        }),
         eventTypes,
         ...(thread ? buildThreadStatusChangeMetadata(deps, thread) : {}),
       },
@@ -1906,7 +1961,7 @@ function interruptActiveThreads(
     if (
       result.interruptedTurnId !== null &&
       thread &&
-      isParentNotifiableChildThread(thread)
+      isParentNotifiableChildThread(thread, "interrupted")
     ) {
       void queueChildThreadTurnNotificationBestEffort(deps, {
         childThread: thread,

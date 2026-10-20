@@ -1,5 +1,6 @@
 import type {
   HostDaemonCommand,
+  HostDaemonOnlineRpcCancelMessage,
   HostDaemonOnlineRpcRequestMessage,
   HostDaemonOnlineRpcResponseMessage,
   HostDaemonOnlineRpcResultForCommand,
@@ -30,6 +31,10 @@ import type { HostDaemonLogger } from "./logger.js";
 import { RuntimeManager } from "./runtime-manager.js";
 import type { PluginHostManager } from "./plugin-host-manager.js";
 import { runInSerialLane } from "./serial-lane.js";
+import {
+  markTurnSubmitTraceSpan,
+  runWithTurnSubmitTrace,
+} from "./turn-submit-trace.js";
 
 type CommandRouterLogger = Pick<HostDaemonLogger, "debug" | "warn">;
 
@@ -66,6 +71,7 @@ export interface CommandRouterOptions {
   runtimeManager: RuntimeManager;
   eventSink: CommandDispatchOptions["eventSink"];
   listModels: CommandDispatchOptions["listModels"];
+  listCommands: CommandDispatchOptions["listCommands"];
   providerHealth: CommandDispatchOptions["providerHealth"];
   providerUsage: CommandDispatchOptions["providerUsage"];
   providerInstallationStatus: CommandDispatchOptions["providerInstallationStatus"];
@@ -91,6 +97,10 @@ export class CommandRouter {
   private readonly threadUnarchiveBarriers = new Map<string, Promise<void>>();
   private readonly threadLaneTails = new Map<string, Promise<void>>();
   private readonly threadTurnLaneTails = new Map<string, Promise<void>>();
+  private readonly onlineRpcAbortControllers = new Map<
+    string,
+    AbortController
+  >();
 
   constructor(private readonly options: CommandRouterOptions) {
     this.logger = options.logger;
@@ -100,8 +110,12 @@ export class CommandRouter {
     message: HostDaemonOnlineRpcRequestMessage,
   ): Promise<HostDaemonOnlineRpcResponseMessage> {
     const handlerStartedAtMs = performance.now();
+    const abortController = new AbortController();
+    this.onlineRpcAbortControllers.set(message.requestId, abortController);
     try {
-      const result = await this.executeHostRpcCommand(message.command);
+      const result = await runWithTurnSubmitTrace(message.command, () =>
+        this.executeHostRpcCommand(message.command, abortController.signal),
+      );
       this.logOnlineRpc({
         commandType: message.command.type,
         handlerMs: elapsedMs(handlerStartedAtMs),
@@ -139,20 +153,33 @@ export class CommandRouter {
         errorCode,
         errorMessage: error instanceof Error ? error.message : String(error),
       };
+    } finally {
+      if (
+        this.onlineRpcAbortControllers.get(message.requestId) ===
+        abortController
+      ) {
+        this.onlineRpcAbortControllers.delete(message.requestId);
+      }
     }
+  }
+
+  cancelOnlineRpcRequest(message: HostDaemonOnlineRpcCancelMessage): void {
+    this.onlineRpcAbortControllers.get(message.requestId)?.abort();
   }
 
   private executeHostRpcCommand(
     command: HostDaemonRpcCommand,
+    signal: AbortSignal,
   ): Promise<HostDaemonRpcResultForCommand> {
     if (isHostDaemonCommand(command)) {
       return this.executeLiveDaemonCommand(command);
     }
-    return this.executeOnlineRpcCommand(command);
+    return this.executeOnlineRpcCommand(command, signal);
   }
 
   private executeOnlineRpcCommand(
     command: HostDaemonOnlineRpcCommand,
+    signal: AbortSignal,
   ): Promise<HostDaemonOnlineRpcResultForCommand> {
     if (command.type === "plugin.host.call") {
       if (!this.options.pluginHostManager) {
@@ -180,9 +207,17 @@ export class CommandRouter {
             command.environmentId,
             environmentLaneMode,
             () =>
-              dispatchOnlineRpcCommand(command, this.createDispatchOptions()),
+              dispatchOnlineRpcCommand(
+                command,
+                this.createDispatchOptions(),
+                signal,
+              ),
           )
-        : dispatchOnlineRpcCommand(command, this.createDispatchOptions());
+        : dispatchOnlineRpcCommand(
+            command,
+            this.createDispatchOptions(),
+            signal,
+          );
     return result.then((value) =>
       parseHostDaemonOnlineRpcResultForCommand(command, value),
     );
@@ -210,9 +245,11 @@ export class CommandRouter {
   private async executeLiveDaemonCommandBody(
     command: HostDaemonCommand,
   ): Promise<HostDaemonCommandResultForCommand> {
+    markTurnSubmitTraceSpan("lanes.entered");
     const result = await dispatchCommand(command, this.createDispatchOptions());
     if (shouldFlushEventsBeforeReportingCommandResult(command)) {
       await this.options.eventSink.flush();
+      markTurnSubmitTraceSpan("events.flushed");
     }
     return parseHostDaemonCommandResultForCommand(command, result);
   }
@@ -273,6 +310,7 @@ export class CommandRouter {
       dataDir: this.options.dataDir,
       eventSink: this.options.eventSink,
       listModels: this.options.listModels,
+      listCommands: this.options.listCommands,
       providerHealth: this.options.providerHealth,
       providerUsage: this.options.providerUsage,
       providerInstallationStatus: this.options.providerInstallationStatus,

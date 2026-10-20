@@ -1,5 +1,6 @@
 import {
   deleteClaimedQueuedThreadMessageBatchInTransaction,
+  getLatestThreadSequence,
   getEnvironment,
   getHost,
   getThread,
@@ -352,6 +353,9 @@ async function queueActiveParentSystemMessage(
   }
 
   deps.hub.notifyThread(args.thread.id, ["events-appended"], {
+    timelineSequence: getLatestThreadSequence(deps.db, {
+      threadId: args.thread.id,
+    }),
     eventTypes: ["client/turn/requested"],
   });
   startLiveHostCommand(deps, {
@@ -430,6 +434,9 @@ async function queueReadyParentSystemMessage(
     { behavior: "immediate" },
   );
   deps.hub.notifyThread(args.thread.id, ["events-appended"], {
+    timelineSequence: getLatestThreadSequence(deps.db, {
+      threadId: args.thread.id,
+    }),
     eventTypes: ["client/turn/requested"],
   });
   startLiveHostCommand(deps, {

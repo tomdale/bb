@@ -4,6 +4,16 @@ macOS, Linux, and Windows Electron shell for bb. The desktop app loads the exist
 web UI and uses the packaged `bb-app` launcher for server and host-daemon
 lifecycle.
 
+## Browser address interaction checks
+
+Run `pnpm exec turbo run smoke:browser-address --filter=@bb/desktop` from the
+repository root. On Linux, run it under `xvfb-run -a` or an active display.
+The smoke test mounts the production address input beside a real Electron
+`WebContentsView`, checks repeated focus transfers, first and second clicks,
+drag selection, keyboard focus, and replacing the selected URL by typing.
+It uses a temporary profile and removes it when finished. It needs no running
+BB server or user data. CI runs it alongside the desktop tests.
+
 ## Development
 
 From the repo root, run `pnpm dev` in one terminal for the source server and
@@ -432,8 +442,24 @@ Use the View menu to toggle DevTools. To open them automatically on launch, set
 BB_DESKTOP_OPEN_DEVTOOLS=1 apps/desktop/release/mac-arm64/bb.app/Contents/MacOS/bb
 ```
 
-When the desktop app spawns `bb-app`, server and daemon logs land under
-`~/.bb/logs/` or `$BB_DATA_DIR/logs/` when `BB_DATA_DIR` is set.
+Unpackaged runs use `assets/icon-dev.png` for the Dock and window icon. Set
+`BB_DESKTOP_DEV_ICON=1` to use it in a packaged build too; `pnpm
+desktop:worktree` sets it. The bundle's own icon in Finder is unchanged.
+
+Desktop main-process logs are written immediately to `desktop.log` under
+`~/.bb/logs/` or `$BB_DATA_DIR/logs/` when `BB_DATA_DIR` is set, including
+updater, Connect, and startup failures from launches without a terminal.
+Logs append across launches and rotate at 10 MiB into `desktop.1.log` through
+`desktop.4.log`. When bb-app exits, its captured output is saved
+with the error. Logging failures fall back to stderr without interrupting
+startup.
+
+**View → Local Logs** shows desktop, server, and daemon logs on macOS, Windows,
+and Linux, including when attached to an existing server or startup fails.
+These are files in this computer's selected data directory; connecting to a
+remote server does not fetch its logs. Use **Open Logs Folder** to inspect
+rotated files. Scripts and agents can read the same files from the data
+directory.
 
 To verify attach-if-found manually, start a compatible bb first, then launch the
 desktop app:
@@ -453,15 +479,90 @@ recovery path for those cases.
 
 Use **bb → Desktop Settings → Server → Add Server…** to save and switch to
 another machine's HTTP(S) bb server URL. **Window → Server** opens the same
-menu. Saved URLs remain in the menu across restarts; adding an existing URL
+menu. Both native dialogs accept an optional friendly name (up to 64 characters).
+The menu shows that name, or the URL hostname and port when unnamed. Saved URLs
+remain in the menu across restarts; adding an existing URL
 selects it without creating a duplicate. **This Mac** on macOS or **This
 Computer** on Linux switches back to the built-in server without removing
 saved entries.
 
-**Set Server URL…** edits the last selected custom server. Clearing its URL removes
-that entry and switches an active custom target to the built-in server. Other
+**Edit Server…** edits the currently selected custom or Connect server and is
+disabled for **This Mac** / **This Computer**. For a Connect server it changes
+only the name; the address comes from the bb account and is read-only. For a
+custom server, clearing its URL removes
+that entry and, with Show This Mac/Computer checked, switches an active custom
+target to the built-in server. Other
 saved servers and Connect discovery remain available. Existing single-server preferences are
 loaded automatically into the saved list in `<userData>/server-target.json`.
+
+Changing only the name refreshes the menu without switching servers or reloading
+windows, even when another target is active. Clearing the name restores the
+hostname fallback. Editing a URL keeps the entry's position and supplied name.
+Editing into an already saved URL removes the old entry and selects the existing
+entry, preserving the destination's name and position. Adding an existing URL
+with no name keeps its name; supplying a name updates it.
+
+Names are stored alongside the saved URLs in
+`<userData>/server-target.json` as `customServerNames`, keyed by normalized URL.
+Existing unnamed saved servers still load. The name field is omitted when no
+saved server has a name, keeping unnamed settings compatible with older builds.
+Builds with tolerant saved-server parsing (#5286) load the URLs but drop names when rewriting preferences; older
+builds with strict parsing can reject the added field on rollback. Invalid names
+do not discard saved URLs, and names for absent URLs are ignored and pruned on
+the next save.
+
+Connect servers owned by your bb account appear in the menu by name, or by
+URL hostname when unnamed, like custom servers. Their names are stored in `server-target.json` as
+`connectServerNames`, keyed by handle, and are kept while discovery is
+unavailable. A saved custom URL that is an account server's address is replaced
+by that account server at startup, after discovery, and after Add/Edit Server.
+Its name moves to the account server unless that server is already named. If
+the replaced URL was selected, the app switches to the account server and
+reloads its windows once.
+
+Connect discovery tries the built-in server, then a stored machine credential,
+then the bb account sign-in. When none of these load the servers and the app
+has no credential or account sign-in, the Server menu offers **Sign in to bb
+Connect…** above **Add Server…**. If bb Connect rejected the credentials, the
+item is **Sign in to bb Connect again…**. Other failures add no menu row; the
+menu keeps the servers from the last successful load, and the app logs the
+reason as `connect server sync skipped (<reason>)`. The sign-in item opens
+bb account sign-in in a desktop window, the same window as **Reconnect** below,
+from any selected server, including **This Mac** / **This Computer**. Once the
+new account session arrives, the window closes and the app reloads the
+account's servers into the menu. Without a known Connect server, the app signs
+in at `https://getbb.app`. Development builds use `BB_DEV_CONNECT_BASE_URL`
+when it is valid.
+
+The app command palette lists **Switch to <server>** for each inactive choice
+from this same Server menu, including Connect discovery. Palette list requests
+use the menu's discovery refresh policy (at most once per minute, with the
+existing ten-minute background refresh). The optional `window.bbDesktop`
+`getServerChoices`, `onServerChoicesChange`, and `selectServer` methods expose
+only `{id, name, active}`; custom server IDs are opaque hashes. Selection is
+validated against native choices and runs the menu's existing authentication,
+window navigation, and runtime lifecycle. Older desktop shells omit these actions.
+
+Desktop Settings → Server → **Show This Mac** (or **Show This Computer** off macOS)
+defaults to checked and is disabled while This Mac/Computer is selected.
+Unchecking hides the built-in server from server choices
+while another server is active and alternatives exist. It stays listed when
+active or when it is the only choice. This setting does not stop the local
+runtime or change the active server.
+
+The desktop stores `showBuiltinServer: false` in `<userData>/server-target.json`;
+missing means shown, and saving the default omits the field. Other top-level
+metadata is preserved. This is a desktop-local preference, with no server
+settings CLI/SDK endpoint. Builds with tolerant readers ignore the field and
+may drop it on save; older strict readers can reject the whole file, so keep a
+backup before rolling back to a build predating the tolerant-reader fix #5286.
+
+When a custom URL is removed while the built-in server is hidden, an active
+custom target switches to the first remaining custom URL in saved order, then
+the saved Connect server, then a discovered Connect server in handle order,
+and finally the built-in server if no alternative exists. With the checkbox
+checked, removing an active custom target still switches to the built-in server.
+The native menus, renderer Server popup, and app palette use the same choices.
 
 ### Server moves
 

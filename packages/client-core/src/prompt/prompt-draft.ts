@@ -3,13 +3,35 @@ import {
   type PromptInput,
   type PromptTextMention,
 } from "@bb/domain";
-import {
-  uploadedPromptAttachmentSchema,
-  type UploadedPromptAttachment,
-} from "@bb/server-contract";
+import { uploadedPromptAttachmentSchema } from "@bb/server-contract";
 import { z } from "zod";
 
-export type PromptDraftAttachment = UploadedPromptAttachment;
+const draftAttachmentFields = uploadedPromptAttachmentSchema
+  .omit({ sourceProjectId: true })
+  .extend({ sizeBytes: z.number().nonnegative().optional() });
+
+const promptDraftAttachmentSchema = z.union([
+  draftAttachmentFields.extend({
+    hostId: z.string().min(1),
+    sourceProjectId: z.undefined().optional(),
+  }),
+  draftAttachmentFields.extend({
+    sourceProjectId: z.string().min(1).optional(),
+    hostId: z.undefined().optional(),
+  }),
+]);
+
+export type PromptDraftAttachment = z.infer<typeof promptDraftAttachmentSchema>;
+
+function attachmentOwner(attachment: {
+  sourceProjectId?: string;
+  hostId?: string;
+}) {
+  if (attachment.hostId !== undefined) return { hostId: attachment.hostId };
+  return attachment.sourceProjectId === undefined
+    ? {}
+    : { sourceProjectId: attachment.sourceProjectId };
+}
 
 export interface PromptDraftState {
   text: string;
@@ -33,8 +55,14 @@ const promptDraftStorageSchema = z.object({
     .default([])
     .transform((items) =>
       items.flatMap((item) => {
-        const result = uploadedPromptAttachmentSchema.safeParse(item);
-        return result.success ? [result.data] : [];
+        const result = promptDraftAttachmentSchema.safeParse(item);
+        if (!result.success) return [];
+        const { sizeBytes, ...attachment } = result.data;
+        return [
+          sizeBytes === undefined || sizeBytes === 0
+            ? attachment
+            : { ...attachment, sizeBytes },
+        ];
       }),
     ),
 });
@@ -154,13 +182,33 @@ export function serializePromptDraftStorage(
   });
 }
 
+function sortObjectKeys(_key: string, value: unknown): unknown {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return value;
+  }
+  return Object.fromEntries(
+    Object.entries(value).sort(([left], [right]) =>
+      left < right ? -1 : left > right ? 1 : 0,
+    ),
+  );
+}
+
+function canonicalPromptDraftJson(draft: PromptDraftState): string {
+  return JSON.stringify(
+    {
+      text: draft.text,
+      mentions: draft.mentions,
+      attachments: draft.attachments,
+    },
+    sortObjectKeys,
+  );
+}
+
 export function arePromptDraftStatesEqual(
   left: PromptDraftState,
   right: PromptDraftState,
 ): boolean {
-  return (
-    serializePromptDraftStorage(left) === serializePromptDraftStorage(right)
-  );
+  return canonicalPromptDraftJson(left) === canonicalPromptDraftJson(right);
 }
 
 function getFileNameFromPath(path: string): string {
@@ -195,8 +243,17 @@ export function promptDraftToInput(draft: PromptDraftState): PromptInput[] {
   const trimEndIndex = draft.text.trimEnd().length;
   const text = draft.text.slice(trimStartLength, trimEndIndex);
   if (text.length > 0) {
+    const attachedPaths = new Set(
+      draft.attachments.map((attachment) => attachment.path),
+    );
     const mentions = normalizePromptTextMentions(
       draft.mentions.flatMap((mention) => {
+        if (
+          mention.resource.kind === "attachment" &&
+          !attachedPaths.has(mention.resource.path)
+        ) {
+          return [];
+        }
         const visibleStart = Math.max(mention.start, trimStartLength);
         const visibleEnd = Math.min(mention.end, trimEndIndex);
         return visibleStart < visibleEnd
@@ -219,6 +276,7 @@ export function promptDraftToInput(draft: PromptDraftState): PromptInput[] {
       input.push({
         type: "localImage",
         path: attachment.path,
+        ...attachmentOwner(attachment),
       });
       continue;
     }
@@ -226,8 +284,9 @@ export function promptDraftToInput(draft: PromptDraftState): PromptInput[] {
     input.push({
       type: "localFile",
       path: attachment.path,
+      ...attachmentOwner(attachment),
       name: attachment.name,
-      ...(attachment.sizeBytes > 0 ? { sizeBytes: attachment.sizeBytes } : {}),
+      ...(attachment.sizeBytes ? { sizeBytes: attachment.sizeBytes } : {}),
       ...(attachment.mimeType ? { mimeType: attachment.mimeType } : {}),
     });
   }
@@ -272,8 +331,8 @@ export function promptInputToDraft(
       attachments.push({
         type: "localImage",
         path: chunk.path,
+        ...attachmentOwner(chunk),
         name: getFileNameFromPath(chunk.path),
-        sizeBytes: 0,
       });
       continue;
     }
@@ -282,8 +341,11 @@ export function promptInputToDraft(
       attachments.push({
         type: "localFile",
         path: chunk.path,
+        ...attachmentOwner(chunk),
         name: chunk.name ?? getFileNameFromPath(chunk.path),
-        sizeBytes: chunk.sizeBytes ?? 0,
+        ...(chunk.sizeBytes === undefined
+          ? {}
+          : { sizeBytes: chunk.sizeBytes }),
         ...(chunk.mimeType ? { mimeType: chunk.mimeType } : {}),
       });
     }
@@ -302,6 +364,7 @@ export function getProjectStoredPromptAttachmentPaths(
   return [
     ...new Set(
       attachments.flatMap((attachment) => {
+        if (attachment.sourceProjectId !== undefined) return [];
         const path = attachment.path;
         const isRuntimeReadable =
           /^[\\/]/u.test(path) ||

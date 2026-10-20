@@ -1,3 +1,9 @@
+import {
+  bbDesktopServerChoicesSchema,
+  MACOS_TRAFFIC_LIGHT_INSET_PX,
+  MACOS_TRAFFIC_LIGHT_TOP_INSET_PX,
+  type BbDesktopServerChoice,
+} from "@bb/desktop-contract";
 import { contextBridge, ipcRenderer, webFrame } from "electron";
 import { appCommandIdSchema, type AppCommandId } from "@bb/domain";
 import {
@@ -18,6 +24,7 @@ import {
   bbDesktopBrowserControlStateSchema,
   bbDesktopBrowserRevealRequestSchema,
   type BbDesktopBrowserControlState,
+  type BbDesktopClipboardContent,
   type BbDesktopBrowserRevealRequest,
   bbDesktopInfoSchema,
   bbDesktopWindowStateSchema,
@@ -32,6 +39,7 @@ import {
   type BbDesktopBrowserFocusHandler,
   type BbDesktopBrowserSnapshotHandler,
   type BbDesktopBrowserStateHandler,
+  type BbDesktopBrowserState,
   type BbDesktopBrowserUnsubscribe,
   type BbDesktopBrowserViewBounds,
   type BbDesktopCloseWindowRequestHandler,
@@ -61,6 +69,8 @@ import {
   BB_DESKTOP_BROWSER_RELEASE_CONTROL_CHANNEL,
   BB_DESKTOP_BROWSER_REVEAL_CHANNEL,
   BB_DESKTOP_BROWSER_DETACH_CHANNEL,
+  BB_DESKTOP_BROWSER_LIST_THREADS_WITH_TABS_CHANNEL,
+  BB_DESKTOP_BROWSER_SET_THREAD_DISCARDED_CHANNEL,
   BB_DESKTOP_BROWSER_FOCUS_CHANNEL,
   BB_DESKTOP_BROWSER_FOCUSED_CHANNEL,
   BB_DESKTOP_BROWSER_FIND_IN_PAGE_CHANNEL,
@@ -85,8 +95,12 @@ import {
   BB_DESKTOP_BROWSER_PAGE_MESSAGE_CHANNEL,
 } from "./desktop-browser-ipc.js";
 import {
+  BB_DESKTOP_GET_SERVER_CHOICES_CHANNEL,
+  BB_DESKTOP_SERVER_CHOICES_CHANGED_CHANNEL,
+  BB_DESKTOP_SELECT_SERVER_CHANNEL,
   BB_DESKTOP_APP_COMMAND_CHANNEL,
   BB_DESKTOP_OPEN_WINDOW_FIND_CHANNEL,
+  BB_DESKTOP_RELOAD_WINDOW_CHANNEL,
   BB_DESKTOP_SET_SPLIT_NAVIGATION_ENABLED_CHANNEL,
   BB_DESKTOP_CLOSE_WINDOW_REQUEST_CHANNEL,
   BB_DESKTOP_CLOSE_WINDOW_RESPONSE_CHANNEL,
@@ -96,6 +110,7 @@ import {
   BB_DESKTOP_OPEN_DATA_DIRECTORY_CHANNEL,
   BB_DESKTOP_OPEN_SERVER_DAEMON_LOGS_CHANNEL,
   BB_DESKTOP_WINDOW_STATE_CHANGED_CHANNEL,
+  BB_DESKTOP_WRITE_CLIPBOARD_CHANNEL,
 } from "./desktop-window-command-ipc.js";
 import {
   getDesktopVersion,
@@ -122,6 +137,9 @@ function createInitialDesktopWindowState(): BbDesktopWindowState {
   };
 }
 
+const serverChoiceListeners = new Set<
+  (choices: BbDesktopServerChoice[]) => void
+>();
 const listeners = new Set<BbDesktopInfoChangeHandler>();
 const appCommandListeners = new Set<BbDesktopAppCommandHandler>();
 const windowStateListeners = new Set<BbDesktopWindowStateChangeHandler>();
@@ -191,6 +209,15 @@ async function invokeInstallUpdate(): Promise<void> {
 }
 
 const browserStateListeners = new Set<BbDesktopBrowserStateHandler>();
+const browserStates = new Map<string, BbDesktopBrowserState>();
+browserStateListeners.add((state) => {
+  browserStates.delete(state.tabId);
+  browserStates.set(state.tabId, state);
+  if (browserStates.size > 100) {
+    const oldest = browserStates.keys().next().value;
+    if (oldest !== undefined) browserStates.delete(oldest);
+  }
+});
 const browserControlListeners = new Set<
   (state: BbDesktopBrowserControlState) => void
 >();
@@ -304,6 +331,18 @@ const bbBrowserApi: BbDesktopBrowserApi = {
   detach(tabId): void {
     ipcRenderer.send(BB_DESKTOP_BROWSER_DETACH_CHANNEL, { tabId });
   },
+  setThreadDiscarded(request): void {
+    ipcRenderer.send(BB_DESKTOP_BROWSER_SET_THREAD_DISCARDED_CHANNEL, request);
+  },
+  async listThreadIdsWithTabs() {
+    return z
+      .array(z.string().min(1))
+      .parse(
+        await ipcRenderer.invoke(
+          BB_DESKTOP_BROWSER_LIST_THREADS_WITH_TABS_CHANNEL,
+        ),
+      );
+  },
   navigate(request): void {
     ipcRenderer.send(BB_DESKTOP_BROWSER_NAVIGATE_CHANNEL, request);
   },
@@ -338,7 +377,9 @@ const bbBrowserApi: BbDesktopBrowserApi = {
     );
   },
   onState(listener): BbDesktopBrowserUnsubscribe {
-    return addListener(browserStateListeners, listener);
+    const unsubscribe = addListener(browserStateListeners, listener);
+    for (const state of browserStates.values()) listener(state);
+    return unsubscribe;
   },
   onOpenTab(listener): BbDesktopBrowserUnsubscribe {
     return addListener(browserOpenTabListeners, listener);
@@ -383,6 +424,17 @@ const bbBrowserApi: BbDesktopBrowserApi = {
 
 const bbDesktopApi: BbDesktopApi = {
   browser: bbBrowserApi,
+  async getServerChoices() {
+    return bbDesktopServerChoicesSchema.parse(
+      await ipcRenderer.invoke(BB_DESKTOP_GET_SERVER_CHOICES_CHANNEL),
+    );
+  },
+  onServerChoicesChange(listener) {
+    return addListener(serverChoiceListeners, listener);
+  },
+  selectServer(id) {
+    ipcRenderer.send(BB_DESKTOP_SELECT_SERVER_CHANNEL, id);
+  },
   get lastCheckedAt() {
     return currentInfo.lastCheckedAt;
   },
@@ -392,6 +444,8 @@ const bbDesktopApi: BbDesktopApi = {
   get pendingVersion() {
     return currentInfo.pendingVersion;
   },
+  macosTrafficLightInset: MACOS_TRAFFIC_LIGHT_INSET_PX,
+  macosTrafficLightTopInset: MACOS_TRAFFIC_LIGHT_TOP_INSET_PX,
   platform: resolveBbDesktopPlatform(process.platform),
   get serverDaemonLogsAvailable() {
     return currentInfo.serverDaemonLogsAvailable;
@@ -455,6 +509,9 @@ const bbDesktopApi: BbDesktopApi = {
   async openServerDaemonLogs(): Promise<void> {
     await ipcRenderer.invoke(BB_DESKTOP_OPEN_SERVER_DAEMON_LOGS_CHANNEL);
   },
+  reloadWindow(): void {
+    ipcRenderer.send(BB_DESKTOP_RELOAD_WINDOW_CHANNEL);
+  },
   setSplitNavigationEnabled(
     enabled: boolean,
     directionalCommands?: readonly AppCommandId[],
@@ -468,7 +525,16 @@ const bbDesktopApi: BbDesktopApi = {
   setTheme(theme: BbDesktopTheme): void {
     ipcRenderer.send(BB_DESKTOP_SET_THEME_CHANNEL, theme);
   },
+  async writeClipboard(content: BbDesktopClipboardContent): Promise<void> {
+    await ipcRenderer.invoke(BB_DESKTOP_WRITE_CLIPBOARD_CHANNEL, content);
+  },
 };
+
+forwardParsed(
+  BB_DESKTOP_SERVER_CHOICES_CHANGED_CHANNEL,
+  bbDesktopServerChoicesSchema,
+  serverChoiceListeners,
+);
 
 ipcRenderer.on(BB_DESKTOP_INFO_CHANGED_CHANNEL, (_event, payload: unknown) => {
   applyDesktopInfoPayload(payload);

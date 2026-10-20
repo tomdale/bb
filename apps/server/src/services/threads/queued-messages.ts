@@ -1,4 +1,5 @@
 import {
+  getLatestThreadSequence,
   claimNextQueuedThreadMessageGroup,
   claimQueuedThreadMessageGroup,
   createQueuedThreadMessageInTransaction,
@@ -8,9 +9,11 @@ import {
   getQueuedThreadMessage,
   getStoredProviderSession,
   getThread,
+  holdQueuedThreadMessageForEdit,
   isOrdinaryTurnEndQueuedMessage,
   isThreadQueueAutoSendPaused,
   releaseQueuedMessageClaim,
+  releaseQueuedThreadMessageEditHold,
   releaseStaleQueuedMessageClaims,
   type DbQueryConnection,
   type QueuedThreadMessageGroupClaimPolicy,
@@ -18,6 +21,7 @@ import {
 } from "@bb/db";
 import {
   flattenPromptInputGroups,
+  isQueuedMessageFailedState,
   queuedMessageSystemNoticeSchema,
 } from "@bb/domain";
 import type {
@@ -29,6 +33,7 @@ import type {
 } from "@bb/domain";
 import type {
   CreateQueuedMessageRequest,
+  QueuedMessageEditHoldResponse,
   SendMessageRequest,
   SendQueuedMessageMode,
 } from "@bb/server-contract";
@@ -61,6 +66,7 @@ import {
 import { appendClientTurnEventInTransaction } from "./thread-events.js";
 import {
   getActiveTurnId,
+  isActiveTurnMainRunIdle,
   getLastProviderThreadId,
   isManualCompactionActive,
 } from "./thread-events.js";
@@ -68,7 +74,7 @@ import { recoverThreadModelOverride } from "./thread-execution-override.js";
 import { requireReadyThreadEnvironment } from "./thread-turn-dispatch.js";
 import { resolvePermissionEscalation } from "./thread-runtime-config.js";
 import { hasMessageDispatchHooks } from "./dispatch-hooks.js";
-import { attemptDispatch } from "./dispatch-attempt.js";
+import { attemptDispatch, threadTargetHostId } from "./dispatch-attempt.js";
 import { deliverParentSystemMessage } from "./parent-system-messages.js";
 import {
   createQueuedMessageAutoSendPausedError,
@@ -94,7 +100,7 @@ import {
   threadEnvironmentUnavailableDetails,
   throwThreadEnvironmentUnavailable,
 } from "../lib/lifecycle-api-errors.js";
-import { validatePromptAttachmentReferences } from "../projects/attachments.js";
+import { resolvePromptAttachmentReferences } from "../projects/attachments.js";
 import { requestQueuedMessageDispatch } from "./queued-message-dispatch.js";
 import { assertThreadHostAcceptsWork } from "./thread-host-admission.js";
 import {
@@ -136,7 +142,8 @@ export function createAutomaticQueuedMessageGroupEligibility(
   const activeTurnId = getActiveTurnId(deps, args.thread.id);
   return (group) =>
     group.every((member) => {
-      if (member.failureReason !== null && !args.retryingFailure) return false;
+      if (isQueuedMessageFailedState(member.state) && !args.retryingFailure)
+        return false;
       const waitingOn = parseStoredQueuedThreadMessageWaitingOn(member);
       switch (waitingOn?.kind) {
         case undefined:
@@ -145,6 +152,11 @@ export function createAutomaticQueuedMessageGroupEligibility(
         case "time":
           return member.sendAt !== null && member.sendAt <= args.now;
         case "thread-busy":
+          return (
+            args.thread.status === "idle" ||
+            args.thread.status === "pending" ||
+            isActiveTurnMainRunIdle(deps, args.thread)
+          );
         case "stopping":
           return (
             args.thread.status === "idle" || args.thread.status === "pending"
@@ -220,11 +232,12 @@ export async function createQueuedMessageForThread(
 ): Promise<ThreadQueuedMessage> {
   const { payload, thread } = args;
   ensureThreadQueueIsWritable(thread);
-  await validatePromptAttachmentReferences({
+  const input = await resolvePromptAttachmentReferences({
     db: deps.db,
     dataDir: deps.config.dataDir,
     input: payload.input,
     projectId: thread.projectId,
+    hostId: threadTargetHostId(deps, thread),
   });
   const execution = await buildExecutionOptions(deps, payload, {
     threadId: thread.id,
@@ -243,7 +256,7 @@ export async function createQueuedMessageForThread(
         const { hasProviderSession } = admitQueuedMessage(tx, currentThread);
         const queuedMessage = createQueuedThreadMessageInTransaction(tx, {
           threadId: thread.id,
-          content: payload.input,
+          content: input,
           senderThreadId,
           model: execution.model,
           reasoningLevel: execution.reasoningLevel,
@@ -278,7 +291,10 @@ export async function createQueuedMessageForThread(
       providerId: thread.providerId,
     });
   }
-  if (currentThread.status === "idle" && hasProviderSession) {
+  if (
+    (currentThread.status === "idle" && hasProviderSession) ||
+    isActiveTurnMainRunIdle(deps, currentThread)
+  ) {
     requestQueuedMessageDispatch(deps, {
       kind: "thread-ready",
       threadId: thread.id,
@@ -304,6 +320,7 @@ interface FormatQueuedMessageInputForSenderArgs {
 }
 
 const STALE_QUEUED_MESSAGE_CLAIM_MS = 5 * 60 * 1000;
+const QUEUED_MESSAGE_EDIT_HOLD_LEASE_MS = 2 * 60 * 1000;
 const activeQueuedMessageClaimTokens = new Set<string>();
 
 function respectsManualStopPause(
@@ -595,6 +612,9 @@ async function sendClaimedQueuedMessageForIdleProviderThread(
     thread.id,
     ["events-appended", "queue-changed", "status-changed"],
     {
+      timelineSequence: getLatestThreadSequence(deps.db, {
+        threadId: thread.id,
+      }),
       eventTypes: ["client/turn/requested"],
       ...buildThreadStatusChangeMetadata(deps, activeThread),
     },
@@ -910,4 +930,67 @@ export function releaseStaleQueuedMessageDispatchClaims(
     claimedBefore: now - STALE_QUEUED_MESSAGE_CLAIM_MS,
     protectedClaimTokens: [...activeQueuedMessageClaimTokens],
   });
+}
+
+export function releaseOrphanedQueuedMessageDispatchClaims(
+  deps: Pick<AppDeps, "db" | "hub">,
+  now: number,
+): number {
+  return releaseStaleQueuedMessageClaims(deps.db, deps.hub, {
+    claimedBefore: now + 1,
+    protectedClaimTokens: [...activeQueuedMessageClaimTokens],
+  });
+}
+
+interface QueuedMessageEditHoldArgs {
+  queuedMessageId: string;
+  threadId: string;
+}
+
+export function holdQueuedMessageForEdit(
+  deps: Pick<AppDeps, "db">,
+  args: QueuedMessageEditHoldArgs,
+): QueuedMessageEditHoldResponse {
+  const result = holdQueuedThreadMessageForEdit(deps.db, {
+    heldUntil: Date.now() + QUEUED_MESSAGE_EDIT_HOLD_LEASE_MS,
+    id: args.queuedMessageId,
+    threadId: args.threadId,
+  });
+  switch (result.kind) {
+    case "not_found":
+      throw new ApiError(404, "invalid_request", "Queued message not found");
+    case "claimed":
+      throw new ApiError(
+        409,
+        "invalid_request",
+        "Queued message is already being sent",
+      );
+    case "held":
+      return { leaseMs: QUEUED_MESSAGE_EDIT_HOLD_LEASE_MS };
+  }
+}
+
+export function requestEditReleasedQueuedMessageDispatch(
+  deps: LoggedPendingInteractionWorkSessionDeps,
+  args: QueuedMessageEditHoldArgs,
+): void {
+  requestQueuedMessageDispatch(deps, {
+    kind: "edit-released",
+    queuedMessageId: args.queuedMessageId,
+    threadId: args.threadId,
+  });
+}
+
+export function releaseQueuedMessageEditHold(
+  deps: LoggedPendingInteractionWorkSessionDeps,
+  args: QueuedMessageEditHoldArgs,
+): void {
+  if (
+    releaseQueuedThreadMessageEditHold(deps.db, {
+      id: args.queuedMessageId,
+      threadId: args.threadId,
+    })
+  ) {
+    requestEditReleasedQueuedMessageDispatch(deps, args);
+  }
 }

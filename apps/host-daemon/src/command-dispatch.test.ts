@@ -1,5 +1,4 @@
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import type { AgentRuntime } from "@bb/agent-runtime";
 import type {
@@ -8,8 +7,8 @@ import type {
   ProviderCliStatus,
 } from "@bb/host-daemon-contract";
 import type { HostWorkspace } from "@bb/host-workspace";
-import { createDeferredPromise } from "@bb/test-helpers";
-import { afterEach, describe, expect, it, vi, type Mock } from "vitest";
+import { createDeferredPromise, makeTempDir } from "@bb/test-helpers";
+import { describe, expect, it, vi, type Mock } from "vitest";
 import {
   dispatchCommand,
   dispatchOnlineRpcCommand,
@@ -42,22 +41,6 @@ interface BusySkillCatalogFixture {
   runtime: FakeDispatchRuntime;
   source: HostDaemonInjectedSkillSource;
 }
-
-const tempDirs: string[] = [];
-
-async function makeTempDir(prefix: string): Promise<string> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
-
-afterEach(async () => {
-  await Promise.all(
-    tempDirs
-      .splice(0)
-      .map((dir) => fs.rm(dir, { recursive: true, force: true })),
-  );
-});
 
 async function writeInjectedSkillSource(
   args: WriteInjectedSkillSourceArgs,
@@ -181,6 +164,7 @@ function createRuntime(): FakeDispatchRuntime {
       models: [],
       selectedOnlyModels: [],
     })),
+    listCommands: vi.fn(async () => ({ commands: [] })),
     providerHealth: vi.fn(async () => ({ supported: false as const })),
     providerUsage: vi.fn(async () => ({ supported: false as const })),
     providerInstallationStatus: vi.fn(async () => {
@@ -418,11 +402,50 @@ async function runSuccessfulClaudeCodeUpdateVerification(args: {
         createProviderCliInstallEventStream(events),
       threadStorageRootPath: "/tmp/bb-thread-storage",
     },
+    new AbortController().signal,
   );
   return { events, providerInstallationStatus, result };
 }
 
 describe("dispatchCommand", () => {
+  it("probes projectless commands in a stable empty directory and preserves selected workspaces", async () => {
+    const dataDir = await makeTempDir("bb-command-catalog-");
+    const workspace = path.join(dataDir, "workspace");
+    await fs.mkdir(workspace);
+    await fs.writeFile(path.join(workspace, "project-file"), "project");
+    const directories: string[] = [];
+    const options = makeDispatchOptions({
+      dataDir,
+      runtimeManager: new RuntimeManager({
+        createRuntime,
+        provisionWorkspace: async () => createWorkspace(),
+      }),
+      listCommands: async ({ cwd }) => {
+        directories.push(cwd);
+        const files = await fs.readdir(cwd);
+        return { commands: files.map((name) => ({ name, description: "" })) };
+      },
+    });
+    for (const cwd of [null, null, workspace]) {
+      const result = await dispatchOnlineRpcCommand(
+        {
+          type: "provider.list_commands",
+          providerId: "pi",
+          bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
+          cwd,
+        },
+        options,
+        new AbortController().signal,
+      );
+      expect(result).toEqual({
+        commands:
+          cwd === null ? [] : [{ name: "project-file", description: "" }],
+      });
+    }
+    expect(directories[0]).toBe(directories[1]);
+    expect(directories[2]).toBe(workspace);
+  });
+
   it("steers an auto submit when the active turn appears after the server snapshot", async () => {
     const runtime = createRuntime();
     const manager = new RuntimeManager({
@@ -457,7 +480,7 @@ describe("dispatchCommand", () => {
       },
     );
 
-    expect(result).toEqual({});
+    expect(result).toEqual({ trace: { spans: [] } });
     expect(runtime.waitForActiveTurn).toHaveBeenCalledWith("thread-1", {
       timeoutMs: 5_000,
     });
@@ -501,7 +524,7 @@ describe("dispatchCommand", () => {
       },
     );
 
-    expect(result).toEqual({});
+    expect(result).toEqual({ trace: { spans: [] } });
     expect(runtime.steerTurn).toHaveBeenCalledWith(
       expect.objectContaining({ expectedTurnId: "turn-new" }),
     );
@@ -535,7 +558,7 @@ describe("dispatchCommand", () => {
       },
     );
 
-    expect(result).toEqual({});
+    expect(result).toEqual({ trace: { spans: [] } });
     expect(runtime.waitForActiveTurn).not.toHaveBeenCalled();
     expect(runtime.runTurn).toHaveBeenCalledOnce();
   });
@@ -881,7 +904,7 @@ describe("dispatchCommand", () => {
       threadStorageRootPath: "/tmp/bb-thread-storage",
     });
 
-    expect(result).toEqual({});
+    expect(result).toEqual({ trace: { spans: [] } });
     expect(oldRuntime.stopThread).toHaveBeenCalledWith({
       threadId: "thread-1",
     });
@@ -1911,45 +1934,49 @@ describe("dispatchCommand", () => {
       action: "update",
     };
 
-    const result = await dispatchOnlineRpcCommand(command, {
-      dataDir,
-      logger: silentLogger,
-      eventSink: {
-        emit: vi.fn(),
-        flush: vi.fn(async () => undefined),
-      },
-      fetchProjectAttachment: async () => {
-        throw new Error("Unexpected project attachment fetch");
-      },
-      fetchPluginHostArtifact: fetchDispatchTestArtifact,
-      ...unexpectedProviderMaintenance,
-      runtimeManager: manager,
-      providerInstallationRun: async () => ({
-        available: true,
-        command: {
-          command: "codex",
-          args: ["update"],
-          displayCommand: "codex update",
+    const result = await dispatchOnlineRpcCommand(
+      command,
+      {
+        dataDir,
+        logger: silentLogger,
+        eventSink: {
+          emit: vi.fn(),
+          flush: vi.fn(async () => undefined),
         },
-        verification: { kind: "version_changed", previousVersion: "0.1.0" },
-      }),
-      providerInstallationStatus: async () => ({
-        executableName: "codex",
-        executablePath: "/usr/local/bin/codex",
-        installed: true,
-        installSource: "external",
-        currentVersion: "0.2.0",
-        latestVersion: "0.2.0",
-        minimumSupportedVersion: null,
-        npmPackageName: null,
-        npmGlobalPackageVersion: null,
-        installAction: null,
-        needsUpdate: false,
-        versionUnsupported: false,
-      }),
-      streamProviderInstallation,
-      threadStorageRootPath: "/tmp/bb-thread-storage",
-    });
+        fetchProjectAttachment: async () => {
+          throw new Error("Unexpected project attachment fetch");
+        },
+        fetchPluginHostArtifact: fetchDispatchTestArtifact,
+        ...unexpectedProviderMaintenance,
+        runtimeManager: manager,
+        providerInstallationRun: async () => ({
+          available: true,
+          command: {
+            command: "codex",
+            args: ["update"],
+            displayCommand: "codex update",
+          },
+          verification: { kind: "version_changed", previousVersion: "0.1.0" },
+        }),
+        providerInstallationStatus: async () => ({
+          executableName: "codex",
+          executablePath: "/usr/local/bin/codex",
+          installed: true,
+          installSource: "external",
+          currentVersion: "0.2.0",
+          latestVersion: "0.2.0",
+          minimumSupportedVersion: null,
+          npmPackageName: null,
+          npmGlobalPackageVersion: null,
+          installAction: null,
+          needsUpdate: false,
+          versionUnsupported: false,
+        }),
+        streamProviderInstallation,
+        threadStorageRootPath: "/tmp/bb-thread-storage",
+      },
+      new AbortController().signal,
+    );
 
     expect(result).toEqual({ events });
     expect(streamProviderInstallation).toHaveBeenCalledWith(
@@ -2038,6 +2065,7 @@ describe("dispatchCommand", () => {
           streamProviderInstallation,
           threadStorageRootPath: "/tmp/bb-thread-storage",
         },
+        new AbortController().signal,
       );
 
       expect(result).toEqual({ events: testCase.events });
@@ -2117,6 +2145,7 @@ describe("dispatchCommand", () => {
           ]),
         threadStorageRootPath: "/tmp/bb-thread-storage",
       },
+      new AbortController().signal,
     );
 
     expect(providerInstallationStatus).toHaveBeenCalledOnce();
@@ -2178,6 +2207,7 @@ describe("dispatchCommand", () => {
         streamProviderInstallation,
         threadStorageRootPath: "/tmp/bb-thread-storage",
       },
+      new AbortController().signal,
     );
 
     expect(providerInstallationStatus).not.toHaveBeenCalled();
@@ -2370,7 +2400,7 @@ describe("dispatchCommand", () => {
       threadStorageRootPath: "/tmp/bb-thread-storage",
     });
 
-    expect(result).toEqual({});
+    expect(result).toEqual({ trace: { spans: [] } });
     expect(fixture.runtime.runTurn).toHaveBeenCalledTimes(1);
     expect(fixture.runtime.resumeThread).not.toHaveBeenCalled();
     expect(fixture.createRuntimeSpy).toHaveBeenCalledTimes(1);
@@ -2412,6 +2442,7 @@ describe("dispatchCommand", () => {
           cwd: "/tmp/workspace",
         },
         options,
+        new AbortController().signal,
       ),
     ).resolves.toEqual({ supported: false });
     await expect(
@@ -2422,6 +2453,7 @@ describe("dispatchCommand", () => {
           bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
         },
         options,
+        new AbortController().signal,
       ),
     ).resolves.toEqual({ supported: false });
 

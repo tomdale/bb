@@ -22,6 +22,10 @@ import type { TunnelClientLogger } from "./logger.js";
 const HEARTBEAT_INTERVAL_MS = 20_000;
 const HEARTBEAT_DEADLINE_MS = 60_000;
 const HEARTBEAT_LATE_TICK_MS = HEARTBEAT_INTERVAL_MS + 5_000;
+const SEND_BUFFER_HIGH_WATER_BYTES = 1024 * 1024;
+const SEND_BUFFER_POLL_MS = 10;
+const REFUSED_ORIGIN_COOLDOWN_MS = 1_000;
+const MAX_REFUSED_ORIGINS = 1024;
 
 const UNREGISTERED_PORT_BODY = "this port is not shared";
 const textEncoder = new TextEncoder();
@@ -109,6 +113,16 @@ interface ResolvedStreamOrigin {
   host?: string;
 }
 
+export interface TunnelSessionSnapshot {
+  openHttpStreams: number;
+  openWsStreams: number;
+  bytesReceived: number;
+  bytesSent: number;
+  lastReceivedAgeMs: number | null;
+  lastSentAgeMs: number | null;
+  bufferedBytes: number;
+}
+
 export type StreamOriginResult =
   | { kind: "ok"; resolved: ResolvedStreamOrigin }
   | { kind: "unregistered" };
@@ -123,13 +137,22 @@ interface TunnelSessionOptions {
 }
 
 export class TunnelSession {
+  private readonly refusedOrigins = new Map<
+    string,
+    { retryAt: number; reason: string }
+  >();
   private readonly httpStreams = new Map<number, HttpStream>();
   private readonly wsStreams = new Map<number, WsStream>();
   private lastAck = Date.now();
+  private lastReceivedAckAt: number | null = null;
   private lastHeartbeatTickAt = 0;
   private stallGraceSinceAck = false;
   private heartbeat: ReturnType<typeof setInterval> | undefined;
   private remoteClientCount = 0;
+  private bytesReceived = 0;
+  private bytesSent = 0;
+  private lastReceivedAt: number | null = null;
+  private lastSentAt: number | null = null;
   lastRemoteActivityAt: number | null = null;
 
   constructor(private readonly options: TunnelSessionOptions) {}
@@ -138,10 +161,28 @@ export class TunnelSession {
     return this.remoteClientCount;
   }
 
+  get lastHeartbeatAckAt(): number | null {
+    return this.lastReceivedAckAt;
+  }
+
+  snapshot(now: number): TunnelSessionSnapshot {
+    return {
+      openHttpStreams: this.httpStreams.size,
+      openWsStreams: this.wsStreams.size,
+      bytesReceived: this.bytesReceived,
+      bytesSent: this.bytesSent,
+      lastReceivedAgeMs:
+        this.lastReceivedAt === null ? null : now - this.lastReceivedAt,
+      lastSentAgeMs: this.lastSentAt === null ? null : now - this.lastSentAt,
+      bufferedBytes: this.options.tunnel.bufferedAmount,
+    };
+  }
+
   start(): void {
     const { tunnel } = this.options;
     const monotonicNow = this.options.monotonicNow ?? (() => performance.now());
     this.lastAck = Date.now();
+    this.lastReceivedAckAt = null;
     this.lastHeartbeatTickAt = monotonicNow();
     this.heartbeat = setInterval(() => {
       const tickAt = monotonicNow();
@@ -159,13 +200,16 @@ export class TunnelSession {
         tunnel.terminate();
         return;
       }
-      tunnel.send(HEARTBEAT_REQUEST);
+      this.sendRaw(HEARTBEAT_REQUEST, Buffer.byteLength(HEARTBEAT_REQUEST));
     }, HEARTBEAT_INTERVAL_MS);
 
     tunnel.on("message", (data: Buffer, isBinary: boolean) => {
+      this.bytesReceived += data.byteLength;
+      this.lastReceivedAt = Date.now();
       if (!isBinary) {
         if (data.toString() === HEARTBEAT_RESPONSE) {
           this.lastAck = Date.now();
+          this.lastReceivedAckAt = this.lastAck;
           this.stallGraceSinceAck = false;
         }
         return;
@@ -184,6 +228,7 @@ export class TunnelSession {
     for (const s of this.httpStreams.values()) s.abort.abort();
     for (const s of this.wsStreams.values())
       s.socket.close(1001, "tunnel closed");
+    this.refusedOrigins.clear();
     this.httpStreams.clear();
     this.wsStreams.clear();
     this.setRemoteClients(0);
@@ -209,14 +254,33 @@ export class TunnelSession {
 
   private send(frame: Frame): void {
     if (this.options.tunnel.readyState === NodeWebSocket.OPEN) {
-      this.options.tunnel.send(encodeFrame(frame));
+      const encoded = encodeFrame(frame);
+      this.sendRaw(encoded, encoded.byteLength);
     }
+  }
+
+  private async waitForSendBuffer(signal: AbortSignal): Promise<void> {
+    const { tunnel } = this.options;
+    while (
+      !signal.aborted &&
+      tunnel.readyState === NodeWebSocket.OPEN &&
+      tunnel.bufferedAmount > SEND_BUFFER_HIGH_WATER_BYTES
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, SEND_BUFFER_POLL_MS));
+    }
+  }
+
+  private sendRaw(data: string | Uint8Array, byteLength: number): void {
+    this.options.tunnel.send(data);
+    this.bytesSent += byteLength;
+    this.lastSentAt = Date.now();
   }
 
   private onFrame(frame: Frame): void {
     this.noteActivity();
     switch (frame.type) {
       case "open-http": {
+        if (this.rejectRefusedOrigin(frame.streamId, frame.target)) return;
         const stream: HttpStream = {
           meta: frame,
           chunks: [],
@@ -288,6 +352,62 @@ export class TunnelSession {
     this.send({ type: "body-end", streamId });
   }
 
+  private rejectRefusedOrigin(
+    streamId: number,
+    target: string | undefined,
+  ): boolean {
+    if (target === undefined) return false;
+    const result = this.options.resolveOrigin(target);
+    if (result.kind !== "ok") return false;
+    const refused = this.refusedOrigins.get(result.resolved.origin);
+    if (!refused) return false;
+    const now = this.options.monotonicNow?.() ?? performance.now();
+    if (now >= refused.retryAt) {
+      refused.retryAt = now + REFUSED_ORIGIN_COOLDOWN_MS;
+      return false;
+    }
+    this.send({
+      type: "close-stream",
+      streamId,
+      code: 1011,
+      reason: refused.reason,
+    });
+    return true;
+  }
+
+  private recordOriginFailure(
+    target: string | undefined,
+    origin: string,
+    error: unknown,
+  ): boolean {
+    if (
+      target === undefined ||
+      !(error instanceof Error) ||
+      !("code" in error) ||
+      error.code !== "ECONNREFUSED"
+    )
+      return false;
+    if (
+      !this.refusedOrigins.has(origin) &&
+      this.refusedOrigins.size >= MAX_REFUSED_ORIGINS
+    ) {
+      const oldest = this.refusedOrigins.keys().next().value;
+      if (oldest !== undefined) this.refusedOrigins.delete(oldest);
+    }
+    if (!this.refusedOrigins.has(origin)) {
+      this.options.log.warn(
+        `exposed origin ${origin} entered cooldown: ${String(error)}`,
+      );
+    }
+    this.refusedOrigins.set(origin, {
+      retryAt:
+        (this.options.monotonicNow?.() ?? performance.now()) +
+        REFUSED_ORIGIN_COOLDOWN_MS,
+      reason: String(error),
+    });
+    return true;
+  }
+
   private async executeHttp(
     streamId: number,
     stream: HttpStream,
@@ -315,6 +435,7 @@ export class TunnelSession {
         body,
         signal: stream.abort.signal,
       });
+      this.refusedOrigins.delete(resolved.origin);
       const originTtfbMs = performance.now() - startedAt;
       const respHeaders = responseHeaderPairs(res);
       const initialThreadLoad = isInitialThreadLoad(meta.path);
@@ -336,6 +457,7 @@ export class TunnelSession {
           chunk instanceof Uint8Array ? chunk : Buffer.from(String(chunk));
         responseBytes += value.byteLength;
         for (const frame of chunkBody(streamId, value)) this.send(frame);
+        await this.waitForSendBuffer(stream.abort.signal);
       }
       this.send({ type: "body-end", streamId });
       if (initialThreadLoad) {
@@ -355,9 +477,10 @@ export class TunnelSession {
       }
     } catch (e) {
       if (!stream.abort.signal.aborted) {
-        this.options.log.warn(
-          `origin http error on ${meta.method} ${new URL(meta.path, "http://bb.local").pathname}: ${String(e)}`,
-        );
+        if (!this.recordOriginFailure(meta.target, resolved.origin, e))
+          this.options.log.warn(
+            `origin http error on ${meta.method} ${new URL(meta.path, "http://bb.local").pathname}: ${String(e)}`,
+          );
         this.send({
           type: "close-stream",
           streamId,
@@ -371,6 +494,7 @@ export class TunnelSession {
   }
 
   private openOriginWs(frame: OpenWsFrame): void {
+    if (this.rejectRefusedOrigin(frame.streamId, frame.target)) return;
     const originResult = this.options.resolveOrigin(frame.target);
     if (originResult.kind === "unregistered") {
       this.send({
@@ -413,6 +537,7 @@ export class TunnelSession {
     if (countsAsRemoteClient) this.adjustRemoteClients(1);
 
     socket.on("open", () => {
+      this.refusedOrigins.delete(resolved.origin);
       stream.open = true;
       this.send({
         type: "ws-open-ack",
@@ -444,7 +569,8 @@ export class TunnelSession {
       }
     });
     socket.on("error", (e: Error) => {
-      this.options.log.warn(`origin ws error on ${frame.path}: ${e.message}`);
+      if (!this.recordOriginFailure(frame.target, resolved.origin, e))
+        this.options.log.warn(`origin ws error on ${frame.path}: ${e.message}`);
     });
   }
 }

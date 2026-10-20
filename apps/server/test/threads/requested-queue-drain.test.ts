@@ -1,4 +1,5 @@
 import {
+  claimNextQueuedThreadMessageGroup,
   createQueuedThreadMessage,
   listEvents,
   listQueuedThreadMessages,
@@ -16,6 +17,7 @@ import {
   requestQueuedMessageDispatch,
   runQueuedMessageDispatch,
 } from "../../src/services/threads/queued-message-dispatch.js";
+import { runStartupRecoverySweep } from "../../src/services/system/periodic-sweeps.js";
 import { applyLoggedThreadLifecycleEvent } from "../../src/services/threads/lifecycle-outcome.js";
 import { acceptThreadSendRequest } from "../../src/services/threads/thread-send-request.js";
 import { textInput } from "../helpers/prompt-input.js";
@@ -125,6 +127,83 @@ async function stopThread(harness: TestAppHarness, threadId: string) {
 }
 
 describe("the requested queue drain", () => {
+  it.each([
+    { finish: "save", sentText: "SAVED EDIT" },
+    { finish: "cancel", sentText: "ORIGINAL" },
+  ] as const)(
+    "holds a queued message through turn completion while it is edited, then sends it on $finish",
+    async ({ finish, sentText }) => {
+      await withTestHarness(async (harness) => {
+        const { thread } = seedRunnableThread(harness, {
+          hostId: `host-edit-hold-${finish}`,
+          status: "active",
+        });
+        const edited = seedQueuedMessage(harness.deps, {
+          threadId: thread.id,
+          content: textInput("ORIGINAL"),
+          waitingOn: { kind: "thread-busy" },
+        });
+        const behind = seedQueuedMessage(harness.deps, {
+          threadId: thread.id,
+          content: textInput("BEHIND"),
+          waitingOn: { kind: "thread-busy" },
+        });
+        const editHoldPath = `/api/v1/threads/${thread.id}/queued-messages/${edited.id}/edit-hold`;
+        const holdResponse = await harness.app.request(editHoldPath, {
+          method: "POST",
+        });
+        expect(holdResponse.status).toBe(200);
+        const turnsBefore = turnRequests(harness, thread.id).length;
+
+        applyLoggedThreadLifecycleEvent(harness.deps, {
+          event: { type: "run.succeeded" },
+          threadId: thread.id,
+        });
+        await runQueuedMessageDispatch(harness.deps, {
+          kind: "thread-ready",
+          threadId: thread.id,
+        });
+        await runQueuedMessageDispatch(harness.deps, {
+          kind: "idle-recovery",
+          now: Date.now(),
+        });
+
+        expect(turnRequests(harness, thread.id)).toHaveLength(turnsBefore);
+        expect(
+          listQueuedThreadMessages(harness.db, thread.id).map((row) => row.id),
+        ).toEqual([edited.id, behind.id]);
+
+        const finishResponse =
+          finish === "save"
+            ? await harness.app.request(
+                `/api/v1/threads/${thread.id}/queued-messages/${edited.id}`,
+                {
+                  method: "PATCH",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify({
+                    expectedUpdatedAt: edited.updatedAt,
+                    input: textInput("SAVED EDIT"),
+                  }),
+                },
+              )
+            : await harness.app.request(editHoldPath, { method: "DELETE" });
+        expect(finishResponse.status).toBe(200);
+
+        await vi.waitFor(() => {
+          expect(turnRequests(harness, thread.id)).toHaveLength(
+            turnsBefore + 1,
+          );
+        });
+        expect(turnRequests(harness, thread.id).at(-1)?.data).toContain(
+          sentText,
+        );
+        expect(
+          listQueuedThreadMessages(harness.db, thread.id).map((row) => row.id),
+        ).toEqual([behind.id]);
+      });
+    },
+  );
+
   it("keeps child interruption details when an offline parent notice dispatches", async () => {
     await withTestHarness(async (harness) => {
       const { thread, environment } = seedRunnableThread(harness, {
@@ -853,6 +932,48 @@ describe("queue recovery", () => {
       expect(listQueuedThreadMessages(harness.db, missing.id)).toEqual([]);
       expect(listQueuedThreadMessages(harness.db, loaded.id)).toHaveLength(1);
       expect(listQueuedThreadMessages(harness.db, pending.id)).toHaveLength(1);
+    });
+  });
+
+  it("releases a claim left by a killed server at startup so the message is listed and sent", async () => {
+    await withTestHarness(async (harness) => {
+      const { thread } = seedRunnableThread(harness, {
+        hostId: "host-orphaned-claim",
+        status: "idle",
+      });
+      const queued = seedQueuedMessage(harness.deps, {
+        content: textInput("ORPHANED CLAIM"),
+        threadId: thread.id,
+      });
+      expect(
+        claimNextQueuedThreadMessageGroup(
+          harness.db,
+          harness.deps.hub,
+          thread.id,
+          () => true,
+        ),
+      ).toHaveLength(1);
+      const listedIds = async () => {
+        const response = await harness.app.request(
+          `/api/v1/threads/${thread.id}/queued-messages`,
+        );
+        const rows: { id: string }[] = await response.json();
+        return rows.map((row) => row.id);
+      };
+      const turnsBefore = turnRequests(harness, thread.id).length;
+      expect(await listedIds()).toEqual([]);
+
+      await runStartupRecoverySweep(harness.deps);
+
+      expect(await listedIds()).toEqual([queued.id]);
+      await runQueuedMessageDispatch(harness.deps, {
+        kind: "idle-recovery",
+        now: Date.now(),
+      });
+      const turns = turnRequests(harness, thread.id);
+      expect(turns).toHaveLength(turnsBefore + 1);
+      expect(turns.at(-1)?.data).toContain("ORPHANED CLAIM");
+      expect(await listedIds()).toEqual([]);
     });
   });
 });

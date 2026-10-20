@@ -56,6 +56,7 @@ export function createDesktopBrowserBroker(args: {
   const registryListeners = new Set<() => void>();
   const snapshots = new Map<string, string>();
   let hostId: string | null = null;
+  let serverOrigin: string | null = null;
 
   function instanceForWindow(webContentsId: number): InstanceEntry | undefined {
     return [...instances.values()].find(
@@ -97,6 +98,11 @@ export function createDesktopBrowserBroker(args: {
   }
 
   function publish(instance: InstanceEntry, threadId: string): void {
+    if (
+      instance.window.isDestroyed() ||
+      instance.window.webContents.isDestroyed()
+    )
+      return;
     instance.threads.add(threadId);
     const tabs = tabsFor(instance, threadId).map((tab) =>
       wireTab(instance, tab),
@@ -114,11 +120,6 @@ export function createDesktopBrowserBroker(args: {
     snapshots.set(key, serialized);
     if (isRawThreadId(threadId))
       for (const listener of listeners) listener(event);
-    if (
-      instance.window.isDestroyed() ||
-      instance.window.webContents.isDestroyed()
-    )
-      return;
     for (const tab of tabs) {
       instance.window.webContents.send(BB_DESKTOP_BROWSER_CONTROL_CHANNEL, {
         tabId: tab.tabId,
@@ -131,6 +132,18 @@ export function createDesktopBrowserBroker(args: {
   function revoke(lease: ControlLease): void {
     leases.delete(lease.metadata.leaseId);
     clearTimeout(lease.timer);
+    for (const tab of tabsFor(lease.instance, lease.threadId)) {
+      if (lease.tabs.get(tab.tabId) === tab.generation)
+        args.manager.setTabLeased(
+          {
+            hostWebContentsId: lease.instance.webContentsId,
+            threadId: lease.threadId,
+            tabId: tab.tabId,
+            generation: tab.generation,
+          },
+          false,
+        );
+    }
     void lease.bridge?.close().catch(() => undefined);
     publish(lease.instance, lease.threadId);
   }
@@ -316,15 +329,17 @@ export function createDesktopBrowserBroker(args: {
           instance.descriptor.generation = randomUUID();
       } else changed();
     },
-    resetServer() {
+    setServerOrigin(value: string) {
+      if (serverOrigin === value) return;
+      serverOrigin = value;
       hostId = null;
       for (const lease of [...leases.values()]) revoke(lease);
-      args.manager.destroyAll();
       for (const instance of instances.values()) {
         instance.threads.clear();
         instance.descriptor.generation = randomUUID();
       }
       snapshots.clear();
+      args.manager.setServerOrigin(value);
     },
     getTarget(webContentsId: number): BbDesktopBrowserTarget | null {
       const instance = instanceForWindow(webContentsId);
@@ -468,6 +483,17 @@ export function createDesktopBrowserBroker(args: {
             if (lease) revoke(lease);
           }, command.expiresAt - Date.now());
           timer.unref();
+          for (const [tabId, generation] of tabs) {
+            args.manager.setTabLeased(
+              {
+                hostWebContentsId: instance.webContentsId,
+                threadId: command.threadId,
+                tabId,
+                generation,
+              },
+              true,
+            );
+          }
           leases.set(command.leaseId, {
             instance,
             threadId: command.threadId,

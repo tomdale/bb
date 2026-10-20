@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import path from "node:path";
 import {
   defineRpcContract,
@@ -69,13 +70,17 @@ export function resolveContainedPreviewPath(
   rootPath: string,
   relativeFile: string,
 ): string {
-  const root = path.resolve(rootPath);
-  const absolute = path.resolve(root, relativeFile);
-  const relative = path.relative(root, absolute);
+  const pathApi =
+    path.win32.isAbsolute(rootPath) && !path.posix.isAbsolute(rootPath)
+      ? path.win32
+      : path.posix;
+  const root = pathApi.resolve(rootPath);
+  const absolute = pathApi.resolve(root, relativeFile);
+  const relative = pathApi.relative(root, absolute);
   if (
     relative === ".." ||
-    relative.startsWith(`..${path.sep}`) ||
-    path.isAbsolute(relative)
+    relative.startsWith(`..${pathApi.sep}`) ||
+    pathApi.isAbsolute(relative)
   ) {
     throw new Error(`"file" must not escape its source: ${relativeFile}`);
   }
@@ -123,6 +128,7 @@ export const inlineVisRpcContract = defineRpcContract({
       })
       .strict(),
     output: z.discriminatedUnion("kind", [
+      z.object({ kind: z.literal("not-found"), file: z.string() }).strict(),
       z
         .object({
           kind: z.literal("html"),
@@ -130,6 +136,8 @@ export const inlineVisRpcContract = defineRpcContract({
           source: z.enum(["workspace", "thread-storage"]),
           target: previewTargetSchema,
           url: z.string(),
+          content: z.string(),
+          sha256: z.string(),
         })
         .strict(),
       z
@@ -201,7 +209,7 @@ export default async function plugin(bb: BbPluginApi) {
         });
       } catch (error) {
         if (httpStatus(error) === 404) {
-          throw new Error(`Preview file not found: ${file}`);
+          return { kind: "not-found" as const, file };
         }
         throw error;
       }
@@ -234,7 +242,18 @@ export default async function plugin(bb: BbPluginApi) {
         target.kind === "thread-storage"
           ? `/api/v1/threads/${encodeURIComponent(threadId)}/thread-storage/files/${encodedFile}`
           : `/api/v1/environments/${encodeURIComponent(target.environmentId)}/files/${encodedFile}`;
-      return { kind, file, source, target, url };
+      const sha256 = createHash("sha256")
+        .update(result.content, "utf8")
+        .digest("hex");
+      return {
+        kind,
+        file,
+        source,
+        target,
+        url,
+        content: result.content,
+        sha256,
+      };
     },
   });
 }

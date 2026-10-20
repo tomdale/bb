@@ -6,14 +6,13 @@ import {
 } from "@bb/domain";
 import type { ClientTurnRequestId, Thread } from "@bb/domain";
 import {
-  createConnection,
   createProject,
   createThread,
   insertEvents,
-  migrate,
   noopNotifier,
   upsertHost,
 } from "@bb/db";
+import { createMigratedConnection } from "@bb/db/testing";
 import type { DbConnection } from "@bb/db";
 import type { TimelineRow } from "@bb/server-contract";
 import { buildThreadTimelineWithProfile } from "../../../src/services/threads/timeline.js";
@@ -34,8 +33,7 @@ interface SetupResult {
 }
 
 function setup(): SetupResult {
-  const db = createConnection(":memory:");
-  migrate(db);
+  const db = createMigratedConnection();
   const host = upsertHost(db, noopNotifier, {
     name: "test-host",
   });
@@ -304,7 +302,7 @@ function nestedRows(row: TimelineRow): readonly TimelineRow[] {
     return row.children ?? [];
   }
   if (row.kind === "work" && row.workKind === "delegation") {
-    return row.childRows;
+    return row.childRows ?? [];
   }
   return [];
 }
@@ -335,7 +333,10 @@ describe("thread timeline parented pagination", () => {
     const timeline = buildThreadTimelineWithProfile(db, thread, {
       completedTurnDisplay: "collapse",
       eventBudget: 1_000_000,
+      includeClearedContextHistory: false,
       includeDiagnosticOperations: false,
+      compactionOfferEnabled: false,
+      summarizeShellCommands: true,
       includeNestedRows: true,
       maxInlineOutputChars: null,
       maxSeq: 51,
@@ -353,7 +354,10 @@ describe("thread timeline parented pagination", () => {
     const latest = buildThreadTimelineWithProfile(db, thread, {
       completedTurnDisplay: "collapse",
       eventBudget: 1_000_000,
+      includeClearedContextHistory: false,
       includeDiagnosticOperations: false,
+      compactionOfferEnabled: false,
+      summarizeShellCommands: true,
       includeNestedRows: true,
       maxInlineOutputChars: null,
       maxSeq: 51,
@@ -362,7 +366,10 @@ describe("thread timeline parented pagination", () => {
     const timeline = buildThreadTimelineWithProfile(db, thread, {
       completedTurnDisplay: "collapse",
       eventBudget: 1_000_000,
+      includeClearedContextHistory: false,
       includeDiagnosticOperations: false,
+      compactionOfferEnabled: false,
+      summarizeShellCommands: true,
       includeNestedRows: true,
       maxInlineOutputChars: null,
       maxSeq: 51,

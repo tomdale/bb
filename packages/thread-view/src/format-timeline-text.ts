@@ -213,6 +213,9 @@ function formatWorkBody(
       if (row.approvalStatus !== null) {
         lines.push(`  ${workStatusLabel(row, context.color)}`);
       }
+      if (context.verbose && row.stderr?.trim()) {
+        lines.push(red(indentBlock(row.stderr.trimEnd(), "  "), context.color));
+      }
       if (context.verbose && row.change.diff) {
         lines.push(
           dim(indentBlock(row.change.diff.trimEnd(), "  "), context.color),
@@ -258,7 +261,7 @@ function formatWorkBody(
     case "workflow":
       return lines;
     case "delegation":
-      if (row.childRows.length > 0) {
+      if (row.childRows !== null && row.childRows.length > 0) {
         lines.push(
           indentBlock(
             formatRows(row.childRows, nestedContext(context, row.childRows)),

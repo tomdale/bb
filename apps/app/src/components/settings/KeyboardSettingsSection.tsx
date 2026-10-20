@@ -49,7 +49,7 @@ import {
   SettingsSection,
   SettingsWithControl,
 } from "@/components/ui/settings-section";
-import { AppCommandShortcutPill } from "@/components/commands/AppCommandShortcutHint";
+import { ShortcutPill } from "@bb/shared-ui/shortcut-pill";
 import { getBbDesktopInfo } from "@/lib/bb-desktop";
 
 const EMPTY_OVERRIDES: AppKeybindingOverrides = [];
@@ -152,7 +152,7 @@ const ShortcutRecorder = memo(
           ) : shortcutPresentation === null ? (
             "Unassigned"
           ) : (
-            <AppCommandShortcutPill
+            <ShortcutPill
               className={SETTINGS_SHORTCUT_PILL_CLASS}
               shortcut={shortcutPresentation}
             />
@@ -358,7 +358,7 @@ const KeyboardCommandRow = memo(
       <div
         aria-busy={pending || undefined}
         className={cn(
-          "flex flex-col gap-2 py-3 first:pt-0 last:pb-0 sm:flex-row sm:items-center sm:gap-5",
+          "flex flex-col gap-2 py-3 first:pt-0 last:pb-0 @min-[36rem]/settings:flex-row @min-[36rem]/settings:items-center @min-[36rem]/settings:gap-5",
           pending && "opacity-50",
         )}
       >
@@ -380,7 +380,7 @@ const KeyboardCommandRow = memo(
                 {splitDefaults === null ? "Default:" : "Defaults:"}
               </span>
               {sharedDefaultShortcut !== null ? (
-                <AppCommandShortcutPill
+                <ShortcutPill
                   ariaHidden={false}
                   className={SETTINGS_DEFAULT_SHORTCUT_CLASS}
                   shortcut={presentAppShortcut(sharedDefaultShortcut, platform)}
@@ -394,7 +394,7 @@ const KeyboardCommandRow = memo(
                     <span className="inline-flex items-center bg-muted/40 px-1.5 text-2xs leading-none text-subtle-foreground">
                       {entry.label}
                     </span>
-                    <AppCommandShortcutPill
+                    <ShortcutPill
                       ariaHidden={false}
                       className={SETTINGS_SEGMENTED_DEFAULT_SHORTCUT_CLASS}
                       shortcut={presentAppShortcut(entry.shortcut, platform)}
@@ -711,6 +711,7 @@ export function KeyboardSettingsSection() {
 
   return (
     <SettingsSection
+      actionPlacement="inline"
       action={
         <Button
           disabled={disabled || !hasOverrides}
@@ -744,14 +745,9 @@ export function KeyboardSettingsSection() {
           <Switch
             aria-label="Show keyboard hints when holding CMD / Control"
             checked={generalSettings.showKeyboardHints}
-            disabled={
-              systemConfig.data === undefined || updateGeneralSettings.isPending
-            }
+            disabled={systemConfig.data === undefined}
             onCheckedChange={(showKeyboardHints) =>
-              updateGeneralSettings.mutate({
-                ...generalSettings,
-                showKeyboardHints,
-              })
+              updateGeneralSettings.mutate({ showKeyboardHints })
             }
           />
         </SettingsWithControl>

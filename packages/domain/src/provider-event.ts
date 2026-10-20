@@ -299,20 +299,30 @@ export type ThreadEventTokenUsageBreakdown = z.infer<
   typeof threadEventTokenUsageBreakdownSchema
 >;
 
+export const threadUsageCostSchema = z.object({
+  amount: z.number().nonnegative(),
+  currency: z.string().min(1),
+});
+export type ThreadUsageCost = z.infer<typeof threadUsageCostSchema>;
+
 const threadEventContextWindowUsageSchema = z.object({
   snapshot: contextSnapshotSchema.optional(),
   usedTokens: z.number().nullable(),
   modelContextWindow: z.number().nullable(),
   estimated: z.boolean(),
+  cost: threadUsageCostSchema.optional(),
 });
 export type ThreadEventContextWindowUsage = z.infer<
   typeof threadEventContextWindowUsageSchema
 >;
 
+export const promptCacheTtlMsSchema = z.number().int().positive();
+
 const threadEventTokenUsageSchema = z.object({
   total: threadEventTokenUsageBreakdownSchema,
   last: threadEventTokenUsageBreakdownSchema,
   modelContextWindow: z.number().nullable(),
+  promptCacheTtlMs: promptCacheTtlMsSchema.optional(),
 });
 
 export const threadEventWarningCategorySchema = z.enum([
@@ -361,6 +371,7 @@ export const threadEventBackgroundTaskItemSchema = z.object({
   status: threadEventItemStatusSchema,
   taskStatus: backgroundTaskStatusSchema,
   skipTranscript: z.boolean(),
+  foreground: z.boolean(),
   workflowName: z.string().optional(),
   workflow: workflowProgressSnapshotSchema.optional(),
   usage: backgroundTaskUsageSchema.optional(),
@@ -411,6 +422,7 @@ export const threadEventItemSchema = z.discriminatedUnion("type", [
     changes: z.array(threadEventFileChangeSchema),
     status: threadEventItemStatusSchema,
     approvalStatus: threadEventItemApprovalStatusSchema,
+    error: z.string().optional(),
     ...itemPresentationField,
     parentToolCallId: z.string().optional(),
   }),
@@ -512,6 +524,7 @@ const unscopedProviderEventSchema = z.discriminatedUnion("type", [
     threadId: z.string(),
     providerThreadId: z.string(),
     threadName: z.string(),
+    source: z.literal("agent").optional(),
   }),
   z.object({
     type: z.literal("thread/compacted"),
@@ -615,6 +628,12 @@ const unscopedProviderEventSchema = z.discriminatedUnion("type", [
     providerThreadId: z.string(),
     plan: z.array(threadEventPlanStepSchema),
     explanation: z.string().optional(),
+  }),
+  z.object({
+    type: z.literal("turn/mainRun/updated"),
+    threadId: z.string(),
+    providerThreadId: z.string(),
+    state: z.enum(["idle", "running"]),
   }),
   z.object({
     type: z.literal("turn/diff/updated"),

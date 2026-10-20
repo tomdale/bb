@@ -22,6 +22,7 @@ import {
 import { parseFileEditFromItemEvent } from "./file-edit-parsing.js";
 import { parseWebActivityLifecycleEvent } from "./web-activity-lifecycle.js";
 import { parseOperationMessage } from "./parse-operation-message.js";
+import { normalizeProvisioningFailures } from "./normalize-provisioning-failures.js";
 import { parseErrorMessage } from "./parse-error-message.js";
 import {
   normalizeEventProjection,
@@ -316,6 +317,7 @@ function selectActiveBackgroundCommandMessages(
       message.taskType === LOCAL_WORKFLOW_TASK_TYPE ||
       message.status !== "pending" ||
       message.skipTranscript ||
+      message.foreground ||
       isRepresentedByActiveParent ||
       (!isDirect && !isBackgroundCommandTaskType(message.taskType))
     ) {
@@ -716,6 +718,7 @@ function buildFlatProjectionData(
       if (clientRequest) {
         for (const rejectedMessage of parseRejectedUsersFromClientRequest({
           decoded: clientRequest.event,
+          requestMeta: clientRequest.meta,
           meta,
           options: args.options,
         })) {
@@ -979,7 +982,9 @@ function buildFlatProjectionData(
   }
 
   finalizeProjectionState({ state, options: args.options });
-  const messages = sortEventProjectionMessagesBySource(state.messages);
+  const messages = sortEventProjectionMessagesBySource(
+    normalizeProvisioningFailures(orderedEvents, state.messages),
+  );
   const callMessageById = buildCallMessageById(messages);
   enrichBackgroundAgentModels(messages, callMessageById);
   return {

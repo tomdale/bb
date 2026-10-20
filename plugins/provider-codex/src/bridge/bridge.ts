@@ -1,10 +1,9 @@
 #!/usr/bin/env node
 
 import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import {
   isStandaloneBuiltinCompactCommand,
-  approvalInteractionOutcomeSchema,
-  userQuestionInteractionOutcomeSchema,
   type DynamicTool,
   type PromptInput,
   type ThreadDelta,
@@ -54,12 +53,20 @@ import {
   summarizeCodexMacOsPermissions,
 } from "../extension-kinds.js";
 import {
-  buildCodexInteractiveResponse,
+  buildCodexInteractiveResult,
   decodeCodexInteractiveRequest,
   extractCodexMacOsPermissionRequest,
   type CodexMacOsPermissionRequest,
 } from "../interactive-requests.js";
-import { parseModelsResponse } from "../models.js";
+import {
+  CODEX_DAYBREAK_OPTION_ID,
+  codexDaybreakOption,
+  cyberProgramForTurn,
+  parseModelCatalog,
+  type CodexCyberProgram,
+  type CodexModelCatalog,
+} from "../models.js";
+import { resolveCodexMcpElicitationAppIcon } from "../mcp-elicitation-host.js";
 import { macOsPermissionPresentation } from "../presentation.js";
 import {
   codexTurnSchema,
@@ -70,7 +77,6 @@ import {
   toCodexDynamicTools,
   toCodexPermissionSettings,
   toCodexServiceTier,
-  toCodexThreadPermissionSettings,
   toCodexUserInput,
   type BbThreadForkParams,
   type BbThreadStartParams,
@@ -463,6 +469,7 @@ interface CodexBridgeSession {
   translator: CodexEventTranslator;
   construction: CodexSessionConstruction;
   constructionSignature: string;
+  turnPermissionSettings: ReturnType<typeof toCodexPermissionSettings>;
   openCodexTurnIds: Set<string>;
   responseOpenedTurns: Map<string, ResponseOpenedTurn>;
   unopenedCompactionDispatches: PendingCompactionDispatch[];
@@ -474,6 +481,9 @@ interface CodexBridgeSession {
   quotaRecoveryAttempted: boolean;
   quotaRecoveryAllowed: boolean;
   rebuildBeforeNextTurnReason: string | null;
+  daybreakEnabled: boolean | null;
+  modelCatalog: Promise<CodexModelCatalog | null> | null;
+  publishedSessionOptions: string | null;
   closing: boolean;
   previousChildExit: Promise<void> | null;
   releasePromise: Promise<void> | null;
@@ -481,8 +491,14 @@ interface CodexBridgeSession {
 
 const sessionsByBbThreadId = new Map<string, CodexBridgeSession>();
 const maintenanceConnections = new Set<CodexAppServerConnection>();
-let modelListConnection: CodexAppServerConnection | null = null;
-let modelListConnectionPromise: Promise<CodexAppServerConnection> | null = null;
+let modelListConnection: {
+  launchKey: string;
+  connection: CodexAppServerConnection;
+} | null = null;
+let modelListConnectionPromise: {
+  launchKey: string;
+  promise: Promise<CodexAppServerConnection>;
+} | null = null;
 let sessionSerialCounter = 0;
 let configuredSkillExtraRoots: string[] | null = null;
 
@@ -537,6 +553,7 @@ const codexProviderOptionsSchema = z
 interface DecodedCodexOptions {
   sessionOptions: CodexSessionOptions;
   additionalWorkspaceWriteRoots: string[];
+  daybreak: boolean | null;
 }
 
 function decodeCodexOptions(
@@ -556,14 +573,19 @@ function decodeCodexOptions(
         : {}),
     },
     additionalWorkspaceWriteRoots: decoded.additionalWorkspaceWriteRoots ?? [],
+    daybreak: requestedDaybreak(options),
   };
+}
+
+function requestedDaybreak(options: BridgeExecutionOptions): boolean | null {
+  const requested = options.sessionOptions?.[CODEX_DAYBREAK_OPTION_ID];
+  return typeof requested === "boolean" ? requested : null;
 }
 
 function constructionSignature(
   cwd: string,
   sessionOptions: CodexSessionOptions,
 ): string {
-  const permissionSettings = toCodexThreadPermissionSettings(sessionOptions);
   const poolBaseUrl = sessionOptions.envVars?.[CODEX_POOL_BASE_URL_ENV];
   const poolToken = sessionOptions.envVars?.[CODEX_POOL_AUTH_TOKEN_ENV];
   return JSON.stringify({
@@ -571,9 +593,6 @@ function constructionSignature(
     reasoningLevel: sessionOptions.reasoningLevel ?? null,
     memoryEnabled: sessionOptions.memoryEnabled ?? null,
     providerSubagentsEnabled: sessionOptions.providerSubagentsEnabled ?? null,
-    approvalPolicy: permissionSettings.approvalPolicy,
-    approvalsReviewer: permissionSettings.approvalsReviewer,
-    sandbox: permissionSettings.sandbox,
     poolRoute:
       poolBaseUrl === undefined || poolToken === undefined
         ? null
@@ -858,27 +877,23 @@ function handleChildRequest(
     );
     return;
   }
-  const request = decoded;
-
-  void sendRuntimeRequest(BRIDGE_INBOUND_REQUEST_METHODS.interactionRequest, {
-    providerThreadId: session.codexThreadId ?? request.providerThreadId,
-    threadId: session.bbThreadId,
-    turnId: request.turnId,
-    payload: request.payload,
-    providerNativeIds: true,
-  })
-    .then((result) => {
-      const outcome =
-        request.payload.kind === "user_question"
-          ? userQuestionInteractionOutcomeSchema.parse({
-              payload: request.payload,
-              resolution: result,
-            })
-          : approvalInteractionOutcomeSchema.parse({
-              payload: request.payload,
-              resolution: result,
-            });
-      responder.result(buildCodexInteractiveResponse(outcome));
+  void resolveCodexMcpElicitationAppIcon(decoded)
+    .then(async (request) => {
+      if (currentSession(bbThreadId, serial) !== session) {
+        throw new Error("codex session is no longer current");
+      }
+      const [runtimeResult] = await Promise.allSettled([
+        sendRuntimeRequest(BRIDGE_INBOUND_REQUEST_METHODS.interactionRequest, {
+          providerThreadId: session.codexThreadId ?? request.providerThreadId,
+          threadId: session.bbThreadId,
+          turnId: request.turnId,
+          payload: request.payload,
+          providerNativeIds: true,
+        }),
+      ]);
+      responder.result(
+        buildCodexInteractiveResult(request.payload, runtimeResult),
+      );
     })
     .catch((error: unknown) => {
       responder.error(
@@ -1006,8 +1021,109 @@ async function initializeChild(
 }
 
 const codexThreadIdentityResultSchema = z
-  .object({ thread: z.object({ id: z.string().min(1) }).passthrough() })
+  .object({
+    thread: z
+      .object({
+        id: z.string().min(1),
+        daybreakEnabled: z.boolean().nullish().catch(null),
+      })
+      .passthrough(),
+  })
   .passthrough();
+
+const SESSION_OPTIONS_STATE_KIND = "bb/session-options";
+const SESSION_MODEL_CATALOG_TIMEOUT_MS = 10_000;
+
+function loadSessionModelCatalog(
+  connection: CodexAppServerConnection,
+): Promise<CodexModelCatalog | null> {
+  return connection
+    .request({
+      method: "model/list",
+      params: {},
+      resultSchema: ignoredChildResultSchema,
+      timeoutMs: SESSION_MODEL_CATALOG_TIMEOUT_MS,
+    })
+    .then(parseModelCatalog)
+    .catch(() => null);
+}
+
+function publishDaybreakState(
+  session: CodexBridgeSession,
+  catalog: CodexModelCatalog | null,
+): void {
+  if (session.closing || catalog === null || !catalog.daybreakAvailable) {
+    return;
+  }
+  const payload = {
+    options: [codexDaybreakOption(session.daybreakEnabled ?? false)],
+  };
+  const serialized = JSON.stringify(payload);
+  if (session.publishedSessionOptions === serialized) {
+    return;
+  }
+  session.publishedSessionOptions = serialized;
+  sendThreadDeltas(session, [
+    {
+      kind: "extension.state",
+      extensionKind: SESSION_OPTIONS_STATE_KIND,
+      payload,
+    },
+  ]);
+}
+
+async function saveDaybreakChoice(
+  session: CodexBridgeSession,
+  connection: CodexAppServerConnection,
+  codexThreadId: string,
+  daybreakEnabled: boolean,
+): Promise<void> {
+  session.daybreakEnabled = daybreakEnabled;
+  await connection
+    .request({
+      method: "thread/metadata/update",
+      params: { threadId: codexThreadId, daybreakEnabled },
+      resultSchema: ignoredChildResultSchema,
+      timeoutMs: CHILD_REQUEST_TIMEOUT_MS,
+    })
+    .catch((error: unknown) => {
+      process.stderr.write(
+        `codex thread/metadata/update could not save the Daybreak choice: ${error instanceof Error ? error.message : String(error)}\n`,
+      );
+    });
+}
+
+async function resolveTurnCyberAccessProgram(
+  session: CodexBridgeSession,
+  connection: CodexAppServerConnection,
+  codexThreadId: string,
+  decoded: DecodedCodexOptions,
+): Promise<CodexCyberProgram | null> {
+  if (
+    decoded.daybreak !== null &&
+    decoded.daybreak !== session.daybreakEnabled
+  ) {
+    await saveDaybreakChoice(
+      session,
+      connection,
+      codexThreadId,
+      decoded.daybreak,
+    );
+  }
+  if (session.daybreakEnabled === null) {
+    return null;
+  }
+  const catalog = await session.modelCatalog;
+  publishDaybreakState(session, catalog);
+  const model = decoded.sessionOptions.model;
+  if (catalog === null || !catalog.daybreakAvailable || model === undefined) {
+    return null;
+  }
+  return cyberProgramForTurn(
+    catalog.cyberProgramsByModel.get(model) ?? [],
+    session.daybreakEnabled,
+  );
+}
 
 async function requestThreadConstructionWithWriterRetry(
   connection: CodexAppServerConnection,
@@ -1101,6 +1217,11 @@ async function constructThreadSession(
       args.cwd,
       decoded.sessionOptions,
     ),
+    turnPermissionSettings: toCodexPermissionSettings({
+      additionalWorkspaceWriteRoots: decoded.additionalWorkspaceWriteRoots,
+      gitWritableRoots: [],
+      options: decoded.sessionOptions,
+    }),
     openCodexTurnIds: new Set(),
     responseOpenedTurns: new Map(),
     unopenedCompactionDispatches: [],
@@ -1114,6 +1235,9 @@ async function constructThreadSession(
       launchEnv[CODEX_POOL_BASE_URL_ENV] && launchEnv[CODEX_POOL_AUTH_TOKEN_ENV]
     ),
     rebuildBeforeNextTurnReason: null,
+    daybreakEnabled: null,
+    modelCatalog: null,
+    publishedSessionOptions: existing?.publishedSessionOptions ?? null,
     closing: false,
     previousChildExit: null,
     releasePromise: null,
@@ -1201,6 +1325,9 @@ async function constructThreadSession(
           ...sharedConstructionParams,
           ephemeral: false,
           experimentalRawEvents: true,
+          ...(decoded.daybreak === null
+            ? {}
+            : { daybreakEnabled: decoded.daybreak }),
         };
         params = startParams;
         break;
@@ -1244,7 +1371,29 @@ async function constructThreadSession(
       providerThreadId: codexThreadId,
       threadId: args.threadId,
     });
+    session.turnPermissionSettings = toCodexPermissionSettings({
+      additionalWorkspaceWriteRoots: decoded.additionalWorkspaceWriteRoots,
+      gitWritableRoots: translator.getThreadGitWritableRoots(args.threadId),
+      options: decoded.sessionOptions,
+    });
     announceSessionIdentity(session, codexThreadId);
+    session.daybreakEnabled = result.thread.daybreakEnabled ?? null;
+    if (args.request.kind === "start" && decoded.daybreak !== null) {
+      session.daybreakEnabled = decoded.daybreak;
+    } else if (
+      decoded.daybreak !== null &&
+      decoded.daybreak !== session.daybreakEnabled
+    ) {
+      await saveDaybreakChoice(
+        session,
+        connection,
+        codexThreadId,
+        decoded.daybreak,
+      );
+    }
+    const modelCatalog = loadSessionModelCatalog(connection);
+    session.modelCatalog = modelCatalog;
+    void modelCatalog.then((catalog) => publishDaybreakState(session, catalog));
     return { session, codexThreadId };
   } catch (error) {
     const released = session.closing;
@@ -1280,6 +1429,7 @@ function registerResumableSession(session: CodexBridgeSession): void {
     translator: session.translator,
     construction: session.construction,
     constructionSignature: session.constructionSignature,
+    turnPermissionSettings: session.turnPermissionSettings,
     openCodexTurnIds: new Set(),
     responseOpenedTurns: new Map(),
     unopenedCompactionDispatches: [],
@@ -1291,6 +1441,9 @@ function registerResumableSession(session: CodexBridgeSession): void {
     quotaRecoveryAttempted: false,
     quotaRecoveryAllowed: session.quotaRecoveryAllowed,
     rebuildBeforeNextTurnReason: null,
+    daybreakEnabled: session.daybreakEnabled,
+    modelCatalog: null,
+    publishedSessionOptions: session.publishedSessionOptions,
     closing: false,
     previousChildExit: null,
     releasePromise: null,
@@ -1359,47 +1512,75 @@ async function withMaintenanceChild<T>(
   }
 }
 
-async function getModelListConnection(): Promise<CodexAppServerConnection> {
-  if (modelListConnection !== null && !modelListConnection.exited) {
-    return modelListConnection;
+function poolRouteLaunchKey(
+  envVars: Readonly<Record<string, string>> | undefined,
+): string {
+  return JSON.stringify([
+    envVars?.[CODEX_POOL_BASE_URL_ENV] ?? null,
+    envVars?.[CODEX_POOL_AUTH_TOKEN_ENV] ?? null,
+  ]);
+}
+
+async function getModelListConnection(
+  envVars: Readonly<Record<string, string>> | undefined,
+): Promise<CodexAppServerConnection> {
+  const launchKey = poolRouteLaunchKey(envVars);
+  if (modelListConnection !== null) {
+    if (
+      modelListConnection.launchKey === launchKey &&
+      !modelListConnection.connection.exited
+    ) {
+      return modelListConnection.connection;
+    }
+    retireModelListConnection(modelListConnection.connection);
   }
-  if (modelListConnectionPromise !== null) {
-    return modelListConnectionPromise;
+  if (modelListConnectionPromise?.launchKey === launchKey) {
+    return modelListConnectionPromise.promise;
   }
 
-  const connectionPromise = (async () => {
-    const connection = spawnChildConnection({
-      recordThreadId: null,
-      onNotification: () => {},
-      onRequest: (_method, _params, responder) => {
-        responder.error(
-          BRIDGE_JSON_RPC_ERRORS.METHOD_NOT_FOUND,
-          "model-list codex app-server does not serve requests",
-        );
-      },
-      onExit: () => {
+  const pending = {
+    launchKey,
+    promise: (async () => {
+      const connection = spawnChildConnection({
+        envVars,
+        recordThreadId: null,
+        onNotification: () => {},
+        onRequest: (_method, _params, responder) => {
+          responder.error(
+            BRIDGE_JSON_RPC_ERRORS.METHOD_NOT_FOUND,
+            "model-list codex app-server does not serve requests",
+          );
+        },
+        onExit: () => {
+          maintenanceConnections.delete(connection);
+          if (modelListConnection?.connection === connection) {
+            modelListConnection = null;
+          }
+        },
+      });
+      maintenanceConnections.add(connection);
+      try {
+        await initializeChild(connection);
+      } catch (error) {
         maintenanceConnections.delete(connection);
-        if (modelListConnection === connection) {
-          modelListConnection = null;
-        }
-      },
-    });
-    maintenanceConnections.add(connection);
-    try {
-      await initializeChild(connection);
-      modelListConnection = connection;
+        await connection.kill();
+        throw error;
+      }
+      if (modelListConnectionPromise?.launchKey !== launchKey) {
+        retireModelListConnection(connection);
+        throw new Error(
+          "The Codex model list route changed while the app-server started.",
+        );
+      }
+      modelListConnection = { launchKey, connection };
       return connection;
-    } catch (error) {
-      maintenanceConnections.delete(connection);
-      await connection.kill();
-      throw error;
-    }
-  })();
-  modelListConnectionPromise = connectionPromise;
+    })(),
+  };
+  modelListConnectionPromise = pending;
   try {
-    return await connectionPromise;
+    return await pending.promise;
   } finally {
-    if (modelListConnectionPromise === connectionPromise) {
+    if (modelListConnectionPromise === pending) {
       modelListConnectionPromise = null;
     }
   }
@@ -1407,7 +1588,7 @@ async function getModelListConnection(): Promise<CodexAppServerConnection> {
 
 function retireModelListConnection(connection: CodexAppServerConnection): void {
   maintenanceConnections.delete(connection);
-  if (modelListConnection === connection) {
+  if (modelListConnection?.connection === connection) {
     modelListConnection = null;
   }
   connection.kill();
@@ -1447,24 +1628,45 @@ function handleInitialize(id: string | number): void {
       grammarVersions: [THREAD_DELTA_GRAMMAR_V3, THREAD_DELTA_GRAMMAR_V3],
       steerMode: "inject",
       skills: { configure: true },
+      commands: { list: false },
     },
   };
   sendResult(id, result);
 }
 
-async function handleModelList(id: string | number): Promise<void> {
+async function handleModelList(
+  id: string | number,
+  params: z.infer<typeof modelListParamsSchema>,
+): Promise<void> {
   let connection: CodexAppServerConnection | null = null;
   try {
-    connection = await getModelListConnection();
+    connection = await getModelListConnection(params.envVars);
     const result = await connection.request({
       method: "model/list",
       params: {},
       resultSchema: ignoredChildResultSchema,
       timeoutMs: CHILD_REQUEST_TIMEOUT_MS,
     });
+    const { models, selectedOnlyModels } = parseModelCatalog(result);
+    const configuredModel = await connection
+      .request({
+        method: "config/read",
+        params: {},
+        resultSchema: z.object({
+          config: z.object({ model: z.string().nullish() }),
+        }),
+        timeoutMs: CHILD_REQUEST_TIMEOUT_MS,
+      })
+      .then((configResult) => configResult.config.model)
+      .catch(() => null);
+    if (models.some((model) => model.model === configuredModel)) {
+      for (const model of models) {
+        model.isDefault = model.model === configuredModel;
+      }
+    }
     sendResult(id, {
-      models: parseModelsResponse(result),
-      selectedOnlyModels: [],
+      models,
+      selectedOnlyModels,
     });
   } catch (error) {
     if (connection !== null) {
@@ -1848,20 +2050,36 @@ async function handleTurnStart(
         ),
         options: decoded.sessionOptions,
       });
-      result = await connection.request({
-        method: "turn/start",
-        params: {
-          threadId: codexThreadId,
-          input: toCodexUserInput(input),
-          approvalPolicy: permissionSettings.approvalPolicy,
-          approvalsReviewer: permissionSettings.approvalsReviewer,
-          sandboxPolicy: permissionSettings.sandboxPolicy,
-          model: decoded.sessionOptions.model ?? undefined,
-          serviceTier: toCodexServiceTier(decoded.sessionOptions.serviceTier),
-        },
-        resultSchema: ignoredChildResultSchema,
-        timeoutMs: CHILD_REQUEST_TIMEOUT_MS,
-      });
+      const cyberAccessProgram = await resolveTurnCyberAccessProgram(
+        session,
+        connection,
+        codexThreadId,
+        decoded,
+      );
+      const previousPermissions = session.turnPermissionSettings;
+      session.turnPermissionSettings = permissionSettings;
+      result = await connection
+        .request({
+          method: "turn/start",
+          params: {
+            threadId: codexThreadId,
+            input: toCodexUserInput(input),
+            approvalPolicy: permissionSettings.approvalPolicy,
+            approvalsReviewer: permissionSettings.approvalsReviewer,
+            sandboxPolicy: permissionSettings.sandboxPolicy,
+            model: decoded.sessionOptions.model ?? undefined,
+            serviceTier: toCodexServiceTier(decoded.sessionOptions.serviceTier),
+            ...(cyberAccessProgram === null ? {} : { cyberAccessProgram }),
+          },
+          resultSchema: ignoredChildResultSchema,
+          timeoutMs: CHILD_REQUEST_TIMEOUT_MS,
+        })
+        .catch((error: unknown) => {
+          if (session.turnPermissionSettings === permissionSettings) {
+            session.turnPermissionSettings = previousPermissions;
+          }
+          throw error;
+        });
     }
     sendResult(id, { threadId: params.threadId });
     settleAcceptedDispatch({
@@ -1905,6 +2123,39 @@ async function handleTurnSteer(
     return;
   }
   try {
+    const decoded = decodeCodexOptions(params.options);
+    const permissionSettings = toCodexPermissionSettings({
+      additionalWorkspaceWriteRoots: decoded.additionalWorkspaceWriteRoots,
+      gitWritableRoots: session.translator.getThreadGitWritableRoots(
+        params.threadId,
+      ),
+      options: decoded.sessionOptions,
+    });
+    if (
+      !isDeepStrictEqual(session.turnPermissionSettings, permissionSettings)
+    ) {
+      if (!session.openCodexTurnIds.has(params.expectedTurnId)) {
+        throw new Error("The turn to steer is no longer active");
+      }
+      const failure = await interruptCodexTurn(
+        session,
+        session.codexThreadId,
+        params.expectedTurnId,
+      );
+      if (failure !== null) throw failure;
+      const settled = await waitForCodexTurnSettlement(
+        session,
+        params.expectedTurnId,
+        INTERRUPT_SETTLEMENT_TIMEOUT_MS,
+      );
+      if (!settled) {
+        throw new Error(
+          "Codex did not stop the active turn before applying new permissions",
+        );
+      }
+      await handleTurnStart(id, params);
+      return;
+    }
     await session.connection.request({
       method: "turn/steer",
       params: {
@@ -2206,7 +2457,7 @@ async function handleRequest(
       handleInitialize(request.id);
       break;
     case "model/list":
-      await handleModelList(request.id);
+      await handleModelList(request.id, request.params);
       break;
     case "provider/health":
       sendResult(request.id, await getCodexProviderHealth());

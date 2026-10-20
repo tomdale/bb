@@ -59,6 +59,7 @@ describe("public project attachments", () => {
         );
         expect(uploaded).toMatchObject({
           type: fixture.type,
+          sourceProjectId: project.id,
           name: fixture.filename,
           mimeType: fixture.mimeType,
           sizeBytes: fixture.bytes.byteLength,
@@ -75,6 +76,13 @@ describe("public project attachments", () => {
         );
         expect(content.headers.get("content-length")).toBe(
           String(fixture.bytes.byteLength),
+        );
+        const partial = await harness.app.request(contentUrl, {
+          headers: { range: "bytes=0-1" },
+        });
+        expect(partial.status).toBe(206);
+        expect(new Uint8Array(await partial.arrayBuffer())).toEqual(
+          fixture.bytes.subarray(0, 2),
         );
         const etag = content.headers.get("etag");
         expect(etag).toMatch(/^"[^"]+"$/u);
@@ -121,9 +129,13 @@ describe("public project attachments", () => {
       const oversizedFile = await upload(
         harness.app,
         project.id,
-        new File([new Uint8Array(35 * 1024 * 1024 + 512 * 1024)], "huge-archive.bin", {
-          type: "application/octet-stream",
-        }),
+        new File(
+          [new Uint8Array(35 * 1024 * 1024 + 512 * 1024)],
+          "huge-archive.bin",
+          {
+            type: "application/octet-stream",
+          },
+        ),
       );
       expect(oversizedFile.status).toBe(400);
       await expect(readJson(oversizedFile)).resolves.toEqual({

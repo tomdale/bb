@@ -1,15 +1,19 @@
-import { prepareSplitImport } from "./split-prefetch";
+import { isChunkDownloadError } from "./stale-chunk-recovery";
+import {
+  prepareSplitImport,
+  queueSplitPreload,
+  trackCriticalLoad,
+} from "./split-prefetch";
 import {
   Component,
   lazy,
   Suspense,
   useState,
-  useEffect,
   type ComponentType,
   type ReactNode,
 } from "react";
 
-export type SplitPreloadPolicy = "render" | "intent" | "startup" | "idle";
+export type SplitTier = "preload" | "intent";
 
 type FailureProps = { retry: () => void };
 
@@ -41,15 +45,6 @@ class SplitErrorBoundary extends Component<
 
 const DOWNLOAD_RETRY_DELAYS = [500, 1500];
 
-function isChunkDownloadError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    /^(Failed to fetch dynamically imported module|error loading dynamically imported module|Importing a module script failed)/i.test(
-      error.message,
-    )
-  );
-}
-
 async function loadWithDownloadRetries<T>(load: () => Promise<T>): Promise<T> {
   for (let attempt = 0; ; attempt += 1) {
     try {
@@ -67,13 +62,19 @@ export function defineSplit<P extends object>({
   load,
   loading: Loading,
   error: ErrorView = SplitLoadFailure,
-  preload,
+  tier,
+  mountWhen,
+  keepMounted = false,
+  unmounted: Unmounted,
 }: {
   id: string;
   load: () => Promise<ComponentType<P>>;
   loading: ComponentType<P>;
   error?: ComponentType<P & FailureProps>;
-  preload: SplitPreloadPolicy;
+  tier: SplitTier;
+  mountWhen?: (props: P) => boolean;
+  keepMounted?: boolean;
+  unmounted?: ComponentType<P>;
 }) {
   let pending: Promise<{ default: ComponentType<P> }> | null = null;
   let loaded: ComponentType<P> | null = null;
@@ -90,22 +91,24 @@ export function defineSplit<P extends object>({
       });
     return pending;
   };
+  const renderModule = () => trackCriticalLoad(loadModule());
   const warm = async () => {
     await loadModule().catch(() => undefined);
   };
   const onIntent = () => {
-    if (preload !== "render") void warm();
+    void warm();
   };
+  if (tier === "preload") queueSplitPreload(warm);
 
-  function SplitComponent(props: P) {
+  function SplitContent(props: P) {
     const [attempt, setAttempt] = useState(() => ({
       number: 0,
-      View: loaded ?? lazy(loadModule),
+      View: loaded ?? lazy(renderModule),
     }));
     const retry = () => {
       setAttempt((previous) => ({
         number: previous.number + 1,
-        View: loaded ?? lazy(loadModule),
+        View: loaded ?? lazy(renderModule),
       }));
     };
     const View = attempt.View;
@@ -121,46 +124,26 @@ export function defineSplit<P extends object>({
     );
   }
 
+  function SplitComponent(props: P) {
+    const wanted = mountWhen?.(props) ?? true;
+    const [mountedBefore, setMountedBefore] = useState(wanted);
+    if (wanted && !mountedBefore) setMountedBefore(true);
+    if (wanted || (keepMounted && mountedBefore)) {
+      return <SplitContent {...props} />;
+    }
+    return Unmounted ? <Unmounted {...props} /> : null;
+  }
+
   return Object.assign(SplitComponent, {
     displayName: `Split(${id})`,
     id,
-    preloadPolicy: preload,
+    tier,
     preload: warm,
+    isLoaded: () => loaded !== null,
     intentProps: {
       onPointerEnter: onIntent,
       onFocus: onIntent,
       onPointerDown: onIntent,
     },
   });
-}
-
-export function useSplitPreload(split: {
-  preloadPolicy: SplitPreloadPolicy;
-  preload: () => Promise<void>;
-}) {
-  useEffect(() => {
-    if (split.preloadPolicy === "startup") {
-      void split.preload();
-      return;
-    }
-    if (split.preloadPolicy !== "idle") return;
-    let idle: number | undefined;
-    let timeout: number | undefined;
-    let frame = requestAnimationFrame(() => {
-      frame = requestAnimationFrame(() => {
-        if (typeof window.requestIdleCallback === "function") {
-          idle = window.requestIdleCallback(() => void split.preload(), {
-            timeout: 1000,
-          });
-        } else {
-          timeout = window.setTimeout(() => void split.preload(), 1000);
-        }
-      });
-    });
-    return () => {
-      cancelAnimationFrame(frame);
-      if (idle !== undefined) window.cancelIdleCallback(idle);
-      if (timeout !== undefined) window.clearTimeout(timeout);
-    };
-  }, [split]);
 }

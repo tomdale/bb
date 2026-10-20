@@ -2,6 +2,7 @@ import {
   appendStoredThreadEventsInTransaction,
   createEventId,
   getActiveStoredTurnId,
+  isStoredTurnMainRunIdle,
   getLastStoredProviderThreadId,
   getLastStoredTurnRequestEvent,
   getStoredProviderSession,
@@ -241,6 +242,7 @@ interface AppendThreadEventsTransactionResult {
 }
 
 interface BuildAppendThreadEventNotificationMetadataArgs {
+  sequence: number;
   readStateUpdate: ThreadReadStateUpdate | null;
   eventType: ThreadEventType;
 }
@@ -368,11 +370,13 @@ function buildAppendThreadEventNotificationChanges(
 }
 
 function buildAppendThreadEventNotificationMetadata({
+  sequence,
   readStateUpdate,
   eventType,
 }: BuildAppendThreadEventNotificationMetadataArgs): ThreadChangeMetadata {
   const metadata: ThreadChangeMetadata = {
     eventTypes: [eventType],
+    timelineSequence: sequence,
   };
   if (readStateUpdate?.changed === true) {
     metadata.projectId = readStateUpdate.projectId;
@@ -473,6 +477,7 @@ export function appendThreadEvent(
     args.threadId,
     buildAppendThreadEventNotificationChanges(result.readStateUpdate),
     buildAppendThreadEventNotificationMetadata({
+      sequence: result.sequence,
       readStateUpdate: result.readStateUpdate,
       eventType: args.type,
     }),
@@ -545,6 +550,7 @@ export function appendPreparedClientTurnRequestedEventWithNotificationInTransact
       result.readStateUpdate,
     ),
     notificationMetadata: buildAppendThreadEventNotificationMetadata({
+      sequence: result.sequence,
       readStateUpdate: result.readStateUpdate,
       eventType: args.type,
     }),
@@ -693,6 +699,7 @@ export function appendSystemErrorEventInTransaction(
     buildSystemErrorEventArgs(args),
   );
   deps.hub.notifyThread(args.threadId, ["events-appended"], {
+    timelineSequence: sequence,
     eventTypes: ["system/error"],
   });
   return sequence;
@@ -825,7 +832,9 @@ export function appendThreadOwnershipChangeEventInTransaction(
   }
 
   const sequence = appendThreadEventInTransaction(deps.db, eventArgs);
-  deps.hub.notifyThread(args.threadId, ["events-appended"]);
+  deps.hub.notifyThread(args.threadId, ["events-appended"], {
+    timelineSequence: sequence,
+  });
   return sequence;
 }
 
@@ -834,6 +843,23 @@ export function getActiveTurnId(
   threadId: string,
 ): string | null {
   return getActiveStoredTurnId(deps.db, threadId);
+}
+
+export function isActiveTurnMainRunIdle(
+  deps: ThreadEventReadDeps,
+  thread: Pick<Thread, "id" | "status">,
+): boolean {
+  if (thread.status !== "active") {
+    return false;
+  }
+  const activeTurnId = getActiveStoredTurnId(deps.db, thread.id);
+  return (
+    activeTurnId !== null &&
+    isStoredTurnMainRunIdle(deps.db, {
+      threadId: thread.id,
+      turnId: activeTurnId,
+    })
+  );
 }
 
 export function isManualCompactionActive(

@@ -1,36 +1,24 @@
 import { execFile } from "node:child_process";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import parcelWatcher from "@parcel/watcher";
+import { createDeferredPromise, initRepo, makeTempDir } from "@bb/test-helpers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { watchWorkspaceStatus } from "../src/watch-status.js";
 import type { WorkspaceStatusChangeEvent } from "../src/watch-status-types.js";
 
 const execFileAsync = promisify(execFile);
-const tempDirs: string[] = [];
 const realParcelSubscribe = parcelWatcher.subscribe.bind(parcelWatcher);
 
 const NESTED_REPOS = 4;
 const PACKAGES_PER_NESTED_REPO = 300;
-const EVENT_TIMEOUT_MS = 5_000;
 const TEST_TIMEOUT_MS = 60_000;
 const MAX_EXPECTED_WATCHES = 20;
 
 async function git(cwd: string, ...args: string[]): Promise<void> {
   await execFileAsync("git", args, { cwd, encoding: "utf8" });
-}
-
-async function initRepo(dir: string): Promise<void> {
-  await fs.mkdir(dir, { recursive: true });
-  await git(dir, "init", "-q", "-b", "main");
-  await git(dir, "config", "user.name", "BB Tests");
-  await git(dir, "config", "user.email", "bb@example.com");
-  await fs.writeFile(path.join(dir, "README.md"), "hello\n");
-  await git(dir, "add", "README.md");
-  await git(dir, "commit", "-q", "-m", "init");
 }
 
 async function buildUmbrellaRoot(args: {
@@ -41,8 +29,7 @@ async function buildUmbrellaRoot(args: {
   root: string;
   nestedDirCount: number;
 }> {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "bb-1779-umbrella-"));
-  tempDirs.push(root);
+  const root = await makeTempDir("bb-1779-umbrella-");
   if (args.gitRoot) {
     await initRepo(root);
   }
@@ -52,10 +39,16 @@ async function buildUmbrellaRoot(args: {
   let nestedDirCount = 0;
   for (let i = 0; i < nestedRepos; i += 1) {
     const child = path.join(root, "apps", `child-${i}`);
+    await fs.mkdir(child, { recursive: true });
     await initRepo(child);
-    await fs.writeFile(path.join(child, ".gitignore"), "node_modules/\n");
+    await fs.writeFile(
+      path.join(child, ".gitignore"),
+      "node_modules/\ndist/\n",
+    );
     await git(child, "add", ".gitignore");
-    await git(child, "commit", "-q", "-m", "ignore node_modules");
+    await git(child, "commit", "-q", "-m", "ignore build output");
+    await fs.mkdir(path.join(child, "dist"), { recursive: true });
+    await fs.writeFile(path.join(child, "dist", "bundle.js"), "bundle\n");
     await Promise.all(
       Array.from({ length: packagesPerNestedRepo }, async (_unused, p) => {
         const pkgLib = path.join(child, "node_modules", `pkg-${p}`, "lib");
@@ -122,11 +115,8 @@ async function measureWorkspaceRootWatch(root: string): Promise<{
   }
 }
 
-afterEach(async () => {
+afterEach(() => {
   vi.restoreAllMocks();
-  for (const dir of tempDirs.splice(0)) {
-    await fs.rm(dir, { force: true, recursive: true });
-  }
 });
 
 describe.skipIf(process.platform !== "linux")(
@@ -142,6 +132,7 @@ describe.skipIf(process.platform !== "linux")(
         expect(nestedDirCount).toBeGreaterThan(MAX_EXPECTED_WATCHES);
         expect(ignore).toContain(".git");
         expect(ignore).toContain("**/node_modules/**");
+        expect(ignore).toContain("apps/child-0/dist");
         expect(watches).toBeLessThan(MAX_EXPECTED_WATCHES);
       },
       TEST_TIMEOUT_MS,
@@ -157,6 +148,7 @@ describe.skipIf(process.platform !== "linux")(
         expect(nestedDirCount).toBeGreaterThan(MAX_EXPECTED_WATCHES);
         expect(ignore).not.toContain(".git");
         expect(ignore).toContain("**/node_modules/**");
+        expect(ignore).toContain("apps/child-0/dist");
         expect(watches).toBeLessThan(MAX_EXPECTED_WATCHES);
       },
       TEST_TIMEOUT_MS,
@@ -165,11 +157,14 @@ describe.skipIf(process.platform !== "linux")(
 );
 
 describe("workspace root watch events inside nested heavy directories (#1779)", () => {
-  it(
-    "does not report changes inside nested node_modules or nested .git",
-    async () => {
+  it.each([
+    { gitRoot: true, rootKind: "git" },
+    { gitRoot: false, rootKind: "non-git" },
+  ])(
+    "does not report changes inside nested Git-ignored directories or nested .git under a $rootKind root",
+    async ({ gitRoot }) => {
       const { root } = await buildUmbrellaRoot({
-        gitRoot: true,
+        gitRoot,
         nestedRepos: 1,
         packagesPerNestedRepo: 1,
       });
@@ -183,6 +178,13 @@ describe("workspace root watch events inside nested heavy directories (#1779)", 
         "lib",
         "index.js",
       );
+      const nestedBuildFile = path.join(
+        realRoot,
+        "apps",
+        "child-0",
+        "dist",
+        "bundle.js",
+      );
       const nestedGitFile = path.join(
         realRoot,
         "apps",
@@ -190,54 +192,74 @@ describe("workspace root watch events inside nested heavy directories (#1779)", 
         ".git",
         "bb-marker",
       );
+      const readyFile = path.join(realRoot, "apps", "child-0", "ready.txt");
       const visibleFile = path.join(realRoot, "apps", "child-0", "visible.txt");
       const events: WorkspaceStatusChangeEvent[] = [];
-      let ready!: () => void;
-      let failed!: (error: unknown) => void;
-      const readyPromise = new Promise<void>((resolve, reject) => {
-        ready = resolve;
-        failed = reject;
-      });
+      const ready = createDeferredPromise<void>();
+      const failed = createDeferredPromise<never>();
+      let stopped = false;
       const stop = watchWorkspaceStatus(root, {
         onChange: (event) => {
           events.push(event);
         },
-        onReady: () => ready(),
-        onWatchError: failed,
+        onReady: () => ready.resolve(),
+        onWatchError: (error) => failed.reject(error),
       });
       try {
-        await readyPromise;
-        await new Promise((resolve) => setTimeout(resolve, 300));
+        await Promise.race([ready.promise, failed.promise]);
+        await Promise.race([
+          vi.waitFor(
+            async () => {
+              if (stopped) return;
+              await fs.writeFile(readyFile, `${Date.now()}\n`);
+              expect(events.flatMap((event) => event.changedPaths)).toContain(
+                readyFile,
+              );
+            },
+            { timeout: 10_000, interval: 100 },
+          ),
+          failed.promise,
+        ]);
 
         await fs.writeFile(
           nestedPackageFile,
           "module.exports={changed:true}\n",
         );
+        await fs.writeFile(nestedBuildFile, "rebuilt\n");
         await fs.writeFile(nestedGitFile, "marker\n");
         await fs.writeFile(visibleFile, "visible\n");
-        await vi.waitFor(
-          () => {
-            expect(events.flatMap((event) => event.changedPaths)).toContain(
-              visibleFile,
-            );
-          },
-          { timeout: EVENT_TIMEOUT_MS, interval: 100 },
-        );
-        await new Promise((resolve) => setTimeout(resolve, 300));
+        await Promise.race([
+          vi.waitFor(
+            () => {
+              expect(events.flatMap((event) => event.changedPaths)).toContain(
+                visibleFile,
+              );
+            },
+            { timeout: 10_000, interval: 100 },
+          ),
+          failed.promise,
+        ]);
+        await Promise.race([
+          new Promise((resolve) => setTimeout(resolve, 300)),
+          failed.promise,
+        ]);
 
         const changedPaths = events.flatMap((event) => event.changedPaths);
         expect(changedPaths).toContain(visibleFile);
         expect(changedPaths).not.toContain(nestedPackageFile);
+        expect(changedPaths).not.toContain(nestedBuildFile);
         expect(changedPaths).not.toContain(nestedGitFile);
         expect(
           changedPaths.filter(
             (changedPath) =>
               changedPath.startsWith(path.join(realRoot, "apps")) &&
               (changedPath.includes(`${path.sep}node_modules${path.sep}`) ||
+                changedPath.includes(`${path.sep}dist${path.sep}`) ||
                 changedPath.includes(`${path.sep}.git${path.sep}`)),
           ),
         ).toEqual([]);
       } finally {
+        stopped = true;
         await stop();
       }
     },

@@ -1,5 +1,7 @@
 // oxlint-disable-next-line no-restricted-imports
 import { renameSync } from "node:fs";
+import { createFileStreamResponse } from "../files/file-stream-response.js";
+import { createLocalFileSource } from "../files/local-file-source.js";
 import { and, eq, isNull } from "drizzle-orm";
 import {
   getProjectAttachment,
@@ -30,6 +32,7 @@ import type { PromptInput } from "@bb/domain";
 import type { UploadedPromptAttachment } from "@bb/server-contract";
 import mimeTypes from "mime-types";
 import { ApiError } from "../../errors.js";
+import { requirePublicProject } from "../lib/entity-lookup.js";
 
 const HEIF_IMAGE_MIME_TYPES = new Set([
   "image/heic",
@@ -38,16 +41,12 @@ const HEIF_IMAGE_MIME_TYPES = new Set([
   "image/heif-sequence",
 ]);
 
-type PromptAttachmentInput = Extract<
-  PromptInput,
-  { type: "localFile" | "localImage" }
->;
-
-interface ValidatePromptAttachmentReferencesArgs {
+interface ResolvePromptAttachmentReferencesArgs {
   db: DbConnection;
   dataDir: string;
   input: PromptInput[];
   projectId: string;
+  hostId: string | null;
 }
 
 function sanitizeFilename(name: string): string {
@@ -109,15 +108,6 @@ function resolveAttachmentPath(
     "invalid_request",
     "Attachment path escapes project directory",
   );
-}
-
-function shouldValidateProjectAttachmentReference(
-  input: PromptInput,
-): input is PromptAttachmentInput {
-  if (input.type !== "localFile" && input.type !== "localImage") {
-    return false;
-  }
-  return !pathLooksRuntimeReadable(input.path);
 }
 
 function missingAttachmentReferenceError(attachmentPath: string): ApiError {
@@ -204,27 +194,77 @@ export async function inventoryAttachmentReferences(
   }
 }
 
-export async function validatePromptAttachmentReferences(
-  args: ValidatePromptAttachmentReferencesArgs,
-): Promise<void> {
+export async function resolvePromptAttachmentReferences(
+  args: ResolvePromptAttachmentReferencesArgs,
+): Promise<PromptInput[]> {
+  const resolved: PromptInput[] = [];
+  const copies = new Map<string, Set<string>>();
   for (const input of args.input) {
-    if (!shouldValidateProjectAttachmentReference(input)) {
+    if (input.type !== "localFile" && input.type !== "localImage") {
+      resolved.push(input);
       continue;
     }
+    if (pathLooksRuntimeReadable(input.path)) {
+      if (input.sourceProjectId !== undefined) {
+        throw new ApiError(
+          400,
+          "invalid_request",
+          "A source project can only be specified for an uploaded attachment",
+        );
+      }
+      const { hostId: hostId, ...attachment } = input;
+      if (
+        hostId !== undefined &&
+        args.hostId !== null &&
+        hostId !== args.hostId
+      ) {
+        throw new ApiError(
+          400,
+          "invalid_request",
+          `${input.path} is on another machine; upload the file to use it here`,
+        );
+      }
+      resolved.push(attachment);
+      continue;
+    }
+    if (input.hostId !== undefined) {
+      throw new ApiError(
+        400,
+        "invalid_request",
+        "A machine can only be specified for an absolute file path",
+      );
+    }
+    const { sourceProjectId: sourceProjectId = args.projectId, ...attachment } =
+      input;
+    requirePublicProject(args.db, sourceProjectId);
     await ensureAttachmentReferenceExists(
       args.db,
       args.dataDir,
-      args.projectId,
+      sourceProjectId,
       input.path,
     );
+    if (sourceProjectId !== args.projectId) {
+      const paths = copies.get(sourceProjectId) ?? new Set<string>();
+      paths.add(input.path);
+      copies.set(sourceProjectId, paths);
+    }
+    resolved.push(attachment);
   }
+  for (const [sourceProjectId, paths] of copies) {
+    await copyProjectAttachments(
+      args.db,
+      args.dataDir,
+      sourceProjectId,
+      args.projectId,
+      [...paths],
+    );
+  }
+  return resolved;
 }
 
 function formatMegabytes(bytes: number): string {
   const megabytes = bytes / (1024 * 1024);
-  return Number.isInteger(megabytes)
-    ? String(megabytes)
-    : megabytes.toFixed(1);
+  return Number.isInteger(megabytes) ? String(megabytes) : megabytes.toFixed(1);
 }
 
 function isHeifImageUpload(file: File): boolean {
@@ -273,6 +313,7 @@ export async function storeAttachment(
 
   return {
     type: isImage ? "localImage" : "localFile",
+    sourceProjectId: projectId,
     path: storedName,
     name: file.name,
     mimeType: file.type || undefined,
@@ -286,24 +327,57 @@ interface StoredAttachmentContent {
   mimeType?: string;
 }
 
+async function statAttachment(
+  dataDir: string,
+  projectId: string,
+  relativePath: string,
+) {
+  const dir = projectAttachmentDir(dataDir, projectId);
+  const path = resolveAttachmentPath(dir, relativePath);
+  const fileStat = await stat(path).catch(() => null);
+  if (!fileStat || !fileStat.isFile()) {
+    throw new ApiError(404, "invalid_request", "Attachment not found");
+  }
+  return {
+    path,
+    source: createLocalFileSource(path, fileStat),
+    mimeType: mimeTypes.lookup(path) || undefined,
+  };
+}
+
 export async function readAttachment(
   dataDir: string,
   projectId: string,
   relativePath: string,
 ): Promise<StoredAttachmentContent> {
-  const dir = projectAttachmentDir(dataDir, projectId);
-  const resolved = resolveAttachmentPath(dir, relativePath);
-
-  const fileStat = await stat(resolved).catch(() => null);
-  if (!fileStat || !fileStat.isFile()) {
-    throw new ApiError(404, "invalid_request", "Attachment not found");
-  }
-
+  const attachment = await statAttachment(dataDir, projectId, relativePath);
   return {
-    content: await readFile(resolved),
-    etag: `"${fileStat.size.toString(16)}-${Math.floor(fileStat.mtimeMs).toString(16)}"`,
-    mimeType: mimeTypes.lookup(resolved) || undefined,
+    content: await readFile(attachment.path),
+    etag: attachment.source.entityTag,
+    mimeType: attachment.mimeType,
   };
+}
+
+export async function createAttachmentContentResponse({
+  dataDir,
+  projectId,
+  path,
+  request,
+}: {
+  dataDir: string;
+  projectId: string;
+  path: string;
+  request: Request;
+}): Promise<Response> {
+  const attachment = await statAttachment(dataDir, projectId, path);
+  return createFileStreamResponse({
+    source: attachment.source,
+    request,
+    headers: new Headers({
+      "cache-control": "private, immutable, max-age=31536000",
+      "content-type": attachment.mimeType ?? "application/octet-stream",
+    }),
+  });
 }
 
 export async function copyProjectAttachments(
@@ -323,17 +397,23 @@ export async function copyProjectAttachments(
   const attachments = [];
   for (const path of uniquePaths) {
     const { content } = await readAttachment(dataDir, sourceProjectId, path);
-    attachments.push({ path, content });
+    const source = getProjectAttachment(db, sourceProjectId, path);
+    attachments.push({
+      path,
+      content,
+      originalName: source?.originalName ?? basename(path),
+      mimeType: source ? source.mimeType : mimeTypes.lookup(path) || null,
+    });
   }
-  for (const { path, content } of attachments) {
+  for (const { path, content, originalName, mimeType } of attachments) {
     await writeInventoriedAttachment(
       db,
       dataDir,
       targetProjectId,
       path,
       content,
-      basename(path),
-      mimeTypes.lookup(path) || null,
+      originalName,
+      mimeType,
     );
   }
 }

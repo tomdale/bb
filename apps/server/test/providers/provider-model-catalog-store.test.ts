@@ -1,9 +1,4 @@
-import {
-  getAppSettings,
-  getStoredProviderModelCatalog,
-  setAppSettings,
-  updateHost,
-} from "@bb/db";
+import { getStoredProviderModelCatalog, updateHost } from "@bb/db";
 import type { JsonValue, ProviderFork } from "@bb/domain";
 import type { HostDaemonOnlineRpcRequestMessage } from "@bb/host-daemon-contract";
 import { createDeferredPromise } from "@bb/test-helpers";
@@ -38,6 +33,7 @@ import {
 } from "../helpers/seed.js";
 import { withTestHarness, type TestAppHarness } from "../helpers/test-app.js";
 import { setServerMoveFrozen } from "../../src/services/server-move/freeze-state.js";
+import { setPluginAgentContributions } from "../../src/services/plugins/plugin-agent-contributions.js";
 
 const BASE_NOW = 1_800_000_000_000;
 const SECOND = 1_000;
@@ -220,6 +216,71 @@ describe("provider model catalog store", () => {
       });
       expect(modelIds(response)).toEqual([]);
       expect(host.listRequests()).toHaveLength(2);
+    });
+  });
+
+  it("lists models with the provider's plugin environment and refetches when that environment changes", async () => {
+    await withTestHarness(async (harness) => {
+      const host = setupCatalogHost(harness, { id: "host-catalog-env" });
+      const contexts: unknown[] = [];
+      let poolToken: string | null = "token-a";
+      setPluginAgentContributions({
+        listSkillRootContributions: () => [],
+        listAgentTools: () => [],
+        listInstructionContributions: () => [],
+        findAgentTool: () => undefined,
+        resolveMention: async () => ({ ok: false, error: "unused" }),
+        invokeAgentTool: async () => ({ success: false, contentItems: [] }),
+        resolveProviderEnv: async ({ providerId, context }) => {
+          contexts.push(context);
+          return {
+            entries:
+              providerId !== "codex" || poolToken === null
+                ? []
+                : [
+                    {
+                      name: "CODEX_OPENAI_BASE_URL",
+                      value: { serverPath: "/pool/v1" },
+                      source: { plugin: "account-pool" },
+                      reason: "pooled",
+                    },
+                    {
+                      name: "CODEX_POOL_AUTH_TOKEN",
+                      value: poolToken,
+                      source: { plugin: "account-pool" },
+                      reason: "pooled",
+                    },
+                  ],
+          };
+        },
+      });
+      try {
+        await host.read("codex");
+        await host.read("codex");
+        poolToken = "token-b";
+        await host.read("codex");
+        poolToken = null;
+        await host.read("codex");
+
+        expect(contexts[0]).toEqual({
+          threadId: null,
+          projectId: null,
+          hostId: host.hostId,
+        });
+        expect(
+          host
+            .listRequests("codex")
+            .map((command) =>
+              command.contributedEnv.map((entry) => entry.value),
+            ),
+        ).toEqual([
+          [{ serverPath: "/pool/v1" }, "token-a"],
+          [{ serverPath: "/pool/v1" }, "token-b"],
+          [],
+        ]);
+      } finally {
+        setPluginAgentContributions(undefined);
+      }
     });
   });
 
@@ -523,6 +584,42 @@ describe("provider model catalog store", () => {
     });
   });
 
+  it("reads a workspace-scoped catalog in the project's checkout on the machine when a new thread names its project", async () => {
+    await withTestHarness(async (harness) => {
+      const host = setupCatalogHost(harness, { id: "host-catalog-project" });
+      const other = seedHostSession(harness.deps, {
+        id: "host-catalog-project-elsewhere",
+      });
+      const { project } = seedProjectWithSource(harness.deps, {
+        hostId: host.hostId,
+        path: "/tmp/catalog-project-checkout",
+      });
+      const { project: elsewhere } = seedProjectWithSource(harness.deps, {
+        hostId: other.host.id,
+        path: "/tmp/catalog-project-elsewhere",
+      });
+      const read = (providerId: string, projectId: string) =>
+        resolveSystemExecutionOptions(harness.deps, {
+          hostId: host.hostId,
+          projectId,
+          providerId,
+        });
+
+      await read("pi", project.id);
+      await read("pi", elsewhere.id);
+      await read("claude-code", project.id);
+
+      expect(host.listRequests().map((command) => command.cwd)).toEqual([
+        "/tmp/catalog-project-checkout",
+        undefined,
+        undefined,
+      ]);
+      await expect(read("pi", "proj_missing")).rejects.toMatchObject({
+        status: 404,
+      });
+    });
+  });
+
   it("records no failure and sends no push when a refresh fails after its daemon session changed or because the host is not active", async () => {
     await withTestHarness(async (harness) => {
       const logLines = captureLogLines(harness);
@@ -686,10 +783,6 @@ describe("provider model catalog store", () => {
     await withTestHarness(async (harness) => {
       const host = setupCatalogHost(harness, {
         id: "host-catalog-machine-environment",
-      });
-      setAppSettings(harness.db, {
-        ...getAppSettings(harness.db),
-        machineGitCredentialsEnabled: false,
       });
       const held = createDeferredPromise<HostRpcHandlerResult>();
       let saved = false;

@@ -1,3 +1,4 @@
+import { ExpandableText } from "@bb/shared-ui/expandable-text";
 import type { ReactNode } from "react";
 import type { SystemExecutionOptionsModelLoadError } from "@bb/server-contract";
 import { useUrlAnchorClickHandler } from "@/lib/url-open-routing";
@@ -60,6 +61,10 @@ export function ModelLoadErrorMessage({
   const helpUrl = error.code === "missing_executable" ? installUrl : undefined;
   const handleHelpLinkClick = useUrlAnchorClickHandler(helpUrl);
   const reason = formatModelLoadErrorReason({ error });
+  const signInGuidance =
+    error.code === "auth_required" && error.detail !== reason
+      ? error.detail
+      : null;
 
   return (
     <>
@@ -67,7 +72,7 @@ export function ModelLoadErrorMessage({
         {formatModelLoadErrorSummary({ providerLabel })}
       </span>
       {reason === null ? null : (
-        <span className="mt-1 line-clamp-3 block break-words opacity-80 [overflow-wrap:anywhere]">
+        <ExpandableText expandLabel="Show details" className="mt-1 opacity-80">
           {helpUrl === undefined ? (
             reason
           ) : (
@@ -81,7 +86,12 @@ export function ModelLoadErrorMessage({
               {reason}
             </a>
           )}
-        </span>
+        </ExpandableText>
+      )}
+      {signInGuidance === null ? null : (
+        <ExpandableText expandLabel="Show details" className="mt-1 opacity-80">
+          {signInGuidance}
+        </ExpandableText>
       )}
     </>
   );

@@ -1,5 +1,5 @@
 import type { ThreadEvent } from "@bb/domain";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createBridgeProtocolAdapter } from "./bridge-protocol-adapter.js";
 import type { ProviderExecutionContext } from "./provider-adapter.js";
 
@@ -294,6 +294,20 @@ describe("options mapping", () => {
     const options = (plan as { params: { options: Record<string, unknown> } })
       .params.options;
     expect(options).not.toHaveProperty("memoryEnabled");
+  });
+});
+
+describe("commands/list", () => {
+  it("is a noop until the handshake declares commands.list", () => {
+    const adapter = makeAdapter();
+    const command = { type: "commands/list" as const, cwd: "/workspace" };
+    expect(adapter.buildCommandPlan(command)).toMatchObject({ kind: "noop" });
+    completeHandshake(adapter, { commands: { list: true } });
+    expect(adapter.buildCommandPlan(command)).toMatchObject({
+      kind: "request",
+      method: "commands/list",
+      params: { cwd: "/workspace" },
+    });
   });
 });
 
@@ -675,5 +689,45 @@ describe("provider-native id translation", () => {
       },
     });
     expect(decoded).toMatchObject({ turnId: bbTurnId, callId: bbItemId });
+  });
+});
+
+describe("deferred text flush", () => {
+  it("hands a quiet stream's buffered text to the deferred listener", () => {
+    vi.useFakeTimers();
+    try {
+      const adapter = makeAdapter();
+      const deferred: Array<[string, ThreadEvent[]]> = [];
+      adapter.onDeferredEvents((threadId, events) => {
+        deferred.push([threadId, events]);
+      });
+      const opened = feedDeltas(adapter, "t_1", [
+        { kind: "turn.open" },
+        {
+          kind: "item.textDelta",
+          key: { channel: "assistant" },
+          channel: "agentMessage",
+          text: "Hi",
+        },
+      ]);
+      expect(opened.map((event) => event.type)).toEqual([
+        "turn/started",
+        "item/started",
+      ]);
+      vi.advanceTimersByTime(60);
+      expect(deferred).toEqual([
+        [
+          "t_1",
+          [
+            expect.objectContaining({
+              type: "item/agentMessage/delta",
+              delta: "Hi",
+            }),
+          ],
+        ],
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

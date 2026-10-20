@@ -38,6 +38,7 @@ export function createDesktopReleaseConfig(channel) {
       linuxExecutableName: "bb-nightly",
       macIconPath: "assets/icon-nightly.icns",
       releaseTag: "desktop-nightly",
+      windowsInstallName: "bb-nightly",
       publish: [
         {
           channel: "nightly",
@@ -60,6 +61,7 @@ export function createDesktopReleaseConfig(channel) {
     linuxExecutableName: "bb",
     macIconPath: "assets/icon.icns",
     releaseTag: "desktop-latest",
+    windowsInstallName: "bb",
     publish: [
       {
         channel: "latest",

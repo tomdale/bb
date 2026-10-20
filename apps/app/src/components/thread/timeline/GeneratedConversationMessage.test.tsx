@@ -52,7 +52,6 @@ function renderChildCompleted(text = MARKDOWN_BODY) {
         <ConversationMessageContent
           role="user"
           initiator="system"
-          originKind={null}
           senderThreadId={null}
           senderThreadTitle={null}
           systemMessageKind="child-completed"
@@ -196,7 +195,6 @@ function renderAgentMessage(
           <ConversationMessageContent
             role="user"
             initiator="agent"
-            originKind={null}
             senderThreadId="thr_agent"
             senderThreadTitle={senderThreadTitle}
             senderIsPluginSideChat={senderIsPluginSideChat}
@@ -597,7 +595,7 @@ describe("GeneratedConversationMessage markdown body", () => {
     expect(screen.queryByText("**Ready** to merge.")).toBeNull();
 
     const toggle = screen.getByRole("button", {
-      name: /Replying to side chat/u,
+      name: /Message from side chat/u,
     });
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
 
@@ -617,7 +615,7 @@ describe("GeneratedConversationMessage markdown body", () => {
     ).not.toBeNull();
 
     fireEvent.click(
-      screen.getByRole("button", { name: /Replying to side chat/u }),
+      screen.getByRole("button", { name: /Message from side chat/u }),
     );
 
     expect(

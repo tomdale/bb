@@ -1,4 +1,5 @@
 import * as questionFormHost from "@bb/shared-ui/question-form-host";
+import * as voiceInputTextarea from "@bb/shared-ui/voice-input-textarea";
 import * as react from "react";
 import * as reactDom from "react-dom";
 import * as reactDomClient from "react-dom/client";
@@ -15,6 +16,7 @@ import * as radixPopover from "@radix-ui/react-popover";
 import * as radixSelect from "@radix-ui/react-select";
 import * as radixTooltip from "@radix-ui/react-tooltip";
 import * as sonner from "sonner";
+import { whenToasterSettled } from "@/components/ui/app-toast-runtime";
 import * as vaul from "vaul";
 import * as pierreDiffs from "@pierre/diffs";
 import * as clsx from "clsx";
@@ -53,6 +55,7 @@ import { pluginSdkAppImplementation } from "./plugin-sdk-app-impl";
 import {
   beginPluginSlotBatch,
   removePluginSlotRegistrations,
+  setBuiltinPluginIds,
   setPluginSlotRegistrations,
   type PluginRegistrationSet,
 } from "./plugin-slots";
@@ -203,6 +206,7 @@ interface BbPluginRuntime {
   classVarianceAuthority: unknown;
   sharedUiIcon: unknown;
   questionFormHost: typeof questionFormHost;
+  voiceInputTextarea: typeof voiceInputTextarea;
 }
 
 type RuntimeHost = typeof globalThis & { __bbPluginRuntime?: BbPluginRuntime };
@@ -236,6 +240,7 @@ export function installPluginRuntime(): void {
     classVarianceAuthority,
     sharedUiIcon,
     questionFormHost,
+    voiceInputTextarea,
   };
 }
 
@@ -290,6 +295,11 @@ export async function fetchFrontendCandidates(
   }
   setPluginLogoUrls(logoUrls);
   setPluginAssetIcons(assetIcons);
+  setBuiltinPluginIds(
+    plugins.flatMap((plugin) =>
+      plugin.provenance === "builtin" ? [plugin.id] : [],
+    ),
+  );
   return candidates;
 }
 
@@ -734,10 +744,8 @@ async function reconcileCandidates(
             "the bundle's default export is not definePluginApp(...) from @get-bb/plugin-sdk/app",
           );
         }
-        collected = collectPluginAppRegistrations(definition, (reason) => {
-          deps.warn(
-            `[plugin:${pluginId}] composer customization rejected: ${reason}`,
-          );
+        collected = collectPluginAppRegistrations(definition, (message) => {
+          deps.warn(`[plugin:${pluginId}] ${message}`);
         });
       } catch (error) {
         const message = errorMessage(error);
@@ -990,6 +998,7 @@ export function bootPluginFrontends(): Promise<void> {
   bootPromise ??= (async () => {
     installPluginRuntime();
     installPluginFrontendPageLifecycle();
+    await whenToasterSettled();
     await reconcilePluginFrontends(state, browserReconcileDeps);
   })().catch((error: unknown) => {
     console.warn(

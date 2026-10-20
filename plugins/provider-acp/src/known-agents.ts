@@ -92,6 +92,7 @@ export const KNOWN_ACP_AGENTS: readonly AcpAgentDefinition[] = [
     installUrl: "https://opencode.ai/docs",
     visibility: "installed",
     dialect: "opencode",
+    modelCatalogScope: "workspace",
     providerUsage: true,
     supportsManualCompaction: true,
     fork: "tip",
@@ -153,6 +154,7 @@ export const KNOWN_ACP_AGENTS: readonly AcpAgentDefinition[] = [
     installUrl: "https://docs.x.ai/docs/grok-build",
     visibility: "installed",
     dialect: "grok",
+    supportsManualCompaction: true,
     fork: "none",
     reasoningProbePriorityModelIds: ["grok-4.6", "grok-4.5"],
     launch: {

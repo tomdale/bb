@@ -8,6 +8,7 @@ import type {
   ReasoningLevel,
   RuntimePermissionPolicy,
   ServiceTier,
+  SessionOptionSelections,
 } from "@bb/domain";
 import type {
   AgentRuntimeBridgeLaunch,
@@ -27,6 +28,7 @@ export type ProviderExecutionContext = {
   serviceTier?: ServiceTier;
   reasoningLevel?: ReasoningLevel;
   promptMode?: PromptMode;
+  sessionOptions?: SessionOptionSelections;
   providerOptions: JsonObject;
   instructions?: string;
   envVars?: Record<string, string>;
@@ -37,7 +39,8 @@ export type AdapterCommand =
       type: "skills/configure";
       skillRoots: readonly AgentRuntimeSkillRoot[];
     }
-  | { type: "model/list"; cwd?: string }
+  | { type: "model/list"; cwd?: string; envVars: Record<string, string> }
+  | { type: "commands/list"; cwd: string }
   | { type: "provider/health"; cwd?: string }
   | { type: "provider/usage"; cwd?: string }
   | {

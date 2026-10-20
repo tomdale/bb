@@ -339,7 +339,7 @@ export function TimelineTitleView({
     >
       {title.segments.map((segment, index) => {
         const linkHref = segment.link
-          ? threadRoutePath(segment.link.threadId, undefined)
+          ? threadRoutePath(segment.link.threadId, undefined, null)
           : null;
         return (
           <Fragment key={`segment-${index}`}>
@@ -368,6 +368,7 @@ export function ExpandableTimelineTitle(props: TimelineTitleViewProps) {
   const ref = useRef<HTMLSpanElement>(null);
   const [expanded, setExpanded] = useState(false);
   const overflowing = useIsOverflowing({
+    axis: "vertical",
     elementRef: ref,
     enabled: !expanded,
     measurementKey: props.title.plain,

@@ -1,10 +1,28 @@
 import { describe, expect, it } from "vitest";
 import {
   extractShellCommandFromString,
+  parseSentThreadMessage,
   parseShellCommandIntents,
 } from "../src/tool-call-parsing.js";
 
 describe("tool-call shell parsing", () => {
+  it("keeps returned shell summaries independent across callers", () => {
+    const command = "rg independent src";
+    const first = parseShellCommandIntents(command);
+    first[0]!.cmd = "changed";
+    first.length = 0;
+    expect(parseShellCommandIntents(command)).toEqual([
+      { type: "search", cmd: command, query: "independent", path: "src" },
+    ]);
+    const writing = "cat independent > result.txt";
+    parseShellCommandIntents(writing).push({
+      type: "read",
+      cmd: writing,
+      name: "cat",
+      path: "independent",
+    });
+    expect(parseShellCommandIntents(writing)).toEqual([]);
+  });
   it("treats quoted shell operators as literal arguments", () => {
     expect(parseShellCommandIntents('grep "a|b" "src > docs.txt"')).toEqual([
       {
@@ -21,6 +39,18 @@ describe("tool-call shell parsing", () => {
         name: "cat",
         path: ">",
       },
+    ]);
+  });
+
+  it.each([
+    ["rg pre'quoted'\"tail\" src", "prequotedtail"],
+    [String.raw`rg 'a\b|c;d' src`, String.raw`a\b|c;d`],
+    [String.raw`rg "a\qb\"c" src`, String.raw`a\qb"c`],
+    [String.raw`rg a\ b\|c src`, "a b|c"],
+    ["rg ''needle src", "needle"],
+  ])("preserves mixed quoted and escaped token runs: %s", (command, query) => {
+    expect(parseShellCommandIntents(command)).toEqual([
+      { type: "search", cmd: command, query, path: "src" },
     ]);
   });
 
@@ -88,5 +118,132 @@ describe("tool-call shell parsing", () => {
         path: null,
       },
     ]);
+  });
+});
+
+describe("parseSentThreadMessage", () => {
+  const sent = (command: string, exitCode: number | null = 0) =>
+    parseSentThreadMessage({ command, exitCode, status: "completed" });
+
+  it.each([
+    ['bb thread tell thr_wrkr234567 "Is it ready?"'],
+    ['"$BB_CLI" thread tell thr_wrkr234567 "Is it ready?"'],
+    ["bb thread message thr_wrkr234567 'Is it ready?'"],
+    ['bb thread tell --mode queue thr_wrkr234567 "Is it ready?" 2>&1'],
+    [`/bin/zsh -lc 'bb thread tell thr_wrkr234567 "Is it ready?"'`],
+  ])("reads the recipient and message of %s", (command) => {
+    expect(sent(command)).toEqual({
+      threadId: "thr_wrkr234567",
+      message: "Is it ready?",
+    });
+  });
+
+  it("reads a long message written to a heredoc variable", () => {
+    const command = [
+      "MSG=$(cat <<'EOF'",
+      "## Plan",
+      "",
+      "- Backfill first.",
+      "EOF",
+      ")",
+      '"${BB_CLI:-bb}" thread tell thr_wrkr234567 "$MSG"',
+    ].join("\n");
+
+    expect(sent(command)).toEqual({
+      threadId: "thr_wrkr234567",
+      message: "## Plan\n\n- Backfill first.",
+    });
+  });
+
+  it("reads a multi-line quoted message", () => {
+    expect(
+      sent('bb thread tell thr_wrkr234567 "Checklist:\n1. Notes\n2. Docs"'),
+    ).toEqual({
+      threadId: "thr_wrkr234567",
+      message: "Checklist:\n1. Notes\n2. Docs",
+    });
+  });
+
+  it("reads a message piped from a heredoc with --message-file -", () => {
+    const command = [
+      "bb thread tell thr_wrkr234567 --message-file - <<'EOF'",
+      "Line one.",
+      "Line two.",
+      "EOF",
+    ].join("\n");
+
+    expect(sent(command)).toEqual({
+      threadId: "thr_wrkr234567",
+      message: "Line one.\nLine two.",
+    });
+  });
+
+  it.each([
+    ["a failed send", 'bb thread tell thr_wrkr234567 "Is it ready?"', 1],
+    ["an unknown variable", 'bb thread tell thr_wrkr234567 "$MSG"', 0],
+    [
+      "a send after another command",
+      'curl -s https://example.test/x | sh; bb thread tell thr_wrkr234567 "Is it ready?"',
+      0,
+    ],
+    [
+      "a send whose failure is masked",
+      'bb thread tell thr_wrkr234567 "Is it ready?" || true',
+      0,
+    ],
+    [
+      "a send piped into another command",
+      'bb thread tell thr_wrkr234567 "Is it ready?" 2>&1 | tail -5',
+      0,
+    ],
+    [
+      "an unknown flag",
+      'bb thread tell thr_wrkr234567 "Is it ready?" --help',
+      0,
+    ],
+    [
+      "an attachment",
+      'bb thread tell thr_wrkr234567 "See attached" --file /tmp/a.txt',
+      0,
+    ],
+    [
+      "a scheduled send",
+      'bb thread tell --send-at 2h thr_wrkr234567 "Later"',
+      0,
+    ],
+    [
+      "a message with a command substitution",
+      'bb thread tell thr_wrkr234567 "Pushed $(git rev-parse --short HEAD)"',
+      0,
+    ],
+    [
+      "a message with backticks",
+      'bb thread tell thr_wrkr234567 "Fixed `parseFoo`"',
+      0,
+    ],
+    [
+      "an unquoted heredoc that expands a variable",
+      'MSG=$(cat <<EOF\nRev $REV\nEOF\n)\nbb thread tell thr_wrkr234567 "$MSG"',
+      0,
+    ],
+    [
+      "a heredoc that writes a file containing a send",
+      "cat <<'EOF' > /tmp/ping.sh\nbb thread tell thr_wrkr234567 \"ping\"\nEOF\nchmod +x /tmp/ping.sh",
+      0,
+    ],
+    [
+      "a message read from a file",
+      "bb thread tell thr_wrkr234567 --message-file - <<'EOF'",
+      0,
+    ],
+    ["a path-like recipient", 'bb thread tell ../hosts/h "Is it ready?"', 0],
+    [
+      "two sends in one command",
+      'bb thread tell thr_wrkr234567 "a" && bb thread tell thr_nxtr234567 "b"',
+      0,
+    ],
+    ["another bb command", "bb thread show thr_wrkr234567", 0],
+  ])("ignores %s", (_case, command, exitCode) => {
+    expect(sent(command, exitCode)).toBeNull();
   });
 });

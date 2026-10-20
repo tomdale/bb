@@ -389,6 +389,10 @@ function fileEditPartialChanges(
   return "changes" in partial ? partial.changes : undefined;
 }
 
+function fileEditPartialStderr(partial: FileEditPartial): string | undefined {
+  return "stderr" in partial ? partial.stderr : undefined;
+}
+
 function fileEditPartialHasAppendedStdout(partial: FileEditPartial): boolean {
   return "appendStdout" in partial;
 }
@@ -429,6 +433,7 @@ export function flushPendingFileEditOutput(
 }
 
 interface CreateFileEditMessageArgs {
+  sourcePart: number;
   callId: string;
   change: EventProjectionFileEditChange | null;
   messageKey: string;
@@ -440,6 +445,7 @@ interface CreateFileEditMessageArgs {
 }
 
 function createFileEditMessage({
+  sourcePart,
   callId,
   change,
   messageKey,
@@ -453,6 +459,7 @@ function createFileEditMessage({
     kind: "file-edit",
     id: messageId(threadId, "file-edit", messageKey),
     threadId,
+    sourceEvent: { seq: meta.seq, part: sourcePart },
     sourceSeqStart: meta.seq,
     sourceSeqEnd: meta.seq,
     createdAt: meta.createdAt,
@@ -467,6 +474,7 @@ function createFileEditMessage({
     callId,
     changes: change ? [{ ...change }] : [],
     stdout,
+    stderr: fileEditPartialStderr(partial),
     approvalStatus: fileEditPartialApprovalStatus(partial) ?? null,
     status: partial.status,
   };
@@ -677,6 +685,7 @@ function updateFileEditMessage(
   }
 
   existing.stdout = stdout;
+  existing.stderr = fileEditPartialStderr(partial) ?? existing.stderr;
 
   existing.approvalStatus = applyApprovalStatusDelta(
     existing.approvalStatus,
@@ -747,10 +756,10 @@ export function upsertFileEdit(
       groupFileEditRowsByChangeMatchKey(compatibleRows);
     const usedRowIds = new Set<string>();
     const nextRows: EventProjectionFileEditMessage[] = [];
-    for (const entry of buildFileEditChangeEntries(
+    for (const [sourcePart, entry] of buildFileEditChangeEntries(
       partial.callId,
       partialChanges,
-    )) {
+    ).entries()) {
       const existing = takeFileEditRowForChangeEntry({
         entry,
         groupedRows: existingRowsByMatchKey,
@@ -771,6 +780,7 @@ export function upsertFileEdit(
 
       nextRows.push(
         createFileEditMessage({
+          sourcePart,
           callId: partial.callId,
           change: entry.change,
           messageKey: resolveScopedFileEditMessageKey({
@@ -812,6 +822,7 @@ export function upsertFileEdit(
     }
 
     const message = createFileEditMessage({
+      sourcePart: changeIndex,
       callId: partial.callId,
       change,
       messageKey: resolveScopedFileEditMessageKey({
@@ -863,6 +874,7 @@ export function onCompactionBegin(
     kind: "operation",
     id: messageId(threadId, "op", `compaction:${payload.key}`),
     threadId,
+    sourceEvent: { seq: meta.seq, part: 0 },
     sourceSeqStart: meta.seq,
     sourceSeqEnd: meta.seq,
     createdAt: meta.createdAt,
@@ -913,6 +925,7 @@ export function onCompactionEnd(
     kind: "operation",
     id: messageId(threadId, "op", `compaction:${payload.key}`),
     threadId,
+    sourceEvent: { seq: meta.seq, part: 0 },
     sourceSeqStart: meta.seq,
     sourceSeqEnd: meta.seq,
     createdAt: meta.createdAt,

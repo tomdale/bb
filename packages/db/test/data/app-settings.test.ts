@@ -7,7 +7,7 @@ import {
   setAppSettings,
   type DbConnection,
 } from "../../src/index.js";
-import { createMigratedConnection } from "../helpers/migrated-connection.js";
+import { createMigratedConnection } from "../../src/testing.js";
 
 describe("app settings data", () => {
   let db: DbConnection;
@@ -44,6 +44,14 @@ describe("app settings data", () => {
         )
         .get(),
     ).toBeUndefined();
+  });
+
+  it("defaults terminal copy-on-select to enabled and persists opting out", () => {
+    expect(getAppSettings(db).terminalCopyOnSelect).toBe(true);
+    setAppSettings(db, { ...defaultAppSettings, terminalCopyOnSelect: false });
+    expect(getAppSettings(db).terminalCopyOnSelect).toBe(false);
+    db.$client.exec("UPDATE app_settings_values SET value = '\"invalid\"' WHERE key = 'terminalCopyOnSelect'");
+    expect(getAppSettings(db).terminalCopyOnSelect).toBe(true);
   });
 
   it("persists keyboard overrides without clobbering general settings", () => {

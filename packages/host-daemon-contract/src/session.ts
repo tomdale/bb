@@ -352,6 +352,13 @@ const hostDaemonOnlineRpcRequestMessageSchema = z
   })
   .strict();
 
+const hostDaemonOnlineRpcCancelMessageSchema = z
+  .object({
+    type: z.literal("host-rpc.cancel"),
+    requestId: hostDaemonOnlineRpcRequestIdSchema,
+  })
+  .strict();
+
 const hostDaemonWatchSetReplaceMessageSchema = hostDaemonWatchSetSchema
   .extend({
     type: z.literal("watch-set.replace"),
@@ -431,6 +438,7 @@ const hostDaemonOnlineRpcResponseSuccessSchema = z.discriminatedUnion(
     onlineRpcResponseSuccessSchemaFor("plugin.host.dispose"),
     onlineRpcResponseSuccessSchemaFor("connect-tunnel.ensure-identity"),
     onlineRpcResponseSuccessSchemaFor("host.list_commands"),
+    onlineRpcResponseSuccessSchemaFor("host.read_workspace_agent_context"),
     onlineRpcResponseSuccessSchemaFor("host.list_skills"),
     onlineRpcResponseSuccessSchemaFor("host.delete_skill"),
     onlineRpcResponseSuccessSchemaFor("host.write_skill"),
@@ -443,10 +451,12 @@ const hostDaemonOnlineRpcResponseSuccessSchema = z.discriminatedUnion(
     onlineRpcResponseSuccessSchemaFor("host.read_file_relative"),
     onlineRpcResponseSuccessSchemaFor("host.write_file"),
     onlineRpcResponseSuccessSchemaFor("provider.list_models"),
+    onlineRpcResponseSuccessSchemaFor("provider.list_commands"),
     onlineRpcResponseSuccessSchemaFor("provider.health"),
     onlineRpcResponseSuccessSchemaFor("provider.installation.status"),
     onlineRpcResponseSuccessSchemaFor("provider.installation.run"),
     onlineRpcResponseSuccessSchemaFor("provider.usage"),
+    onlineRpcResponseSuccessSchemaFor("host.discover_repos"),
     onlineRpcResponseSuccessSchemaFor("workspace.status"),
     onlineRpcResponseSuccessSchemaFor("workspace.diff"),
     onlineRpcResponseSuccessSchemaFor("workspace.diffFiles"),
@@ -499,6 +509,10 @@ export type HostDaemonOnlineRpcResponseMessage = z.infer<
 
 export type HostDaemonOnlineRpcRequestMessage = z.infer<
   typeof hostDaemonOnlineRpcRequestMessageSchema
+>;
+
+export type HostDaemonOnlineRpcCancelMessage = z.infer<
+  typeof hostDaemonOnlineRpcCancelMessageSchema
 >;
 
 export const hostDaemonTerminalOutputChunkSchema = z
@@ -597,6 +611,22 @@ const hostDaemonTerminalCloseMessageSchema = z
   })
   .strict();
 
+const hostDaemonTerminalFlowControlMessageSchema = z
+  .object({
+    type: z.literal("terminal.flow-control"),
+    terminalId: terminalIdSchema,
+    enabled: z.boolean(),
+  })
+  .strict();
+
+const hostDaemonTerminalAckMessageSchema = z
+  .object({
+    type: z.literal("terminal.ack"),
+    terminalId: terminalIdSchema,
+    nextSeq: z.number().int().nonnegative(),
+  })
+  .strict();
+
 export const hostDaemonServerWsMessageSchema = z.discriminatedUnion("type", [
   z
     .object({
@@ -622,6 +652,7 @@ export const hostDaemonServerWsMessageSchema = z.discriminatedUnion("type", [
     })
     .strict(),
   hostDaemonOnlineRpcRequestMessageSchema,
+  hostDaemonOnlineRpcCancelMessageSchema,
   hostDaemonWatchSetReplaceMessageSchema,
   hostDaemonConnectSharesReplaceMessageSchema,
   hostDaemonTerminalOpenMessageSchema,
@@ -629,6 +660,8 @@ export const hostDaemonServerWsMessageSchema = z.discriminatedUnion("type", [
   hostDaemonTerminalInputMessageSchema,
   hostDaemonTerminalResizeMessageSchema,
   hostDaemonTerminalCloseMessageSchema,
+  hostDaemonTerminalFlowControlMessageSchema,
+  hostDaemonTerminalAckMessageSchema,
 ]);
 export type HostDaemonServerWsMessage = z.infer<
   typeof hostDaemonServerWsMessageSchema
