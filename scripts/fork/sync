@@ -1,0 +1,280 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: scripts/fork/sync [options]
+
+Rebases origin/personal onto upstream/main in a scratch worktree, checks that
+every fork change still adds and removes exactly the lines it did before, runs
+the workspace typecheck and the tests of every package the fork touches, then
+pushes personal, a personal/<date> tag of its previous state, and main as an
+exact copy of upstream/main. Finally it moves the local personal and main
+branches, including a clean checkout of personal, to the new commits.
+
+The scratch worktree persists between runs so its node_modules can be reused.
+
+Prints nothing and exits 0 when personal already contains upstream/main.
+Exits 1 without pushing anything when the rebase conflicts, a fork change's
+lines differ, or verification fails, and prints what to fix. Command output
+and the scratch worktree live in ${XDG_STATE_HOME:-~/.local/state}/bb-fork-sync/.
+
+Options:
+  --onto <ref>     Rebase onto <ref> instead of upstream/main; implies --no-push
+  --force          Rebase and verify even when personal is already up to date
+  --no-verify      Skip install, typecheck, and tests
+  --no-push        Stop after verification without pushing or moving branches
+  -h, --help       Show this help
+EOF
+}
+
+# Automations inherit the bb server's environment, including NODE_ENV=production
+# (which makes pnpm drop devDependencies), Electron flags, and credentials.
+# Re-run with only what git, gh, Proto, and the test suites need.
+if [[ -z ${BB_FORK_SYNC_CLEAN_ENV:-} ]]; then
+  clean_env=(BB_FORK_SYNC_CLEAN_ENV=1 "PATH=/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin")
+  for name in HOME USER LOGNAME SHELL LANG LC_ALL LC_CTYPE TMPDIR SSH_AUTH_SOCK PROTO_HOME XDG_STATE_HOME; do
+    if [[ -n ${!name:-} ]]; then clean_env+=("$name=${!name}"); fi
+  done
+  exec env -i "${clean_env[@]}" /bin/bash "${BASH_SOURCE[0]}" "$@"
+fi
+
+onto_ref=upstream/main
+force=0
+verify=1
+push=1
+while (($#)); do
+  case "$1" in
+    --onto)
+      [[ $# -ge 2 ]] || { usage >&2; exit 2; }
+      onto_ref=$2
+      push=0
+      shift 2
+      ;;
+    --force) force=1; shift ;;
+    --no-verify) verify=0; shift ;;
+    --no-push) push=0; shift ;;
+    -h | --help) usage; exit 0 ;;
+    *) printf 'Unknown option: %s\n\n' "$1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+# Proto's shims are on PATH only in login shells.
+for dir in "$HOME/.local/share/proto/bin" "$HOME/.local/share/proto/shims"; do
+  if [[ -d $dir && ":$PATH:" != *":$dir:"* ]]; then
+    PATH="$dir:$PATH"
+  fi
+done
+export PATH
+
+export GIT_EDITOR=true
+
+repo=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)
+git() { command git -C "$repo" "$@"; }
+
+state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/bb-fork-sync"
+mkdir -p "$state_dir"
+find "$state_dir" -maxdepth 1 -name '*.log' -mtime +30 -delete
+log="$state_dir/$(date +%Y-%m-%dT%H%M%S).log"
+
+fail() {
+  printf 'bb fork sync failed: %s\n' "$1"
+  shift
+  if (($#)); then printf '%s\n' "$@"; fi
+  printf 'Log: %s\n' "$log"
+  exit 1
+}
+
+run_logged() {
+  printf '\n$ %s\n' "$*" >>"$log"
+  "$@" >>"$log" 2>&1
+}
+
+run_logged git fetch upstream main || fail "could not fetch upstream main"
+run_logged git fetch origin personal main || fail "could not fetch origin personal and main"
+
+old=$(git rev-parse origin/personal)
+onto=$(git rev-parse --verify "$onto_ref^{commit}")
+
+if local_personal=$(git rev-parse -q --verify refs/heads/personal); then
+  if [[ $local_personal != "$old" ]] && ! git merge-base --is-ancestor "$local_personal" "$old"; then
+    fail "local personal has commits that are not on origin/personal" \
+      "Push them or drop them, then rerun."
+  fi
+fi
+
+if git merge-base --is-ancestor "$onto" "$old" && ((!force)); then
+  rm -f "$log"
+  exit 0
+fi
+
+old_base=$(git merge-base "$old" "$onto")
+
+worktree="$state_dir/worktree"
+if [[ ! -e $worktree/.git ]]; then
+  run_logged git worktree prune
+  run_logged git worktree add --detach "$worktree" "$old" || fail "could not create a scratch worktree"
+fi
+wt() { command git -C "$worktree" "$@"; }
+wt rebase --abort >/dev/null 2>&1 || true
+run_logged wt checkout --force --detach "$old" || fail "could not reset the scratch worktree"
+run_logged wt clean -ffd || fail "could not clean the scratch worktree"
+
+# Signing would need an unlocked key agent, which an unattended run cannot rely
+# on. rerere replays conflict resolutions recorded in earlier manual syncs.
+rebase_git=(-c commit.gpgsign=false -c rerere.enabled=true -c rerere.autoupdate=true)
+rebase_dir="$(wt rev-parse --absolute-git-dir)/rebase-merge"
+if ! run_logged wt "${rebase_git[@]}" rebase "$onto"; then
+  last_stop=
+  while [[ -d $rebase_dir ]]; do
+    stop=$(wt rev-parse -q --verify REBASE_HEAD || true)
+    conflicts=$(wt diff --name-only --diff-filter=U | sed 's/^/  /')
+    if [[ -n $conflicts || $stop == "$last_stop" ]]; then
+      stopped=$(wt log -1 --format='%h %s' "${stop:-HEAD}")
+      wt rebase --abort >/dev/null 2>&1 || true
+      fail "rebasing onto $(git rev-parse --short "$onto") stopped at $stopped" \
+        "Conflicting files:" "${conflicts:-  (none; see the log)}" \
+        "Resolve it by hand as FORK.md describes; rerere then replays the resolution."
+    fi
+    last_stop=$stop
+    run_logged wt "${rebase_git[@]}" rebase --continue || true
+  done
+fi
+new=$(wt rev-parse HEAD)
+
+fork_commits() {
+  git log --reverse --format='%H %(trailers:key=Fork-Patch,valueonly,separator=%x2C)' "$1..$2"
+}
+
+old_ids=()
+old_shas=()
+while read -r sha id; do
+  [[ -n ${id:-} ]] || fail "fork commit $(git rev-parse --short "$sha") has no Fork-Patch trailer"
+  old_shas+=("$sha")
+  old_ids+=("$id")
+done < <(fork_commits "$old_base" "$old")
+
+new_ids=()
+new_shas=()
+while read -r sha id; do
+  [[ -n ${id:-} ]] || fail "fork commit $(git rev-parse --short "$sha") has no Fork-Patch trailer"
+  new_shas+=("$sha")
+  new_ids+=("$id")
+done < <(fork_commits "$onto" "$new")
+((${#new_ids[@]})) || fail "personal has no fork commits on top of $(git rev-parse --short "$onto")"
+
+if [[ "${old_ids[*]-}" != "${new_ids[*]-}" ]]; then
+  fail "the rebase changed the list of fork changes" \
+    "Before: ${old_ids[*]-}" "After:  ${new_ids[*]-}" \
+    "A change that disappeared probably landed upstream; drop its FORK.md entry."
+fi
+
+# Compares only the added and removed lines of each change, plus the blobs of
+# files it adds, so moved hunks and new upstream context do not count as drift.
+change_lines() {
+  git diff-tree --no-commit-id --no-renames -r --raw "$1" | awk '$5 == "A" { print "added", $6, $4 }'
+  git diff-tree --no-commit-id --no-renames -p -U0 --no-color "$1" |
+    grep -E '^(diff --git |[-+])' | grep -vE '^(\+\+\+|---) ' || true
+}
+
+drift=()
+for i in "${!new_ids[@]}"; do
+  id=${new_ids[$i]}
+  if ! drift_diff=$(diff -u <(change_lines "${old_shas[$i]}") <(change_lines "${new_shas[$i]}")); then
+    drift+=("$id")
+    printf '\nLine changes in %s:\n%s\n' "$id" "$drift_diff" >>"$log"
+  fi
+done
+if ((${#drift[@]} > 0)); then
+  git range-diff "$old_base..$old" "$onto..$new" >>"$log" 2>&1 || true
+  fail "the rebase changed the lines of: ${drift[*]}" \
+    "Review the line changes and range-diff in the log, then sync by hand." \
+    "The rebased result is checked out in $worktree."
+fi
+
+if ((verify)); then
+  # pnpm asks before purging node_modules after a store or settings change,
+  # and an unattended run has no one to answer.
+  (cd "$worktree" && run_logged pnpm install --frozen-lockfile --config.confirmModulesPurge=false </dev/null) || fail "pnpm install failed"
+  (cd "$worktree" && run_logged pnpm exec turbo run typecheck --output-logs=errors-only) ||
+    fail "typecheck failed"
+  filters=()
+  while read -r name; do filters+=("--filter=$name"); done < <(
+    wt diff --name-only "$onto" "$new" | (cd "$worktree" && node -e '
+      const fs = require("node:fs");
+      const path = require("node:path");
+      const names = new Set();
+      for (const file of fs.readFileSync(0, "utf8").split("\n").filter(Boolean)) {
+        for (let dir = path.dirname(file); dir !== "."; dir = path.dirname(dir)) {
+          const manifest = path.join(dir, "package.json");
+          if (fs.existsSync(manifest)) {
+            names.add(JSON.parse(fs.readFileSync(manifest, "utf8")).name);
+            break;
+          }
+        }
+      }
+      console.log([...names].sort().join("\n"));
+    ')
+  )
+  if ((${#filters[@]} > 0)); then
+    # One retry absorbs the timing-sensitive tests that fail under full load.
+    test_cmd=(pnpm exec turbo run test "${filters[@]}" --output-logs=errors-only)
+    (cd "$worktree" && run_logged "${test_cmd[@]}") ||
+      (cd "$worktree" && run_logged "${test_cmd[@]}") ||
+      fail "tests failed twice for: ${filters[*]#--filter=}"
+  fi
+fi
+
+upstream_count=$(git rev-list --count "$old_base..$onto")
+summary="Rebased ${#new_ids[@]} fork changes (${new_ids[*]}) onto $(git rev-parse --short "$onto") (+$upstream_count upstream commits)"
+
+if ((!push)); then
+  printf '%s; not pushed (%s).\n' "$summary" "$(git rev-parse --short "$new")"
+  exit 0
+fi
+
+if [[ $new == "$old" ]]; then
+  printf '%s; personal is unchanged.\n' "$summary"
+  exit 0
+fi
+
+tag="personal/$(date +%Y-%m-%d)"
+suffix=1
+while git rev-parse -q --verify "refs/tags/$tag" >/dev/null ||
+  command git -C "$repo" ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; do
+  suffix=$((suffix + 1))
+  tag="personal/$(date +%Y-%m-%d).$suffix"
+done
+git -c tag.gpgsign=false tag "$tag" "$old" || fail "could not create tag $tag"
+run_logged git push --atomic --force-with-lease="personal:$old" origin "$new:refs/heads/personal" "refs/tags/$tag" ||
+  fail "could not push personal and $tag; origin/personal may have moved"
+run_logged git push --force-with-lease="main:$(git rev-parse origin/main)" origin "$onto:refs/heads/main" ||
+  fail "pushed personal, but could not update origin main"
+
+notes=()
+checked_out_at() {
+  git worktree list --porcelain | awk -v ref="refs/heads/$1" '
+    /^worktree / { path = substr($0, 10) }
+    $0 == "branch " ref { print path }'
+}
+
+personal_checkout=$(checked_out_at personal)
+if [[ -z $personal_checkout ]]; then
+  git branch -f personal "$new" >/dev/null
+elif [[ -z "$(command git -C "$personal_checkout" status --porcelain)" && "$(command git -C "$personal_checkout" rev-parse HEAD)" == "$old" ]]; then
+  command git -C "$personal_checkout" reset --quiet --keep "$new"
+  if ! command git -C "$repo" diff --quiet "$old" "$new" -- pnpm-lock.yaml; then
+    (cd "$personal_checkout" && run_logged pnpm install --frozen-lockfile --config.confirmModulesPurge=false </dev/null) ||
+      notes+=("pnpm install failed in $personal_checkout")
+  fi
+else
+  notes+=("$personal_checkout has local changes or commits; reset it to origin/personal yourself")
+fi
+
+if [[ -z "$(checked_out_at main)" ]]; then
+  git update-ref refs/heads/main "$onto"
+fi
+
+printf '%s; pushed personal %s, tagged the previous state %s.\n' \
+  "$summary" "$(git rev-parse --short "$new")" "$tag"
+if ((${#notes[@]} > 0)); then printf 'Note: %s\n' "${notes[@]}"; fi

@@ -74,7 +74,35 @@ stall collector's clock.
   `plugins/environment-git-worktree`.
 - Check: `pnpm exec turbo run test --filter=@bb/process-utils --filter=@bb/host-daemon --filter=@bb/server --filter=bb-plugin-environment-git-worktree`.
 
+### fork-sync
+
+Adds `scripts/fork/sync`, which performs the sync described below. A daily bb
+automation runs it from the `personal` checkout.
+
+- Upstream status: fork-only.
+- Owned files: `scripts/fork/sync`.
+- Check: `scripts/fork/sync --onto <ref> --no-verify` against a test commit on
+  top of `upstream/main`.
+
 ## Syncing with upstream
+
+`scripts/fork/sync` runs the whole sync. It prints nothing when `personal`
+already contains `upstream/main`. Otherwise it:
+
+1. Rebases `origin/personal` onto `upstream/main` in a scratch worktree under
+   `${XDG_STATE_HOME:-~/.local/state}/bb-fork-sync/`, replaying recorded
+   conflict resolutions with rerere. The rebased commits are not signed.
+2. Fails if the list of `Fork-Patch` changes changed, or if any change now adds
+   or removes different lines than before.
+3. Runs `pnpm install --frozen-lockfile`, the workspace typecheck, and the tests
+   of every package the fork touches, retrying the tests once.
+4. Tags the previous `personal` as `personal/<date>`, force-pushes `personal`
+   and the tag, and sets `origin/main` to `upstream/main`.
+5. Moves the local `personal` and `main` branches. A checkout of `personal` is
+   reset to the new commits only when it is clean and was at the previous tip.
+
+When it fails, nothing is pushed, and it prints the reason and a log path. To
+sync by hand:
 
 ```sh
 git fetch upstream
@@ -89,7 +117,8 @@ git push origin upstream/main:main
 
 The tag records the previous state, so a bad sync can be reset to it. Read the
 `range-diff` output before pushing: a change that grew or lost lines it did not
-have before means a conflict was resolved wrongly.
+have before means a conflict was resolved wrongly. Conflicts resolved by hand
+are recorded by rerere, so the next automated sync replays them.
 
 When resolving a conflict, combine both sides. Never resolve by taking a whole
 file from one side, because that silently reverts whichever side was dropped.
