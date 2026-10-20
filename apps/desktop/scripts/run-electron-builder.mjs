@@ -3,10 +3,10 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  createDesktopReleaseConfig,
-  createDesktopUpdateReleaseBaseUrl,
-  resolveDesktopReleaseChannel,
-} from "./desktop-release-channel.mjs";
+  createDesktopApplicationIdentity,
+  resolveDesktopBuildProfile,
+} from "./desktop-build-profiles.mjs";
+import { resolveDesktopReleaseChannel } from "./desktop-release-channel.mjs";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const desktopPackageRoot = resolve(scriptDirectory, "..");
@@ -161,7 +161,11 @@ function createSigningPlan(env) {
 function resolveElectronBuilderConfig(baseConfig, env, electronBuilderArgs) {
   const signingPlan = createSigningPlan(env);
   const releaseChannel = resolveDesktopReleaseChannel(env);
-  const releaseConfig = createDesktopReleaseConfig(releaseChannel);
+  const buildProfile = resolveDesktopBuildProfile(env.BB_DESKTOP_BUILD_PROFILE);
+  const releaseConfig = createDesktopApplicationIdentity(
+    buildProfile,
+    releaseChannel,
+  );
   const config = cloneJson(baseConfig);
   const mac = {
     ...config.mac,
@@ -197,13 +201,13 @@ function resolveElectronBuilderConfig(baseConfig, env, electronBuilderArgs) {
   config.appId = releaseConfig.appId;
   config.artifactName = releaseConfig.artifactName;
   config.productName = releaseConfig.applicationName;
-  config.publish = [
-    {
-      channel: releaseChannel,
-      provider: "generic",
-      url: createDesktopUpdateReleaseBaseUrl(releaseConfig.releaseTag),
-    },
-  ];
+  config.publish = releaseConfig.publish;
+  if (buildProfile !== "release") {
+    config.directories = {
+      ...config.directories,
+      output: releaseConfig.outputDirectory,
+    };
+  }
 
   return {
     config,
