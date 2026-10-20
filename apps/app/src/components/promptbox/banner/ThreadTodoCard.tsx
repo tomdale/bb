@@ -46,7 +46,7 @@ const TODO_HEADER_BUTTON_CLASS = activityRowClass(
   "active",
   PROMPT_STACK_CARD_HEADER_BUTTON_CLASS,
 );
-const TODO_ACTIVE_ROW_CLASS = "shadow-none ring-0";
+const TODO_ACTIVE_ROW_CLASS = "bg-transparent shadow-none ring-0";
 const TODO_ACTIVE_ICON_CLASS = "text-foreground";
 
 function getTodoSummary(items: readonly ThreadTimelinePendingTodoItem[]): {
@@ -127,7 +127,7 @@ function TodoBody({
             <TodoStatusIcon status={item.status} />
             <span
               className={activityTextClass(
-                activityState,
+                isActive ? "pending" : activityState,
                 "min-w-0 flex-1 truncate",
               )}
               title={item.text}
