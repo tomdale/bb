@@ -159,6 +159,8 @@ async function initGitRepo(repoDir: string): Promise<void> {
   await git(repoDir, ["init", "-q", "-b", "main"]);
   await git(repoDir, ["config", "user.email", "test@example.com"]);
   await git(repoDir, ["config", "user.name", "Test"]);
+  await git(repoDir, ["config", "commit.gpgSign", "false"]);
+  await git(repoDir, ["config", "tag.gpgSign", "false"]);
 }
 
 async function commitAll(repoDir: string, message: string): Promise<string> {
