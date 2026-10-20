@@ -235,6 +235,8 @@ describe("git update resolution", () => {
       cwd: repo,
     });
     await run("git", ["config", "user.name", "Test"], { cwd: repo });
+    await run("git", ["config", "commit.gpgSign", "false"], { cwd: repo });
+    await run("git", ["config", "tag.gpgSign", "false"], { cwd: repo });
     await writeFile(join(repo, "file.txt"), "one");
     await run("git", ["add", "."], { cwd: repo });
     await run("git", ["commit", "-qm", "one"], { cwd: repo });
@@ -314,6 +316,8 @@ describe("git semver tag resolution", () => {
       cwd: repo,
     });
     await run("git", ["config", "user.name", "Test"], { cwd: repo });
+    await run("git", ["config", "commit.gpgSign", "false"], { cwd: repo });
+    await run("git", ["config", "tag.gpgSign", "false"], { cwd: repo });
     const commitOf = new Map<string, string>();
     const releases: Array<{ tag: string; annotated: boolean }> = [
       { tag: "v1.0.0", annotated: false },
@@ -385,6 +389,8 @@ describe("git semver tag resolution", () => {
       cwd: repo,
     });
     await run("git", ["config", "user.name", "Test"], { cwd: repo });
+    await run("git", ["config", "commit.gpgSign", "false"], { cwd: repo });
+    await run("git", ["config", "tag.gpgSign", "false"], { cwd: repo });
     await writeFile(join(repo, "file.txt"), "release");
     await run("git", ["add", "."], { cwd: repo });
     await run("git", ["commit", "-qm", "release"], { cwd: repo });
