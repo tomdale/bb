@@ -103,7 +103,19 @@ if (process.argv[2] === "install") {
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, "dev-browser.cjs"), "shim");
   fs.writeFileSync(path.join(dir, "..", "package.json"), JSON.stringify({ name: "dev-browser", version: config.version }));
-  fs.writeFileSync(path.join(process.cwd(), "node_modules", ".package-lock.json"), JSON.stringify({ packages: { "node_modules/dev-browser": { version: config.version, resolved: (config.resolvedBase ?? process.env.npm_config_registry) + "/dev-browser/-/dev-browser.tgz", integrity: config.integrity } } }));
+  const installedEntry = {
+    version: config.version,
+    ...(config.omitResolved
+      ? {}
+      : {
+          resolved: (config.resolvedBase ?? process.env.npm_config_registry) + "/dev-browser/-/dev-browser.tgz",
+        }),
+    ...(config.omitIntegrity ? {} : { integrity: config.integrity }),
+  };
+  fs.writeFileSync(
+    path.join(process.cwd(), "node_modules", ".package-lock.json"),
+    JSON.stringify({ packages: { "node_modules/dev-browser": installedEntry } }),
+  );
   process.exit(0);
 }
 if (process.argv[2] === "audit") { process.stdout.write(JSON.stringify(config.audit)); process.exit(config.auditExit ?? 0); }
@@ -243,6 +255,20 @@ describe("runtime installer", () => {
     });
     expect(warm.binary).toBe(installed.binary);
     expect(requests).toHaveLength(3);
+  });
+  it("accepts an npm lock entry without resolved when the configured registry is pinned", async () => {
+    const dir = await dataDir();
+    await configureNpm({ omitResolved: true });
+    await expect(install(dir)).resolves.toMatchObject({ version });
+  });
+  it("requires an integrity digest before checking provenance", async () => {
+    const dir = await dataDir();
+    await configureNpm({ omitIntegrity: true });
+    await expect(install(dir)).rejects.toThrow(
+      "npm did not record an integrity digest",
+    );
+    expect(requests).toEqual([]);
+    expect(await entries(dir)).toEqual([]);
   });
   it("reinstalls when the cached binary no longer matches the pin", async () => {
     const dir = await dataDir();

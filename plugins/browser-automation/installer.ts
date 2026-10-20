@@ -245,17 +245,13 @@ const signaturesSchema = z
   })
   .loose();
 const installedLockSchema = z
+  .object({ packages: z.record(z.string(), z.unknown()) })
+  .loose();
+const installedPackageSchema = z
   .object({
-    packages: z.record(
-      z.string(),
-      z
-        .object({
-          version: z.string(),
-          resolved: z.string(),
-          integrity: z.string(),
-        })
-        .loose(),
-    ),
+    version: z.string(),
+    resolved: z.string().optional(),
+    integrity: z.string().optional(),
   })
   .loose();
 const attestationsSchema = z
@@ -626,14 +622,27 @@ export async function installRuntime(
           ),
         ),
       );
-      const installedEntry = lock.packages[`node_modules/${release.package}`];
-      if (!installedEntry || installedEntry.version !== release.version)
+      const installedEntry = installedPackageSchema.safeParse(
+        lock.packages[`node_modules/${release.package}`],
+      );
+      if (!installedEntry.success)
         throw new Error(
-          `npm installed ${installedEntry?.version ?? "nothing"} instead of ${release.package}@${release.version}.`,
+          `npm did not record valid lockfile metadata for ${release.package}@${release.version}.`,
         );
-      if (!installedEntry.resolved.startsWith(`${release.registry}/`))
+      if (installedEntry.data.version !== release.version)
         throw new Error(
-          `npm resolved ${release.package} from ${installedEntry.resolved}, not the pinned registry ${release.registry}.`,
+          `npm installed ${installedEntry.data.version} instead of ${release.package}@${release.version}.`,
+        );
+      if (
+        installedEntry.data.resolved !== undefined &&
+        !installedEntry.data.resolved.startsWith(`${release.registry}/`)
+      )
+        throw new Error(
+          `npm resolved ${release.package} from ${installedEntry.data.resolved}, not the pinned registry ${release.registry}.`,
+        );
+      if (installedEntry.data.integrity === undefined)
+        throw new Error(
+          `npm did not record an integrity digest for ${release.package}@${release.version}; refusing to install it without verifiable provenance.`,
         );
       checkProvenance(
         JSON.parse(
@@ -643,7 +652,7 @@ export async function installRuntime(
           ),
         ),
         release,
-        installedEntry.integrity,
+        installedEntry.data.integrity,
       );
       const packageDir = join(staging, "node_modules", release.package);
       const manifest = z
