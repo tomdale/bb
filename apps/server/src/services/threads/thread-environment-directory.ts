@@ -3,15 +3,12 @@ import { z } from "zod";
 import {
   getLatestThreadSequence,
   createEnvironment,
+  type EnvironmentRow,
   createEventId,
   findProjectEnvironmentByHostPath,
   getEnvironment,
   getThread,
-  getActiveStoredTurnId,
-  wasThreadTurnManuallyStopped,
-  hasThreadTurnRequestAfterStart,
   updateThread,
-  type EnvironmentRow,
 } from "@bb/db";
 import {
   canonicalizeHostPath,
@@ -38,14 +35,13 @@ const UPDATE_ENVIRONMENT_DIRECTORY_TIMEOUT_MS = 5 * 60 * 1000;
 const updateEnvironmentDirectoryInputSchema = z
   .object({
     path: z.string().trim().min(1),
-    continue: z.boolean().default(true),
   })
   .strict();
 
 export const UPDATE_ENVIRONMENT_DIRECTORY_TOOL: DynamicTool = {
   name: UPDATE_ENVIRONMENT_DIRECTORY_TOOL_NAME,
   description:
-    "Move this bb thread to a different working directory for subsequent turns. Use this when the user asks to switch to a new checkout, worktree, or local directory. The path must be an absolute existing directory on the current host. The tool reuses this project's existing bb environment for that host/path, otherwise it creates an unmanaged environment after validating the path. Another project may hold its own environment for the same directory; that is allowed, except for a bb-managed worktree owned by another project, which this tool refuses. After a successful switch, stop using this turn's filesystem context and end the turn; BB automatically starts the next turn in the updated directory by default. Set continue to false when no follow-up is needed.",
+    "Move this bb thread to a different working directory for subsequent turns. Use this when the user asks to switch to a new checkout, worktree, or local directory. The path must be an absolute existing directory on the current host. The tool reuses this project's existing bb environment for that host/path, otherwise it creates an unmanaged environment after validating the path. Another project may hold its own environment for the same directory; that is allowed, except for a bb-managed worktree owned by another project, which this tool refuses. After a successful switch, end the current turn because the running provider cwd will not change until the next turn; bb then starts the next turn in the new directory automatically so you can continue the task there.",
   inputSchema: {
     type: "object",
     properties: {
@@ -53,12 +49,6 @@ export const UPDATE_ENVIRONMENT_DIRECTORY_TOOL: DynamicTool = {
         type: "string",
         description:
           "Absolute path to an existing directory on the current host.",
-      },
-      continue: {
-        type: "boolean",
-        description:
-          "Whether BB should automatically continue the thread after switching directories. Defaults to true.",
-        default: true,
       },
     },
     required: ["path"],
@@ -85,7 +75,6 @@ type ReadyEnvironment = EnvironmentRow & { path: string; status: "ready" };
 type AttachEnvironmentResult =
   | { kind: "attached"; changed: boolean }
   | { kind: "environment_changed" }
-  | { kind: "continuation_stopped" }
   | { kind: "thread_unavailable"; message: string };
 
 function toolCallTextResponse(
@@ -153,10 +142,8 @@ function resolveReadyEnvironment(
   };
 }
 
-function successMessage(path: string, shouldContinue: boolean): string {
-  return shouldContinue
-    ? `Environment directory updated to ${path}. End this turn so BB can continue in the new directory.`
-    : `Environment directory updated to ${path}. End this turn; subsequent turns will use the updated directory.`;
+function successMessage(path: string): string {
+  return `Environment directory updated to ${path}. This applies to future turns; end this turn now and bb will start the next turn in the updated directory so you can continue the task there.`;
 }
 
 function attachReadyEnvironment(
@@ -165,7 +152,6 @@ function attachReadyEnvironment(
     currentEnvironment: EnvironmentRow;
     createdEnvironment: boolean;
     targetEnvironment: ReadyEnvironment;
-    continue: boolean;
     thread: Thread;
     turnId: string;
   },
@@ -192,23 +178,6 @@ function attachReadyEnvironment(
       if (latestThread.environmentId !== args.currentEnvironment.id) {
         return { kind: "environment_changed" };
       }
-      if (args.continue) {
-        const currentTurnId = getActiveStoredTurnId(tx, latestThread.id);
-        if (
-          latestThread.status !== "active" ||
-          currentTurnId !== args.turnId ||
-          wasThreadTurnManuallyStopped(tx, {
-            threadId: latestThread.id,
-            turnId: args.turnId,
-          }) ||
-          hasThreadTurnRequestAfterStart(tx, {
-            threadId: latestThread.id,
-            turnId: args.turnId,
-          })
-        ) {
-          return { kind: "continuation_stopped" };
-        }
-      }
 
       updateThread(tx, deps.hub, latestThread.id, {
         environmentId: args.targetEnvironment.id,
@@ -224,7 +193,6 @@ function attachReadyEnvironment(
           status: "completed",
           message: `Updated environment directory to ${args.targetEnvironment.path}`,
           metadata: {
-            continue: args.continue,
             createdEnvironment: args.createdEnvironment,
             previousEnvironmentId: args.currentEnvironment.id,
             previousPath: args.currentEnvironment.path,
@@ -391,7 +359,6 @@ export async function handleUpdateEnvironmentDirectoryToolCall(
       currentEnvironment: args.currentEnvironment,
       createdEnvironment,
       targetEnvironment,
-      continue: input.data.continue,
       thread: args.thread,
       turnId: args.turnId,
     });
@@ -403,18 +370,12 @@ export async function handleUpdateEnvironmentDirectoryToolCall(
 
   switch (attachResult.kind) {
     case "attached":
-      return toolCallSuccess(
-        successMessage(targetEnvironment.path, input.data.continue),
-      );
+      return toolCallSuccess(successMessage(targetEnvironment.path));
     case "environment_changed":
       return toolCallFailure(
         "Thread environment changed while preparing the new directory. Try again with the desired path.",
       );
     case "thread_unavailable":
       return toolCallFailure(attachResult.message);
-    case "continuation_stopped":
-      return toolCallFailure(
-        "Directory switch cancelled because the turn was stopped before it completed.",
-      );
   }
 }

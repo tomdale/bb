@@ -350,7 +350,6 @@ export function toThreadResponseFromThread(
     queuedMessageCount:
       listQueuedThreadMessageCountsByThreadIds(deps.db, {
         threadIds: [args.thread.id],
-        visibleOnly: true,
       })[0]?.queuedMessageCount ?? 0,
   };
 }

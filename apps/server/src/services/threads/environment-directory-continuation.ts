@@ -1,19 +1,12 @@
 import { and, desc, eq, sql } from "drizzle-orm";
-import {
-  createQueuedThreadMessageInTransaction,
-  events as storedEvents,
-  getThread,
-  hasThreadTurnRequestAfterStart,
-  wasThreadTurnManuallyStopped,
-} from "@bb/db";
+import { events as storedEvents, getThread } from "@bb/db";
 import { renderTemplate } from "@bb/templates";
 import { z } from "zod";
 import type {
   AppDeps,
   LoggedPendingInteractionWorkSessionDeps,
 } from "../../types.js";
-import { buildExecutionOptions } from "./thread-commands.js";
-import { runQueuedMessageDispatch } from "./queued-message-dispatch.js";
+import { queueParentSystemMessage } from "./parent-system-messages.js";
 import {
   ENVIRONMENT_DIRECTORY_UPDATE_OPERATION,
   threadWritableFailure,
@@ -22,7 +15,6 @@ import {
 const environmentDirectoryUpdateDataSchema = z.object({
   status: z.literal("completed"),
   metadata: z.object({
-    continue: z.boolean().default(true),
     nextEnvironmentId: z.string(),
     nextPath: z.string(),
   }),
@@ -31,7 +23,6 @@ const environmentDirectoryUpdateDataSchema = z.object({
 export interface EnvironmentDirectoryContinuation {
   environmentId: string;
   path: string;
-  turnId: string;
 }
 
 export function findEnvironmentDirectoryContinuation(
@@ -59,13 +50,12 @@ export function findEnvironmentDirectoryContinuation(
   const parsed = environmentDirectoryUpdateDataSchema.safeParse(
     JSON.parse(row.data),
   );
-  if (!parsed.success || !parsed.data.metadata.continue) {
+  if (!parsed.success) {
     return null;
   }
   return {
     environmentId: parsed.data.metadata.nextEnvironmentId,
     path: parsed.data.metadata.nextPath,
-    turnId: args.turnId,
   };
 }
 
@@ -77,11 +67,7 @@ export async function continueAfterEnvironmentDirectoryUpdate(
   if (
     !thread ||
     thread.environmentId !== args.environmentId ||
-    threadWritableFailure(thread) !== null ||
-    wasThreadTurnManuallyStopped(deps.db, {
-      threadId: args.threadId,
-      turnId: args.turnId,
-    })
+    threadWritableFailure(thread) !== null
   ) {
     return false;
   }
@@ -91,82 +77,18 @@ export async function continueAfterEnvironmentDirectoryUpdate(
   if (thread.status !== "idle") {
     return false;
   }
-  const execution = await buildExecutionOptions(
-    deps,
-    {},
-    { threadId: args.threadId },
-  );
-  const outcome = deps.db.transaction(
-    (tx) => {
-      const currentThread = getThread(tx, args.threadId);
-      if (
-        !currentThread ||
-        currentThread.environmentId !== args.environmentId ||
-        threadWritableFailure(currentThread) !== null ||
-        wasThreadTurnManuallyStopped(tx, {
-          threadId: args.threadId,
-          turnId: args.turnId,
-        })
-      ) {
-        return "unavailable";
-      }
-      if (
-        currentThread.status === "starting" ||
-        currentThread.status === "active" ||
-        hasThreadTurnRequestAfterStart(tx, {
-          threadId: args.threadId,
-          turnId: args.turnId,
-        })
-      ) {
-        return "continued";
-      }
-      if (currentThread.status !== "idle") {
-        return "unavailable";
-      }
-      createQueuedThreadMessageInTransaction(tx, {
-        threadId: args.threadId,
-        content: [
-          {
-            type: "text",
-            text: renderTemplate("systemMessageEnvironmentDirectoryUpdated", {
-              path: args.path,
-            }),
-            mentions: [],
-          },
-        ],
-        senderThreadId: null,
-        requestedBy: null,
-        model: execution.model,
-        reasoningLevel: execution.reasoningLevel,
-        permissionMode: execution.permissionMode,
-        serviceTier: execution.serviceTier,
-        waitingOn:
-          deps.pendingInteractions.hasTurnBoundPendingThreadInteraction(
-            args.threadId,
-          )
-            ? { kind: "interaction" }
-            : null,
-        sendAt: null,
-        payload: { kind: "inline" },
-        systemNotice: {
-          kind: "environment-directory-updated",
-          subject: { kind: "directory", path: args.path },
-        },
-      });
-      return "queued";
-    },
-    { behavior: "immediate" },
-  );
-  if (outcome === "unavailable") {
-    return false;
-  }
-  if (outcome === "continued") {
-    return true;
-  }
-  deps.hub.notifyThread(args.threadId, ["queue-changed"]);
-  await runQueuedMessageDispatch(deps, {
-    kind: "thread-ready",
-    threadId: args.threadId,
+  return queueParentSystemMessage(deps, {
+    parentThreadId: thread.id,
+    input: [
+      {
+        type: "text",
+        text: renderTemplate("systemMessageEnvironmentDirectoryUpdated", {
+          path: args.path,
+        }),
+        mentions: [],
+      },
+    ],
+    systemMessageKind: "environment-directory-updated",
+    systemMessageSubject: { kind: "directory", path: args.path },
   });
-  return true;
 }

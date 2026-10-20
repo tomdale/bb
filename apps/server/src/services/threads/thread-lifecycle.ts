@@ -6,7 +6,6 @@ import {
 } from "../environments/environment-engine.js";
 import {
   and,
-  desc,
   eq,
   gte,
   inArray,
@@ -17,7 +16,6 @@ import {
   sql,
 } from "drizzle-orm";
 import {
-  deleteQueuedSystemNoticesInTransaction,
   getLatestThreadSequence,
   deleteThread,
   environments,
@@ -26,14 +24,12 @@ import {
   getHost,
   getLatestThreadInterruptedReason,
   getThread,
-  hasThreadTurnRequestAfterStart,
   hasStoredTerminalClientTurnRequestEvent,
   listThreadIdsStoppedSinceLastTurnStart,
   listThreadIdsWithLatestHostDaemonRestartInterruption,
   listThreadTurnInterruptionEventStates,
   markThreadStorageDeleted,
   threads,
-  wasThreadTurnManuallyStopped,
   type DbNotifier,
   type DbQueryConnection,
   type DbTransaction,
@@ -57,7 +53,6 @@ import type {
   LoggedWorkSessionDeps,
 } from "../../types.js";
 import { cancelEnvironmentProvisioningForThreadStopInTransaction } from "../environments/environment-provisioning-cancellation.js";
-import { ENVIRONMENT_DIRECTORY_UPDATE_OPERATION } from "./thread-environment-directory.js";
 import {
   emptyCommandResultSideEffects,
   type CommandResultFailureReportForType,
@@ -591,22 +586,6 @@ function markThreadStoppingWithEventInTransaction(
     return false;
   }
   deps.hub.notifyThread(args.threadId, ["status-changed"]);
-  if (
-    args.reason === "manual-stop" &&
-    deleteQueuedSystemNoticesInTransaction(
-      deps.db,
-      args.threadId,
-      "turn-continuation",
-    ) +
-      deleteQueuedSystemNoticesInTransaction(
-        deps.db,
-        args.threadId,
-        "environment-directory-updated",
-      ) >
-      0
-  ) {
-    deps.hub.notifyThread(args.threadId, ["queue-changed"]);
-  }
   appendThreadInterruptedEventInTransaction(deps.db, {
     threadId: args.threadId,
     reason: args.reason,
@@ -1537,7 +1516,6 @@ export function requestThreadStopForCurrentState(
   thread: RequestThreadStopForCurrentStateThread,
   environment: RequestThreadStopForCurrentStateEnvironment | null,
 ): void {
-  cancelDirectoryContinuation(deps, thread.id);
   if (hasLiveThreadRuntime(deps, thread)) {
     if (environment === null) {
       return;
@@ -1560,73 +1538,12 @@ export function requestThreadStopForCurrentState(
   }
 }
 
-function cancelDirectoryContinuation(
-  deps: Pick<AppDeps, "db" | "hub">,
-  threadId: string,
-): void {
-  const result = deps.db.transaction(
-    (tx) => {
-      const deleted =
-        deleteQueuedSystemNoticesInTransaction(
-          tx,
-          threadId,
-          "turn-continuation",
-        ) +
-        deleteQueuedSystemNoticesInTransaction(
-          tx,
-          threadId,
-          "environment-directory-updated",
-        );
-      const update = tx
-        .select({ turnId: events.turnId })
-        .from(events)
-        .where(
-          and(
-            eq(events.threadId, threadId),
-            eq(events.type, "system/operation"),
-            eq(events.scopeKind, "turn"),
-            sql`json_extract(${events.data}, '$.operation') = ${ENVIRONMENT_DIRECTORY_UPDATE_OPERATION}`,
-          ),
-        )
-        .orderBy(desc(events.sequence))
-        .limit(1)
-        .get();
-      const interrupted =
-        update?.turnId != null &&
-        !hasThreadTurnRequestAfterStart(tx, {
-          threadId,
-          turnId: update.turnId,
-        }) &&
-        !wasThreadTurnManuallyStopped(tx, {
-          threadId,
-          turnId: update.turnId,
-        });
-      if (interrupted) {
-        appendThreadInterruptedEventInTransaction(tx, {
-          threadId,
-          reason: "manual-stop",
-        });
-      }
-      return { deleted, interrupted };
-    },
-    { behavior: "immediate" },
-  );
-  if (result.deleted > 0) deps.hub.notifyThread(threadId, ["queue-changed"]);
-  if (result.interrupted) {
-    deps.hub.notifyThread(threadId, ["events-appended"], {
-      timelineSequence: getLatestThreadSequence(deps.db, { threadId }),
-      eventTypes: ["system/thread/interrupted"],
-    });
-  }
-}
-
 export async function stopThreadForCurrentState(
   deps: RequestThreadStopForCurrentStateDeps,
   thread: RequestThreadStopForCurrentStateThread,
   environment: RequestThreadStopForCurrentStateEnvironment | null,
   options?: { requireStopped: true },
 ): Promise<void> {
-  cancelDirectoryContinuation(deps, thread.id);
   await revokeThreadDesktopBrowserControl(deps, thread.id);
   const failure = await threadStopRequestDeduper.run(thread.id, () =>
     stopThreadUntilSettled(deps, thread.id, environment),

@@ -259,8 +259,6 @@ function systemMessageTitleSegments(
             verbSegment("result"),
           ]
         : SYSTEM_MESSAGE_FALLBACK_SEGMENTS;
-    case "turn-continuation":
-      return [verbSegment("Continued in new directory")];
     case "environment-directory-updated":
       return subject !== null && subject.kind === "directory"
         ? [verbSegment("Continued in"), subjectSegment(subject.path, null)]
@@ -353,7 +351,6 @@ function systemMessageIconName(systemMessageKind: SystemMessageKind): IconName {
       return "ListTodo";
     case "tool-result-delivered":
       return "Toolbox";
-    case "turn-continuation":
     case "environment-directory-updated":
       return "FolderOpen";
     case "unlabeled":
@@ -494,7 +491,6 @@ function systemMessageIsTitleOnly(
   return (
     systemMessageKind === "ownership-assigned" ||
     systemMessageKind === "ownership-removed" ||
-    systemMessageKind === "turn-continuation" ||
     systemMessageKind === "environment-directory-updated"
   );
 }

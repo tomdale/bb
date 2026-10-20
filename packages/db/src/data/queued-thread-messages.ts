@@ -17,7 +17,6 @@ import {
   notInArray,
   or,
   sql,
-  type SQL,
 } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 import {
@@ -359,7 +358,6 @@ export type UpdateQueuedThreadMessageResult =
     }
   | { kind: "not_found" }
   | { kind: "claimed" }
-  | { kind: "not_editable" }
   | { kind: "stale" };
 
 export interface QueuedThreadMessageEditHoldArgs {
@@ -503,8 +501,6 @@ function queuedMessageGroupingEnvelopeMatches(
 ): boolean {
   return (
     firstQueuedMessage !== null &&
-    firstQueuedMessage.systemNotice === null &&
-    queuedMessage.systemNotice === null &&
     queuedMessage.senderThreadId === firstQueuedMessage.senderThreadId &&
     queuedMessage.model === firstQueuedMessage.model &&
     queuedMessage.reasoningLevel === firstQueuedMessage.reasoningLevel &&
@@ -545,14 +541,9 @@ function requireClaimedQueuedThreadMessage(
   };
 }
 
-function visibleQueuedThreadMessage(): SQL {
-  return sql`COALESCE(json_extract(${queuedThreadMessages.systemNotice}, '$.kind'), '') NOT IN ('turn-continuation', 'environment-directory-updated')`;
-}
-
 export function listQueuedThreadMessages(
   db: DbQueryConnection,
   threadId: string,
-  options: { visibleOnly?: boolean } = {},
 ): QueuedThreadMessageRow[] {
   return db
     .select()
@@ -561,7 +552,6 @@ export function listQueuedThreadMessages(
       and(
         eq(queuedThreadMessages.threadId, threadId),
         liveQueuedThreadMessage(),
-        ...(options.visibleOnly ? [visibleQueuedThreadMessage()] : []),
       ),
     )
     .orderBy(asc(queuedThreadMessages.sortKey), asc(queuedThreadMessages.id))
@@ -652,31 +642,6 @@ function clearPreviousQueuedMessageGroupEdgeInTransaction(
     .run();
 }
 
-export function deleteQueuedSystemNoticesInTransaction(
-  db: DbTransaction,
-  threadId: string,
-  kind: QueuedMessageSystemNotice["kind"],
-): number {
-  const notices = db
-    .select()
-    .from(queuedThreadMessages)
-    .where(
-      and(
-        eq(queuedThreadMessages.threadId, threadId),
-        sql`json_extract(${queuedThreadMessages.systemNotice}, '$.kind') = ${kind}`,
-      ),
-    )
-    .all();
-  for (const notice of notices) {
-    clearPreviousQueuedMessageGroupEdgeInTransaction(db, notice);
-    clearQueuedMessageGroupEdgeInTransaction(db, notice);
-    db.delete(queuedThreadMessages)
-      .where(eq(queuedThreadMessages.id, notice.id))
-      .run();
-  }
-  return notices.length;
-}
-
 function clearQueuedMessageGroupEdgeInTransaction(
   db: DbTransaction,
   queuedMessage: QueuedThreadMessageRow,
@@ -720,21 +685,7 @@ function applyQueuedThreadMessageGroupBoundary(
   threadId: string,
   groupBoundaryQueuedMessageId: string,
 ): SetQueuedThreadMessageGroupBoundaryResult {
-  const allQueuedMessages = listQueuedThreadMessages(db, threadId);
-  const queuedMessages = listQueuedThreadMessages(db, threadId, {
-    visibleOnly: true,
-  });
-  const visibleIds = new Set(queuedMessages.map((row) => row.id));
-  if (
-    allQueuedMessages.some(
-      (row) =>
-        !visibleIds.has(row.id) &&
-        (row.id === groupBoundaryQueuedMessageId ||
-          expectedGroupedPrefixQueuedMessageIds?.includes(row.id)),
-    )
-  ) {
-    return { kind: "invalid_execution_options" };
-  }
+  const queuedMessages = listQueuedThreadMessages(db, threadId);
   const boundaryIndex = queuedMessages.findIndex(
     (queuedMessage) => queuedMessage.id === groupBoundaryQueuedMessageId,
   );
@@ -783,31 +734,10 @@ function applyQueuedThreadMessageGroupBoundary(
     }
   }
 
-  const groupedIds = new Set(
-    queuedMessages.slice(0, boundaryIndex + 1).map((row) => row.id),
-  );
-  const firstGroupedIndex = allQueuedMessages.findIndex((row) =>
-    groupedIds.has(row.id),
-  );
-  const lastGroupedIndex = allQueuedMessages.findIndex(
-    (row) => row.id === groupBoundaryQueuedMessageId,
-  );
-  if (
-    allQueuedMessages
-      .slice(firstGroupedIndex, lastGroupedIndex + 1)
-      .some((row) => !groupedIds.has(row.id))
-  ) {
-    return { kind: "invalid_execution_options" };
-  }
   let changed = false;
   const now = Date.now();
-  for (const [index, queuedMessage] of allQueuedMessages.entries()) {
-    const next = allQueuedMessages[index + 1];
-    const groupWithNext =
-      groupedIds.has(queuedMessage.id) &&
-      queuedMessage.id !== groupBoundaryQueuedMessageId &&
-      next !== undefined &&
-      groupedIds.has(next.id);
+  for (const [index, queuedMessage] of queuedMessages.entries()) {
+    const groupWithNext = index < boundaryIndex;
     if (queuedMessage.groupWithNext === groupWithNext) continue;
     changed = true;
     db.update(queuedThreadMessages)
@@ -831,25 +761,19 @@ function applyPreservedLeadGroupAfterReorder(
   originalLeadGroupIds: readonly string[],
 ): QueuedThreadMessageRow[] {
   const queuedMessages = listQueuedThreadMessages(db, threadId);
-  const visibleMessages = listQueuedThreadMessages(db, threadId, {
-    visibleOnly: true,
-  });
+  if (originalLeadGroupIds.length <= 1) {
+    return queuedMessages;
+  }
+
   const originalLeadGroupIdSet = new Set(originalLeadGroupIds);
-  const preservesLeadGroup =
-    originalLeadGroupIds.length > 1 &&
-    visibleMessages
-      .slice(0, originalLeadGroupIds.length)
-      .every((queuedMessage) => originalLeadGroupIdSet.has(queuedMessage.id));
+  const preservesLeadGroup = queuedMessages
+    .slice(0, originalLeadGroupIds.length)
+    .every((queuedMessage) => originalLeadGroupIdSet.has(queuedMessage.id));
   let changed = false;
   const now = Date.now();
   for (const [index, queuedMessage] of queuedMessages.entries()) {
-    const next = queuedMessages[index + 1];
     const groupWithNext =
-      preservesLeadGroup &&
-      originalLeadGroupIdSet.has(queuedMessage.id) &&
-      next !== undefined &&
-      originalLeadGroupIdSet.has(next.id) &&
-      queuedMessageGroupingEnvelopeMatches(queuedMessage, next);
+      preservesLeadGroup && index < originalLeadGroupIds.length - 1;
     if (queuedMessage.groupWithNext === groupWithNext) continue;
     changed = true;
     db.update(queuedThreadMessages)
@@ -958,9 +882,6 @@ export function updateQueuedThreadMessage(
       const existing = getQueuedThreadMessage(tx, input.id);
       if (!existing || existing.threadId !== input.threadId) {
         return { kind: "not_found" };
-      }
-      if (existing.systemNotice !== null) {
-        return { kind: "not_editable" };
       }
       if (isQueuedThreadMessageClaimed(existing)) {
         return { kind: "claimed" };
@@ -1447,9 +1368,7 @@ export function reorderQueuedThreadMessage({
         }
 
         const currentQueuedMessages = listQueuedThreadMessages(tx, threadId);
-        const originalLeadGroupIds = collectLeadGroupIds(
-          listQueuedThreadMessages(tx, threadId, { visibleOnly: true }),
-        );
+        const originalLeadGroupIds = collectLeadGroupIds(currentQueuedMessages);
         const currentIndex = currentQueuedMessages.findIndex(
           (queuedMessage) => queuedMessage.id === queuedMessageId,
         );
@@ -1884,7 +1803,7 @@ export interface QueuedThreadMessageCounts {
  */
 export function listQueuedThreadMessageCountsByThreadIds(
   db: DbQueryConnection,
-  args: { threadIds: readonly string[]; visibleOnly?: boolean },
+  args: { threadIds: readonly string[] },
 ): QueuedThreadMessageCounts[] {
   return queryInSqliteVariableBatches({
     dedupeKey: (threadId) => threadId,
@@ -1905,7 +1824,6 @@ export function listQueuedThreadMessageCountsByThreadIds(
           and(
             inArray(queuedThreadMessages.threadId, [...threadIds]),
             liveQueuedThreadMessage(),
-            ...(args.visibleOnly ? [visibleQueuedThreadMessage()] : []),
           ),
         )
         .groupBy(queuedThreadMessages.threadId)

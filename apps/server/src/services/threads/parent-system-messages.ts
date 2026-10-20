@@ -1,11 +1,9 @@
 import {
-  deleteClaimedQueuedThreadMessageBatchInTransaction,
   getLatestThreadSequence,
   getEnvironment,
   getHost,
   getThread,
   requireThreadLifecycleEventApplied,
-  type ClaimedQueuedThreadMessageRow,
   type DbTransaction,
 } from "@bb/db";
 import type {
@@ -57,7 +55,6 @@ import {
   withThreadSendGuard,
 } from "./thread-context-mutation-guard.js";
 import { requestQueuedMessageDispatch } from "./queued-message-dispatch.js";
-import { createQueuedMessageClaimLostError } from "./queue-waits.js";
 
 const PARENT_SYSTEM_MESSAGE_SOURCE = "tell";
 
@@ -116,7 +113,6 @@ interface RenderedParentSystemSlotParts {
 }
 
 interface QueueReadyParentSystemMessageArgs extends ParentSystemMessageTaxonomy {
-  claimed?: readonly ClaimedQueuedThreadMessageRow[];
   environment: ReadyThreadEnvironment;
   execution: ResolvedThreadExecutionOptions;
   input: PromptInput[];
@@ -224,20 +220,6 @@ export function buildParentSystemThreadMention(
   };
 }
 
-function consumeSystemMessageClaim(
-  tx: DbTransaction,
-  claimed: readonly ClaimedQueuedThreadMessageRow[] | undefined,
-): void {
-  if (
-    claimed !== undefined &&
-    !deleteClaimedQueuedThreadMessageBatchInTransaction(tx, {
-      queuedMessages: claimed,
-    })
-  ) {
-    throw createQueuedMessageClaimLostError();
-  }
-}
-
 function queueActiveParentSystemMessageInTransaction(
   tx: DbTransaction,
   args: QueueActiveParentSystemMessageInTransactionArgs,
@@ -253,7 +235,6 @@ function queueActiveParentSystemMessageInTransaction(
     return null;
   }
 
-  consumeSystemMessageClaim(tx, args.claimed);
   const expectedSteerTurnId = getActiveTurnId({ db: tx }, args.thread.id);
   const request = appendClientTurnEventInTransaction(tx, {
     ...parentSystemTurnRequestFields(args),
@@ -274,16 +255,14 @@ function queueActiveParentSystemMessageInTransaction(
   });
 }
 
-type SystemMessageDeliveryOutcome = "delivered" | "queued" | "unavailable";
-
 async function queueActiveParentSystemMessage(
   deps: LoggedPendingInteractionWorkSessionDeps,
   args: QueueReadyParentSystemMessageArgs,
-): Promise<SystemMessageDeliveryOutcome> {
+): Promise<boolean> {
   const expectedSteerTurnId = getActiveTurnId(deps, args.thread.id);
   if (expectedSteerTurnId === null) {
     const outcome = queueInputForStartingTurn(deps, {
-      claimed: args.claimed ?? null,
+      claimed: null,
       input: {
         input: args.input,
         execution: args.execution,
@@ -299,8 +278,8 @@ async function queueActiveParentSystemMessage(
       },
       threadId: args.thread.id,
     });
-    if (outcome.kind === "queued") return "queued";
-    if (outcome.kind === "dispatched") return "unavailable";
+    if (outcome.kind === "queued") return true;
+    if (outcome.kind === "dispatched") return false;
     if (outcome.kind === "retry") {
       const currentThread = outcome.thread;
       if (
@@ -309,7 +288,7 @@ async function queueActiveParentSystemMessage(
         currentThread.deletedAt !== null ||
         currentThread.status === "stopping"
       ) {
-        return "unavailable";
+        return false;
       }
       return queueReadyParentSystemMessage(deps, {
         ...args,
@@ -349,7 +328,7 @@ async function queueActiveParentSystemMessage(
     { behavior: "immediate" },
   );
   if (command === null) {
-    return "unavailable";
+    return false;
   }
 
   deps.hub.notifyThread(args.thread.id, ["events-appended"], {
@@ -369,13 +348,13 @@ async function queueActiveParentSystemMessage(
       );
     },
   });
-  return "delivered";
+  return true;
 }
 
 async function queueReadyParentSystemMessage(
   deps: LoggedPendingInteractionWorkSessionDeps,
   args: QueueReadyParentSystemMessageArgs,
-): Promise<SystemMessageDeliveryOutcome> {
+): Promise<boolean> {
   if (args.thread.status === "active") {
     return queueActiveParentSystemMessage(deps, args);
   }
@@ -404,17 +383,7 @@ async function queueReadyParentSystemMessage(
   });
   const activeThread: Thread | null = deps.db.transaction(
     (tx) => {
-      const currentThread = getThread(tx, args.thread.id);
-      if (
-        !currentThread ||
-        currentThread.environmentId !== args.environment.id ||
-        currentThread.archivedAt !== null ||
-        currentThread.deletedAt !== null
-      ) {
-        throw createQueuedMessageClaimLostError();
-      }
-      ensureThreadCanStartRequest(currentThread);
-      consumeSystemMessageClaim(tx, args.claimed);
+      ensureThreadCanStartRequest(args.thread);
       appendPreparedClientTurnRequestedEventWithNotificationInTransaction(tx, {
         ...parentSystemTurnRequestFields(args),
         target: { kind: "new-turn" },
@@ -457,7 +426,7 @@ async function queueReadyParentSystemMessage(
       buildThreadStatusChangeMetadata(deps, activeThread),
     );
   }
-  return "delivered";
+  return true;
 }
 
 export async function queueParentSystemMessage(
@@ -479,13 +448,12 @@ export async function queueParentSystemMessage(
   let hostUnavailable = false;
   if (!hasPendingInteraction) {
     try {
-      const outcome = await deliverParentSystemMessage(deps, {
+      return await deliverParentSystemMessage(deps, {
         input: args.input,
         parentThread,
         systemMessageKind: args.systemMessageKind,
         systemMessageSubject: args.systemMessageSubject,
       });
-      return outcome !== "unavailable";
     } catch (error) {
       hostUnavailable = isHostUnavailableApiError(error);
       if (
@@ -543,7 +511,6 @@ export async function queueParentSystemMessage(
 }
 
 interface DeliverParentSystemMessageArgs extends ParentSystemMessageTaxonomy {
-  claimed?: readonly ClaimedQueuedThreadMessageRow[];
   input: PromptInput[];
   parentThread: Thread;
 }
@@ -559,7 +526,7 @@ interface DeliverParentSystemMessageArgs extends ParentSystemMessageTaxonomy {
 export async function deliverParentSystemMessage(
   deps: LoggedPendingInteractionWorkSessionDeps,
   args: DeliverParentSystemMessageArgs,
-): Promise<SystemMessageDeliveryOutcome> {
+): Promise<boolean> {
   return withThreadSendGuard(args.parentThread.id, () =>
     deliverParentSystemMessageWithContextGuard(deps, args),
   );
@@ -568,7 +535,7 @@ export async function deliverParentSystemMessage(
 async function deliverParentSystemMessageWithContextGuard(
   deps: LoggedPendingInteractionWorkSessionDeps,
   args: DeliverParentSystemMessageArgs,
-): Promise<SystemMessageDeliveryOutcome> {
+): Promise<boolean> {
   const { parentThread } = args;
   const { environment } = requireThreadEnvironment(deps.db, parentThread.id);
   const execution = await buildExecutionOptions(
@@ -580,8 +547,6 @@ async function deliverParentSystemMessageWithContextGuard(
   );
   if (
     await dispatchTurnDuringReprovision({
-      beforeRequestAppendInTransaction: ({ tx }) =>
-        consumeSystemMessageClaim(tx, args.claimed),
       deps,
       environment,
       execution,
@@ -593,14 +558,13 @@ async function deliverParentSystemMessageWithContextGuard(
       thread: parentThread,
     })
   ) {
-    return "delivered";
+    return true;
   }
 
   const readyEnvironment = requireReadyThreadEnvironment(
     getEnvironment(deps.db, environment.id) ?? environment,
   );
   return await queueReadyParentSystemMessage(deps, {
-    claimed: args.claimed,
     thread: parentThread,
     input: args.input,
     execution,

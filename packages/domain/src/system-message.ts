@@ -22,7 +22,6 @@ const systemMessageKindValues = [
   "child-interrupted",
   "child-outcome-batch",
   "tool-result-delivered",
-  "turn-continuation",
   "environment-directory-updated",
   "unlabeled",
 ] as const;

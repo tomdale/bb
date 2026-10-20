@@ -31,10 +31,7 @@ import {
   emitPluginMessageCancelled,
   emitPluginThreadUnarchived,
 } from "../../services/plugins/plugin-thread-events.js";
-import {
-  isVisibleThreadQueuedMessage,
-  toThreadQueuedMessage,
-} from "../../services/threads/thread-queued-messages.js";
+import { toThreadQueuedMessage } from "../../services/threads/thread-queued-messages.js";
 import { retryFailedTurn } from "../../services/threads/turn-retry.js";
 import {
   requireConnectedHostSession,
@@ -99,9 +96,7 @@ function toQueuedMessageOrderResponse(
   switch (result.kind) {
     case "reordered":
     case "unchanged":
-      return result.queuedMessages
-        .filter(isVisibleThreadQueuedMessage)
-        .map(toThreadQueuedMessage);
+      return result.queuedMessages.map(toThreadQueuedMessage);
     case "not_found":
       throw new ApiError(404, "invalid_request", "Queued message not found");
     case "claimed":
@@ -143,9 +138,7 @@ function toQueuedMessageGroupBoundaryResponse(
   switch (result.kind) {
     case "updated":
     case "unchanged":
-      return result.queuedMessages
-        .filter(isVisibleThreadQueuedMessage)
-        .map(toThreadQueuedMessage);
+      return result.queuedMessages.map(toThreadQueuedMessage);
     case "not_found":
       throw new ApiError(404, "invalid_request", "Queued message not found");
     case "claimed":
@@ -320,13 +313,6 @@ export function registerThreadActionRoutes(app: Hono, deps: AppDeps): void {
         409,
         "invalid_request",
         "Queued message is already being sent",
-      );
-    }
-    if (result.kind === "not_editable") {
-      throw new ApiError(
-        409,
-        "invalid_request",
-        "System queued messages cannot be edited",
       );
     }
     if (result.kind === "stale") {
