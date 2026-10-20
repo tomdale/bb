@@ -103,6 +103,76 @@ describe("TopLevelSidebarSection", () => {
     ).toBe(false);
   });
 
+  it("keeps custom-section disclosure and count visible with an inset body", () => {
+    const onToggleCollapsed = vi.fn();
+    const result = render(
+      <TopLevelSidebarSection
+        label="Agent work"
+        sectionId="sec_agent"
+        threadCount={3}
+        collapseControl={{ isCollapsed: false, onToggleCollapsed }}
+      >
+        <div>Parent and child threads</div>
+      </TopLevelSidebarSection>,
+    );
+    const disclosure = screen.getByRole("button", {
+      name: "Collapse Agent work section",
+    });
+    expect(disclosure.className).not.toContain("bb-sidebar-hover-actions");
+    expect(
+      disclosure.compareDocumentPosition(screen.getByTitle("Agent work")) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).not.toBe(0);
+    expect(disclosure.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByLabelText("3 threads").textContent).toBe("3");
+    expect(
+      screen.getByText("Parent and child threads").parentElement?.className,
+    ).toBe("pl-8");
+    expect(
+      screen.getByTitle("Agent work").closest('[data-sidebar="group-label"]')
+        ?.className,
+    ).toContain("font-semibold");
+    fireEvent.click(disclosure);
+    expect(onToggleCollapsed).toHaveBeenCalledOnce();
+
+    result.rerender(
+      <TopLevelSidebarSection
+        label="Agent work"
+        sectionId="sec_agent"
+        threadCount={3}
+        collapseControl={{ isCollapsed: true, onToggleCollapsed }}
+      >
+        <div>Parent and child threads</div>
+      </TopLevelSidebarSection>,
+    );
+    expect(screen.queryByText("Parent and child threads")).toBeNull();
+    expect(screen.getByLabelText("3 threads")).not.toBeNull();
+    expect(
+      screen
+        .getByRole("button", { name: "Expand Agent work section" })
+        .getAttribute("aria-expanded"),
+    ).toBe("false");
+  });
+
+  it("keeps custom-section drop previews aligned when collapsed", () => {
+    render(
+      <TopLevelSidebarSection
+        label="Empty group"
+        sectionId="sec_empty"
+        threadCount={0}
+        childrenInset={false}
+        showChildrenWhenCollapsed
+        collapseControl={{ isCollapsed: true, onToggleCollapsed: vi.fn() }}
+      >
+        <div>Drop preview</div>
+      </TopLevelSidebarSection>,
+    );
+    expect(screen.getByLabelText("0 threads")).not.toBeNull();
+    expect(screen.getByText("Drop preview").parentElement?.className).toBe(
+      "pl-8",
+    );
+  });
+
   it("hides the section body and exposes an expand action when collapsed", () => {
     render(
       <TopLevelSidebarSection

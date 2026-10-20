@@ -59,6 +59,7 @@ export interface TopLevelSidebarSectionProps {
   childrenInset?: boolean;
   showChildrenWhenCollapsed?: boolean;
   sectionId?: string;
+  threadCount?: number;
   stickyHeader?: boolean;
   status?: ReactNode;
   actions?: ReactNode;
@@ -81,6 +82,7 @@ export function TopLevelSidebarSection({
   childrenInset = true,
   showChildrenWhenCollapsed = false,
   sectionId,
+  threadCount,
   stickyHeader = true,
   status,
   actions,
@@ -185,6 +187,7 @@ export function TopLevelSidebarSection({
           SIDEBAR_GROUP_TEXT_CLASS,
           SIDEBAR_STANDARD_ROW_PADDING_CLASS,
           "rounded-md pr-0 transition-colors",
+          sectionId && "pl-0 font-sans font-semibold text-sidebar-foreground",
           !stickyHeader && "relative top-auto",
           dragBindings && !dragBindings.disabled && "select-none",
         )}
@@ -192,9 +195,11 @@ export function TopLevelSidebarSection({
         {...(dragBindings?.listeners ?? {})}
       >
         <span className="relative z-10 flex min-w-0 flex-1 items-center gap-1 text-left">
-          <span className="min-w-0 truncate" title={label}>
-            {label}
-          </span>
+          {!sectionId ? (
+            <span className="min-w-0 truncate" title={label}>
+              {label}
+            </span>
+          ) : null}
           {collapseControl ? (
             <button
               type="button"
@@ -208,7 +213,9 @@ export function TopLevelSidebarSection({
                   : `Collapse ${label} section`
               }
               className={cn(
-                !collapseControl.isCollapsed && SIDEBAR_HOVER_ACTIONS_CLASS,
+                !sectionId &&
+                  !collapseControl.isCollapsed &&
+                  SIDEBAR_HOVER_ACTIONS_CLASS,
                 "relative z-20 inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md outline-none ring-sidebar-ring focus-visible:ring-2",
                 SIDEBAR_CONTROL_STATE_CLASS,
                 LIST_HOVER_TRANSITION,
@@ -226,6 +233,19 @@ export function TopLevelSidebarSection({
                 aria-hidden="true"
               />
             </button>
+          ) : null}
+          {sectionId ? (
+            <span className="min-w-0 truncate" title={label}>
+              {label}
+            </span>
+          ) : null}
+          {threadCount !== undefined ? (
+            <span
+              aria-label={`${threadCount} ${threadCount === 1 ? "thread" : "threads"}`}
+              className="shrink-0 pl-1 font-normal tabular-nums text-muted-foreground"
+            >
+              {threadCount}
+            </span>
           ) : null}
         </span>
         {status || actions || collapsedActivityIndicator ? (
@@ -265,7 +285,14 @@ export function TopLevelSidebarSection({
       </SidebarStickyTier>
       {(collapseControl?.isCollapsed && !showChildrenWhenCollapsed) ||
       children == null ? null : (
-        <div className={childrenInset ? "mt-1" : undefined}>{children}</div>
+        <div
+          className={cn(
+            childrenInset && !sectionId && "mt-1",
+            sectionId && "pl-8",
+          )}
+        >
+          {children}
+        </div>
       )}
     </SidebarStickyGroup>
   );

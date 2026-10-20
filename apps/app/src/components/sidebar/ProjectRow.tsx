@@ -1536,6 +1536,7 @@ const SectionTreeItemRow = memo(function SectionTreeItemRow({
       <TopLevelSidebarSection
         label={section.name}
         sectionId={section.id}
+        threadCount={sectionThreads.length}
         actions={topLevelActions}
         actionsOpen={isTopLevelActionsOpen}
         actionsMobileAlways

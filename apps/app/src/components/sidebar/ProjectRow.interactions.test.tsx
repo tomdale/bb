@@ -344,7 +344,18 @@ describe("ProjectRow interactions", () => {
           <QueryClientProvider client={queryClient}>
             <MemoryRouter>
               <ChronologicalSectionThreadSections
-                threadListState={{ status: "ready", threads: [activeThread] }}
+                threadListState={{
+                  status: "ready",
+                  threads: [
+                    activeThread,
+                    makeThread({
+                      id: "thr_section_child",
+                      title: "Nested follow-up",
+                      parentThreadId: activeThread.id,
+                      sectionId: null,
+                    }),
+                  ],
+                }}
                 compareThreads={() => 0}
                 sections={[{ id: sectionId, name: "Active work" }]}
                 collapsedThreadIds={new Set()}
@@ -371,9 +382,16 @@ describe("ProjectRow interactions", () => {
       </TooltipProvider>,
     );
 
+    expect(screen.getByLabelText("2 threads").textContent).toBe("2");
+    expect(screen.getByText("Test thread").closest(".pl-8")).not.toBeNull();
+    expect(
+      screen.getByText("Nested follow-up").closest(".pl-8"),
+    ).not.toBeNull();
+
     fireEvent.click(
       screen.getByRole("button", { name: "Collapse Active work section" }),
     );
+    expect(screen.getByLabelText("2 threads")).not.toBeNull();
 
     expect(
       screen
