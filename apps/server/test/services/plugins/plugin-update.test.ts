@@ -353,6 +353,8 @@ describe("plugin update service and routes", () => {
     await git(seedRepo, ["init", "-q", "-b", "main"]);
     await git(seedRepo, ["config", "user.email", "test@example.com"]);
     await git(seedRepo, ["config", "user.name", "Test"]);
+    await git(seedRepo, ["config", "commit.gpgSign", "false"]);
+    await git(seedRepo, ["config", "tag.gpgSign", "false"]);
     await commitPlugin(seedRepo, "1.0.0");
 
     const tagged = join(seedDir, "tagged");
@@ -360,6 +362,8 @@ describe("plugin update service and routes", () => {
     await git(tagged, ["init", "-q", "-b", "main"]);
     await git(tagged, ["config", "user.email", "test@example.com"]);
     await git(tagged, ["config", "user.name", "Test"]);
+    await git(tagged, ["config", "commit.gpgSign", "false"]);
+    await git(tagged, ["config", "tag.gpgSign", "false"]);
     await writeFile(
       join(tagged, "package.json"),
       JSON.stringify({
