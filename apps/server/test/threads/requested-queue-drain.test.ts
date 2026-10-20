@@ -976,4 +976,83 @@ describe("queue recovery", () => {
       expect(await listedIds()).toEqual([]);
     });
   });
+
+  it.each(["idle", "active"] as const)(
+    "does not resend a queued system notice when the server dies right after delivering it to an %s thread",
+    async (status) => {
+      await withTestHarness(async (harness) => {
+        const { thread, environment } = seedRunnableThread(harness, {
+          hostId: `host-notice-killed-after-delivery-${status}`,
+          status,
+        });
+        const notice = createQueuedThreadMessage(harness.db, harness.deps.hub, {
+          threadId: thread.id,
+          content: textInput("Worker child completed."),
+          model: "gpt-5",
+          reasoningLevel: "medium",
+          permissionMode: "auto",
+          serviceTier: "default",
+          senderThreadId: null,
+          waitingOn: { kind: "host-offline", hostName: "Test Host" },
+          sendAt: null,
+          payload: { kind: "inline" },
+          systemNotice: {
+            kind: "child-completed",
+            subject: {
+              kind: "thread",
+              threadId: "thr_child",
+              threadName: "Worker child",
+            },
+          },
+        });
+        const notifyThread = harness.deps.hub.notifyThread.bind(
+          harness.deps.hub,
+        );
+        let killed = false;
+        vi.spyOn(harness.deps.hub, "notifyThread").mockImplementation(
+          (threadId, changes, metadata) => {
+            if (
+              !killed &&
+              threadId === thread.id &&
+              metadata?.eventTypes?.includes("client/turn/requested")
+            ) {
+              killed = true;
+              throw new Error("server process killed");
+            }
+            notifyThread(threadId, changes, metadata);
+          },
+        );
+
+        await runQueuedMessageDispatch(harness.deps, {
+          kind: "host-connected",
+          hostId: environment.hostId,
+        }).catch(() => {});
+        expect(killed).toBe(true);
+
+        await runStartupRecoverySweep(harness.deps);
+        applyLoggedThreadLifecycleEvent(harness.deps, {
+          event: { type: "run.succeeded" },
+          threadId: thread.id,
+        });
+        await runQueuedMessageDispatch(harness.deps, {
+          kind: "host-connected",
+          hostId: environment.hostId,
+        });
+        await runQueuedMessageDispatch(harness.deps, {
+          kind: "failed-retry",
+          now: Date.now() + 60_000,
+        });
+
+        const systemRequests = turnRequests(harness, thread.id)
+          .map((event) =>
+            turnRequestEventDataSchema.parse(JSON.parse(event.data)),
+          )
+          .filter((event) => event.initiator === "system");
+        expect(systemRequests).toHaveLength(1);
+        expect(
+          listQueuedThreadMessages(harness.db, thread.id).map((row) => row.id),
+        ).not.toContain(notice.id);
+      });
+    },
+  );
 });
