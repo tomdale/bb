@@ -4,8 +4,8 @@ import { forwardSignalsAndMirrorExit } from "./child-process-helpers.mjs";
 import {
   createDesktopApplicationIdentity,
   resolveDesktopBuildProfile,
-  resolveDesktopReleaseChannel,
-} from "./desktop-release-channel.mjs";
+} from "./desktop-build-profiles.mjs";
+import { resolveDesktopReleaseChannel } from "./desktop-release-channel.mjs";
 import { createPackagedAppLaunchArguments } from "./packaged-app-launch.mjs";
 import { resolvePackagedAppBinary } from "./packaged-app-paths.mjs";
 

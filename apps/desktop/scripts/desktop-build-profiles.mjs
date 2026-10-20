@@ -1,3 +1,8 @@
+import {
+  createDesktopReleaseConfig,
+  createDesktopUpdateReleaseBaseUrl,
+} from "./desktop-release-channel.mjs";
+
 export const DESKTOP_BUILD_PROFILES = {
   personal: {
     appId: "com.tomdale.bb.personal",
@@ -32,3 +37,37 @@ export const DESKTOP_BUILD_PROFILES = {
     updatesEnabled: false,
   },
 };
+
+export function resolveDesktopBuildProfile(value) {
+  if (value === undefined || value === "release") {
+    return "release";
+  }
+  if (value === "personal" || value === "lab") {
+    return value;
+  }
+  throw new Error(
+    `Desktop build profile must be release, personal, or lab, got ${value}.`,
+  );
+}
+
+export function createDesktopApplicationIdentity(profile, releaseChannel) {
+  if (profile === "release") {
+    const releaseConfig = createDesktopReleaseConfig(releaseChannel);
+    return {
+      ...releaseConfig,
+      publish: [
+        {
+          channel: releaseChannel,
+          provider: "generic",
+          url: createDesktopUpdateReleaseBaseUrl(releaseConfig.releaseTag),
+        },
+      ],
+      updatesEnabled: true,
+    };
+  }
+  return {
+    ...DESKTOP_BUILD_PROFILES[profile],
+    publish: [],
+    updatesEnabled: false,
+  };
+}

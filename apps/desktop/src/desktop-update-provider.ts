@@ -88,7 +88,7 @@ export function resolveDesktopUpdateSupport(
   if (args.updatesEnabled === false) {
     return { autoUpdate: false, versionCheck: false };
   }
-  if (args.platform === "macos") {
+  if (args.platform === "macos" || args.platform === "windows") {
     return { autoUpdate: true, versionCheck: true };
   }
 

@@ -4,10 +4,9 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   createDesktopApplicationIdentity,
-  createDesktopReleaseConfig,
   resolveDesktopBuildProfile,
-  resolveDesktopReleaseChannel,
-} from "./desktop-release-channel.mjs";
+} from "./desktop-build-profiles.mjs";
+import { resolveDesktopReleaseChannel } from "./desktop-release-channel.mjs";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const desktopPackageRoot = resolve(scriptDirectory, "..");

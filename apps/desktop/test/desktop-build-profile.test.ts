@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, symlink } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -6,6 +6,7 @@ import {
   createDesktopApplicationIdentity,
   createDesktopProfileEnvironment,
 } from "../src/desktop-build-profile.js";
+import { resolveDesktopBuildPlatform } from "../scripts/desktop-release-channel.mjs";
 import { createExpectedLabRuntimeConfig } from "../scripts/lab-runtime-config.mjs";
 
 const temporaryDirectories: string[] = [];
@@ -59,6 +60,22 @@ describe("desktop build profiles", () => {
       iconFileName: "icon-nightly.png",
       updatesEnabled: true,
     });
+  });
+
+  it("keeps upstream Windows packaging for release builds", async () => {
+    expect(resolveDesktopBuildPlatform("win32")).toBe("windows");
+    expect(createDesktopApplicationIdentity("release", "latest")).toMatchObject(
+      {
+        updateMetadataFileNames: { windows: "latest.yml" },
+        windowsInstallName: "bb",
+      },
+    );
+    const packageJson = JSON.parse(
+      await readFile(resolve("package.json"), "utf8"),
+    ) as { os: string[]; scripts: Record<string, string> };
+    expect(packageJson.os).toContain("win32");
+    expect(packageJson.scripts).toHaveProperty("desktop:build:win");
+    expect(packageJson.scripts).toHaveProperty("package:win");
   });
 
   it("forces Lab onto its own local runtime despite hostile inherited settings", async () => {

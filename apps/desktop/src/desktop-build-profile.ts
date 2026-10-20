@@ -13,9 +13,9 @@ import { resolveIsolatedProfilePath } from "../scripts/desktop-profile-paths.mjs
 import {
   createDesktopApplicationIdentity as createApplicationIdentity,
   resolveDesktopBuildProfile,
-  resolveDesktopReleaseChannel,
   type DesktopBuildProfile,
-} from "../scripts/desktop-release-channel.mjs";
+} from "../scripts/desktop-build-profiles.mjs";
+import { resolveDesktopReleaseChannel } from "../scripts/desktop-release-channel.mjs";
 
 export type DesktopApplicationIdentity = ReturnType<
   typeof createApplicationIdentity

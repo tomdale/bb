@@ -2,10 +2,8 @@ import { execFileSync } from "node:child_process";
 import { readFile, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { build } from "esbuild";
-import {
-  resolveDesktopBuildProfile,
-  resolveDesktopReleaseChannel,
-} from "./desktop-release-channel.mjs";
+import { resolveDesktopBuildProfile } from "./desktop-build-profiles.mjs";
+import { resolveDesktopReleaseChannel } from "./desktop-release-channel.mjs";
 
 const packageRoot = process.cwd();
 const distDir = resolve(packageRoot, "dist");

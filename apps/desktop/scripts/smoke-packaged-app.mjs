@@ -10,6 +10,9 @@ import { fileURLToPath } from "node:url";
 import {
   createDesktopApplicationIdentity,
   resolveDesktopBuildProfile,
+} from "./desktop-build-profiles.mjs";
+import {
+  resolveDesktopBuildPlatform,
   resolveDesktopReleaseChannel,
 } from "./desktop-release-channel.mjs";
 import { createPackagedAppLaunchArguments } from "./packaged-app-launch.mjs";
@@ -225,6 +228,7 @@ async function startSmokeServer({
   if (address === null || typeof address === "string") {
     throw new Error("Expected desktop smoke server to listen on a TCP port");
   }
+
   return {
     close: async () => {
       await new Promise((resolvePromise, rejectPromise) => {
@@ -331,12 +335,8 @@ async function stopPackagedApp(child) {
 }
 
 async function smokePackagedApp() {
-  if (process.platform !== "darwin" && process.platform !== "linux") {
-    throw new Error("Packaged desktop smoke only runs on macOS or Linux.");
-  }
-
   const desktopVersion = await readDesktopPackageVersion();
-  const desktopPlatform = process.platform === "darwin" ? "macos" : "linux";
+  const desktopPlatform = resolveDesktopBuildPlatform(process.platform);
   const appBinary = await resolvePackagedAppBinary({
     executableName: releaseConfig.linuxExecutableName,
     platform: process.platform,
@@ -368,6 +368,9 @@ async function smokePackagedApp() {
     BB_LAB_SERVER_PORT: String(smokeServer.port),
     BB_LAB_HOST_DAEMON_PORT: String(smokeServer.hostDaemonPort),
     BB_DESKTOP_BUILD_PROFILE: buildProfile,
+    // The smoke server answers the bb probe, so a packaged build treats it as a
+    // foreign bb and asks before attaching. No one is here to click, so opt out
+    // and keep exercising the real attach path.
     BB_DESKTOP_ATTACH_WITHOUT_PROMPT: "1",
     BB_DESKTOP_OPEN_DEVTOOLS: "0",
     BB_DESKTOP_VERSION_FEED_URL: `${serverUrl}/desktop-version.json`,
@@ -429,7 +432,12 @@ async function smokePackagedApp() {
   } finally {
     await stopPackagedApp(child);
     await smokeServer.close();
-    await rm(smokeRoot, { force: true, recursive: true });
+    await rm(smokeRoot, {
+      force: true,
+      maxRetries: 20,
+      recursive: true,
+      retryDelay: 250,
+    });
   }
 }
 
