@@ -34,15 +34,31 @@ async function runProfileWorker(): Promise<void> {
   };
   const session = new Session();
   let startedAt = "";
+  let profileStartedAtUs = 0;
   let title = "";
   let finishedProfile: Profiler.Profile | undefined;
   session.on("Profiler.consoleProfileFinished", (event) => {
     if (event.params.title === title) finishedProfile = event.params.profile;
   });
   const begin = async (name: string) => {
-    await session.post("Runtime.evaluate", {
-      expression: `process.getBuiltinModule("node:inspector").console.profile(${JSON.stringify(name)})`,
+    const response = await session.post("Runtime.evaluate", {
+      expression: `(() => { const startedAt = Number(process.hrtime.bigint()) / 1e3; process.getBuiltinModule("node:inspector").console.profile(${JSON.stringify(name)}); return startedAt; })()`,
+      returnByValue: true,
     });
+    const startedAt: unknown = response.result.value;
+    if (typeof startedAt !== "number" || !Number.isFinite(startedAt))
+      throw new Error("Invalid CPU profile clock anchor");
+    return startedAt;
+  };
+  const end = async (name: string): Promise<Profiler.Profile> => {
+    finishedProfile = undefined;
+    await session.post("Runtime.evaluate", {
+      expression: `process.getBuiltinModule("node:inspector").console.profileEnd(${JSON.stringify(name)})`,
+    });
+    const profile = finishedProfile;
+    finishedProfile = undefined;
+    if (!profile) throw new Error("CPU profile completion was not received");
+    return profile;
   };
   const respond = (
     fields: object,
@@ -86,7 +102,7 @@ async function runProfileWorker(): Promise<void> {
     await session.post("Profiler.enable");
     await session.post("Profiler.setSamplingInterval", { interval: 1_000 });
     title = `bb-performance-${randomUUID()}`;
-    await begin(title);
+    profileStartedAtUs = await begin(title);
     startedAt = new Date().toISOString();
     respond(
       {
@@ -102,18 +118,16 @@ async function runProfileWorker(): Promise<void> {
   };
   const capture = async (restart: boolean, stalls: StallWindowBatch) => {
     const beginning = startedAt;
+    const beginningUs = profileStartedAtUs;
     const nextTitle = `bb-performance-${randomUUID()}`;
     if (restart) {
-      await begin(nextTitle);
+      profileStartedAtUs = await begin(nextTitle);
       startedAt = new Date().toISOString();
     }
-    finishedProfile = undefined;
-    await session.post("Runtime.evaluate", {
-      expression: `process.getBuiltinModule("node:inspector").console.profileEnd(${JSON.stringify(title)})`,
-    });
-    const profile = finishedProfile;
-    finishedProfile = undefined;
-    if (!profile) throw new Error("CPU profile completion was not received");
+    const profile = await end(title);
+    const clockOffsetUs = beginningUs - profile.startTime;
+    profile.startTime += clockOffsetUs;
+    profile.endTime += clockOffsetUs;
     title = nextTitle;
     const endedAt = new Date().toISOString();
     for (const fields of summarizeStallWindows(profile, stalls)) {

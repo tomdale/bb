@@ -31,6 +31,8 @@ let repositoryTemplate: string;
 beforeAll(async () => {
   repositoryTemplate = await mkdtemp(join(tmpdir(), "bb-worktree-template-"));
   await git(repositoryTemplate, "init", "--initial-branch=main");
+  await git(repositoryTemplate, "config", "commit.gpgSign", "false");
+  await git(repositoryTemplate, "config", "tag.gpgSign", "false");
   await writeFile(join(repositoryTemplate, "README.md"), "hello\n");
   await git(repositoryTemplate, "add", ".");
   await git(repositoryTemplate, "commit", "-m", "initial");
@@ -98,6 +100,8 @@ async function createDetachedSingleBranchRepository(
   await mkdir(originPath, { recursive: true });
   await mkdir(dataDir, { recursive: true });
   await git(originPath, "init", "--initial-branch=main");
+  await git(originPath, "config", "commit.gpgSign", "false");
+  await git(originPath, "config", "tag.gpgSign", "false");
   await writeFile(join(originPath, "README.md"), "hello\n");
   await git(originPath, "add", ".");
   await git(originPath, "commit", "-m", "initial");
