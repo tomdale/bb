@@ -1497,13 +1497,18 @@ describe("idle cold-start activation", () => {
       const { environment, thread } = seedProviderThreadFixture({
         harness,
         value: 12,
-        status: "active",
       });
       const turnId = "turn_claimed_switch";
       seedTurnStarted(harness.deps, {
         environmentId: environment.id,
+        providerThreadId: "provider-claimed-switch",
+        sequence: 3,
         threadId: thread.id,
         turnId,
+      });
+      applyLoggedThreadLifecycleEvent(harness.deps, {
+        event: { type: "run.started" },
+        threadId: thread.id,
       });
       const target = seedEnvironment(harness.deps, {
         hostId: environment.hostId,
@@ -1587,7 +1592,7 @@ describe("idle cold-start activation", () => {
     });
   });
 
-  it("rejects a directory continuation when its originating turn has already ended", async () => {
+  it("rejects a directory continuation after a later turn is requested", async () => {
     await withTestHarness(async (harness) => {
       const { environment, thread } = seedProviderThreadFixture({
         harness,
@@ -1636,7 +1641,7 @@ describe("idle cold-start activation", () => {
         threadId: thread.id,
         environmentId: environment.id,
         type: "client/turn/requested",
-        input: textInput("follow-up turn"),
+        input: textInput("start another turn"),
         target: { kind: "new-turn" },
         execution: {
           model: "gpt-5",
@@ -1650,18 +1655,6 @@ describe("idle cold-start activation", () => {
         requestMethod: "turn/start",
         source: "tell",
       });
-      seedTurnStarted(harness.deps, {
-        environmentId: environment.id,
-        providerThreadId: "provider-send-dispatch-later",
-        sequence: 20,
-        threadId: thread.id,
-        turnId: "turn_later",
-      });
-      applyLoggedThreadLifecycleEvent(harness.deps, {
-        event: { type: "run.started" },
-        threadId: thread.id,
-      });
-
       const result = await handleUpdateEnvironmentDirectoryToolCall(
         harness.deps,
         {
@@ -1685,6 +1678,7 @@ describe("idle cold-start activation", () => {
       const { environment, thread } = seedProviderThreadFixture({
         harness,
         value: 9,
+        status: "active",
       });
       const targetPath = "/tmp/send-dispatch-stop-race";
       applyLoggedThreadLifecycleEvent(harness.deps, {
@@ -1729,6 +1723,10 @@ describe("idle cold-start activation", () => {
         throw new Error("Expected original turn to remain active during Stop");
       }
 
+      applyLoggedThreadLifecycleEvent(harness.deps, {
+        event: { type: "stop.requested" },
+        threadId: thread.id,
+      });
       await reportQueuedCommandSuccess(harness, provision, {
         path: targetPath,
         isGitRepo: true,
@@ -1795,13 +1793,14 @@ describe("idle cold-start activation", () => {
     });
   });
 
-  it.each(["active", "idle"])(
+  it.each(["active" as const, "idle" as const])(
     "cancels directory continuation when the thread is stopped while %s",
     async (status) => {
       await withTestHarness(async (harness) => {
         const { environment, thread } = seedProviderThreadFixture({
           harness,
-          value: 8,
+          value: status === "idle" ? 8 : 9,
+          status,
         });
         const targetEnvironment = seedEnvironment(harness.deps, {
           hostId: environment.hostId,

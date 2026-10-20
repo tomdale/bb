@@ -581,15 +581,12 @@ function markThreadStoppingWithEventInTransaction(
     return false;
   }
   deps.hub.notifyThread(args.threadId, ["status-changed"]);
-  if (
-    args.reason === "manual-stop" &&
+  if (args.reason === "manual-stop") {
     deleteQueuedSystemNoticesInTransaction(
       deps.db,
       args.threadId,
       "turn-continuation",
-    ) > 0
-  ) {
-    deps.hub.notifyThread(args.threadId, ["queue-changed"]);
+    );
   }
   appendThreadInterruptedEventInTransaction(deps.db, {
     threadId: args.threadId,
@@ -1413,6 +1410,7 @@ function requestPreStartThreadStop(
   deps: RequestThreadStopForCurrentStateDeps,
   thread: RequestThreadStopForCurrentStateThread,
 ): void {
+  cancelDirectoryContinuation(deps, thread.id);
   // Stopping a thread abandons the provisioning anything was waiting on, so
   // those waits end here. This runs outside the transaction below because
   // clearing a wait notifies, and it runs first so no row is left waiting on
@@ -1630,6 +1628,7 @@ async function stopThreadUntilSettled(
         return null;
       }
       const args = manualThreadStopArgs(threadId, environment);
+      cancelDirectoryContinuation(deps, threadId);
       if (markThreadStopRequested(deps, args)) {
         const interrupted = await runAwaitedThreadStopCommand(deps, {
           command: buildThreadStopCommand({ ...args, intent: "interrupt" }),
@@ -1668,6 +1667,7 @@ async function stopThreadUntilSettled(
       return null;
     }
     const args = manualThreadStopArgs(threadId, environment);
+    cancelDirectoryContinuation(deps, threadId);
     const released = await runAwaitedThreadStopCommand(deps, {
       command: buildThreadStopCommand({ ...args, intent: "release" }),
       hostId: args.hostId,

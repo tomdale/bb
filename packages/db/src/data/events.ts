@@ -3859,22 +3859,30 @@ export function hasThreadTurnRequestAfterStart(
     .get();
   if (!turnStarted) return true;
 
-  return db
-    .select({ id: events.id })
+  const requests = db
+    .select({ data: events.data, sequence: events.sequence })
     .from(events)
     .where(
       and(
         eq(events.threadId, args.threadId),
         eq(events.type, "client/turn/requested"),
         gt(events.sequence, turnStarted.sequence),
-        sql`NOT (
-          COALESCE(json_extract(${events.data}, '$.target.kind'), '') IN ('steer', 'auto')
-          AND COALESCE(json_extract(${events.data}, '$.target.expectedTurnId'), '') = ${args.turnId}
-        )`,
       ),
     )
-    .limit(1)
-    .get() !== undefined;
+    .all();
+  return requests.some((request) => {
+    try {
+      const parsed = JSON.parse(request.data) as {
+        target?: { expectedTurnId?: unknown; kind?: unknown };
+      };
+      return !(
+        (parsed.target?.kind === "steer" || parsed.target?.kind === "auto") &&
+        parsed.target.expectedTurnId === args.turnId
+      );
+    } catch {
+      return true;
+    }
+  });
 }
 
 export function wasThreadTurnManuallyStopped(

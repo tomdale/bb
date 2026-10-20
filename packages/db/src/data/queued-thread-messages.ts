@@ -349,8 +349,7 @@ function queuedMessageGroupingEnvelopeMatches(
 ): boolean {
   return (
     firstQueuedMessage !== null &&
-    firstQueuedMessage.systemNotice === null &&
-    queuedMessage.systemNotice === null &&
+    queuedMessage.systemNotice === firstQueuedMessage.systemNotice &&
     queuedMessage.senderThreadId === firstQueuedMessage.senderThreadId &&
     queuedMessage.model === firstQueuedMessage.model &&
     queuedMessage.reasoningLevel === firstQueuedMessage.reasoningLevel &&
@@ -513,10 +512,7 @@ function resolveQueuedThreadMessageNeighbor(
     return false;
   }
 
-  const neighbor = getQueuedThreadMessage(
-    db,
-    args.neighborQueuedMessageId,
-  );
+  const neighbor = getQueuedThreadMessage(db, args.neighborQueuedMessageId);
   if (
     !neighbor ||
     neighbor.threadId !== args.threadId ||
@@ -974,10 +970,7 @@ export function listIdleThreadsWithQueuedMessages(
           notExists(manuallyStoppedQueuePauseQuery(db, threads.id)),
           notOrdinaryTurnEndQueuedThreadMessage(),
         ),
-        or(
-          isNull(threads.environmentId),
-          ne(environments.status, "destroyed"),
-        ),
+        or(isNull(threads.environmentId), ne(environments.status, "destroyed")),
         // Only rows an idle thread actually unblocks. A thread whose only
         // queued row is waiting on a clock or a plugin is not a drain
         // candidate, and listing it would re-run the whole send pipeline
@@ -1169,10 +1162,7 @@ export function reorderQueuedThreadMessage({
   try {
     result = db.transaction(
       (tx): ReorderQueuedThreadMessageResult => {
-        const movedQueuedMessage = getQueuedThreadMessage(
-          tx,
-          queuedMessageId,
-        );
+        const movedQueuedMessage = getQueuedThreadMessage(tx, queuedMessageId);
         if (!movedQueuedMessage || movedQueuedMessage.threadId !== threadId) {
           return { kind: "not_found" };
         }
@@ -1905,7 +1895,10 @@ export function listRetryableFailedQueuedThreadMessages(
         ),
       ),
     )
-    .orderBy(asc(queuedThreadMessages.nextAttemptAt), asc(queuedThreadMessages.id))
+    .orderBy(
+      asc(queuedThreadMessages.nextAttemptAt),
+      asc(queuedThreadMessages.id),
+    )
     .all();
 }
 

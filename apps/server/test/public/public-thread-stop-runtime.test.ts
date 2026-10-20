@@ -803,7 +803,7 @@ describe("thread runtime stop", () => {
     });
   });
 
-  it("cancels an automatic directory continuation when the user stops the thread", async () => {
+  it("cancels a directory continuation when Stop is pressed on an idle thread", async () => {
     await withTestHarness(async (harness) => {
       const { environment, thread } = seedThreadFixture(harness, {
         thread: { status: "active", visibility: "hidden" },
