@@ -48,7 +48,8 @@ upstream desktop updates. The user-facing description is in
 ### personal-deploy
 
 Adds `pnpm --filter @bb/desktop run deploy:personal`. It rebuilds and smokes
-Personal, waits until no thread is busy, then replaces and relaunches
+Personal, waits until no thread is busy (at most 20 minutes, then it goes
+ahead and interrupts the threads still running), then replaces and relaunches
 `/Applications/bb Personal.app`. If the new build does not come up, it rolls
 back to the previous bundle. Depends on desktop-profiles.
 
