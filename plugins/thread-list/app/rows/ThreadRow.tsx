@@ -407,9 +407,7 @@ function ThreadRowComponent({
     hasUnreadError:
       threadStatus.hasUnreadError ||
       (hasHiddenChildren && childActivity.unreadError),
-    hasUnreadSuccess:
-      threadStatus.hasUnreadSuccess ||
-      (hasHiddenChildren && childActivity.unread),
+    hasUnreadSuccess: hasHiddenChildren && childActivity.unread,
     isBackgroundAgentActive:
       threadStatus.isBackgroundAgentActive ||
       (hasHiddenChildren && childActivity.backgroundAgent),
@@ -593,6 +591,7 @@ function ThreadRowComponent({
             <span
               className={cn(
                 "bb-thread-title",
+                thread.isUnread && "font-semibold",
                 crossProjectLabel !== null && "min-w-0 truncate",
               )}
               title={labelTitle}

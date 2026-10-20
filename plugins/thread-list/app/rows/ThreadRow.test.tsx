@@ -1082,7 +1082,7 @@ describe("ThreadRow", () => {
     ).toBe("Loading");
   });
 
-  it("shows unread success instead of queued work", () => {
+  it("does not show an unread success dot when unread titles are bold", () => {
     renderThreadRow({
       thread: createThread({
         status: "idle",
@@ -1092,10 +1092,10 @@ describe("ThreadRow", () => {
       }),
     });
 
-    expect(screen.getByLabelText("Unread thread succeeded")).not.toBeNull();
+    expect(screen.queryByLabelText("Unread thread succeeded")).toBeNull();
     expect(
-      screen.queryByLabelText("Thread has a message waiting to send"),
-    ).toBeNull();
+      screen.getByLabelText("Thread has a message waiting to send"),
+    ).not.toBeNull();
   });
 
   it("gives a failed queued row the same glyph a failed thread gets", () => {
@@ -1479,7 +1479,7 @@ describe("ThreadRow", () => {
     expect(screen.queryByLabelText("Workflow running")).toBeNull();
   });
 
-  it("renders an already-unread successful thread as a settled dot on initial load", () => {
+  it("bolds unread thread titles without a settled success dot", () => {
     const { container } = renderThreadRow({
       thread: createThread({
         status: "idle",
@@ -1488,8 +1488,37 @@ describe("ThreadRow", () => {
       }),
     });
 
-    expect(screen.getByLabelText("Unread thread succeeded")).not.toBeNull();
+    expect(container.querySelector(".bb-thread-title")?.classList).toContain(
+      "font-semibold",
+    );
+    expect(screen.queryByLabelText("Unread thread succeeded")).toBeNull();
     expect(container.querySelector('[data-icon="CircleCheck"]')).toBeNull();
+  });
+
+  it("uses regular title weight for read threads", () => {
+    const { container, rerenderThreadRow } = renderThreadRow({
+      thread: createThread({
+        status: "idle",
+        lastReadAt: 2_000,
+        latestAttentionAt: 1_000,
+      }),
+    });
+
+    expect(container.querySelector(".bb-thread-title")?.classList).not.toContain(
+      "font-semibold",
+    );
+
+    rerenderThreadRow(
+      createThread({
+        status: "idle",
+        lastReadAt: 1_000,
+        latestAttentionAt: 2_000,
+      }),
+    );
+
+    expect(container.querySelector(".bb-thread-title")?.classList).toContain(
+      "font-semibold",
+    );
   });
 
   it("switches directly from working to the settled done dot after finishing", () => {
@@ -1512,7 +1541,10 @@ describe("ThreadRow", () => {
     });
 
     expect(container.querySelector('[data-icon="CircleCheck"]')).toBeNull();
-    expect(screen.getByLabelText("Unread thread succeeded")).not.toBeNull();
+    expect(screen.queryByLabelText("Unread thread succeeded")).toBeNull();
+    expect(container.querySelector(".bb-thread-title")?.classList).toContain(
+      "font-semibold",
+    );
   });
 
   it("edits the row title inline after a double click and commits on Enter", async () => {
