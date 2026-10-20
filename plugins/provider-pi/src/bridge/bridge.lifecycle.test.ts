@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   experimental_closeAllForTests,
+  experimental_providerBridge,
   experimental_scratchDirForTests,
 } from "./bridge.js";
 import {
@@ -217,6 +218,55 @@ it("the fork helper child exits once the fork is done", async () => {
   await harness.request((nextId += 1), "thread/stop", {
     threadId: "thr_lc_fork",
     providerThreadId: "thr_lc_fork",
+    intent: "release",
+    activeTurnId: null,
+  });
+  await expectEveryChildGone(2);
+}, 90_000);
+
+it("uses the new worker temp directory after a provider restart", async () => {
+  const firstTempDir = join(harness.workspaceDir, "worker-first");
+  const secondTempDir = join(harness.workspaceDir, "worker-second");
+  mkdirSync(firstTempDir);
+  mkdirSync(secondTempDir);
+
+  const startBridge = (tempDir: string) => {
+    const start = experimental_providerBridge.start;
+    if (start === undefined) {
+      throw new Error("Pi provider bridge start hook is missing");
+    }
+    start({
+      pluginId: "provider-pi",
+      dataDir: harness.workspaceDir,
+      tempDir,
+    });
+  };
+  const firstScratchDir = join(firstTempDir, "pi");
+  const secondScratchDir = join(secondTempDir, "pi");
+
+  startBridge(firstTempDir);
+  const firstProviderThreadId = await startThread("thr_lc_restart_first");
+  expect(existsSync(join(firstScratchDir, "bb-pi-extension.mjs"))).toBe(true);
+  expect(
+    readdirSync(firstScratchDir).some((name) => name.startsWith("pi-tools-")),
+  ).toBe(true);
+  await harness.request((nextId += 1), "thread/stop", {
+    threadId: "thr_lc_restart_first",
+    providerThreadId: firstProviderThreadId,
+    intent: "release",
+    activeTurnId: null,
+  });
+  await expectEveryChildGone(1);
+
+  startBridge(secondTempDir);
+  const secondProviderThreadId = await startThread("thr_lc_restart_second");
+  expect(existsSync(join(secondScratchDir, "bb-pi-extension.mjs"))).toBe(true);
+  expect(
+    readdirSync(secondScratchDir).some((name) => name.startsWith("pi-tools-")),
+  ).toBe(true);
+  await harness.request((nextId += 1), "thread/stop", {
+    threadId: "thr_lc_restart_second",
+    providerThreadId: secondProviderThreadId,
     intent: "release",
     activeTurnId: null,
   });

@@ -1221,21 +1221,17 @@ export function experimental_scratchDirForTests(): string {
   return requireScratchDir();
 }
 
-/**
- * @internal Test cleanup: every pi child this process runs, and the private
- * scratch dir (a suite never runs the entry's `start`, so nothing else would
- * remove it).
- */
+/** @internal */
 export async function experimental_closeAllForTests(): Promise<void> {
   await closeThreadSessionsGracefully("Pi bridge test teardown");
   await closeAllPiCatalogs();
   resetPiInstallGateForTests();
   if (scratchDir !== null && scratchDirIsPrivate) {
     rmSync(scratchDir, { recursive: true, force: true });
-    scratchDir = null;
-    scratchDirIsPrivate = false;
-    extensionPath = null;
   }
+  scratchDir = null;
+  scratchDirIsPrivate = false;
+  extensionPath = null;
 }
 
 export const experimental_providerBridge = experimental_defineProviderBridge({
@@ -1243,6 +1239,7 @@ export const experimental_providerBridge = experimental_defineProviderBridge({
   start: (context) => {
     scratchDir = join(context.tempDir, "pi");
     scratchDirIsPrivate = false;
+    extensionPath = null;
     mkdirSync(scratchDir, { recursive: true });
   },
   onClose: () => {
