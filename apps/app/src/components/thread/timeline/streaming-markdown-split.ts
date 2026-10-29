@@ -8,6 +8,11 @@ import {
   parseAnyIndentMarkdownFenceStart,
   type MarkdownFence,
 } from "@/components/ui/markdown-prompt-blockquote-boundaries";
+import {
+  closesAnyIndentMarkdownContainer,
+  parseAnyIndentMarkdownContainerOpen,
+  type MarkdownContainerFence,
+} from "@/components/ui/markdown-container-fences";
 
 interface StreamingMarkdownSplit {
   settled: string;
@@ -15,7 +20,7 @@ interface StreamingMarkdownSplit {
 }
 
 const STREAMING_MARKDOWN_BYPASS_PATTERN =
-  /^(?:[ \t]*(?:>|[-+*]|\d{1,9}[.)]))*[ \t]*::[a-zA-Z]|`{3}|~{3}/mu;
+  /^(?:[ \t]*(?:>|[-+*]|\d{1,9}[.)]))*[ \t]*:{2,}[^\s\p{P}\p{S}]|`{3}|~{3}/mu;
 
 export function repairStreamingMarkdownTail(tail: string): string {
   if (STREAMING_MARKDOWN_BYPASS_PATTERN.test(tail)) {
@@ -53,12 +58,22 @@ export function splitStreamingMarkdown(
   const lines = text.split("\n");
   const lastCompleteLineIndex = lines.length - 2;
   let openFence: MarkdownFence | null = null;
+  let openContainer: MarkdownContainerFence | null = null;
   let mathOpen = false;
   let lastNonBlankLine: string | null = null;
   let boundaryLineIndex = -1;
 
   for (let index = 0; index <= lastCompleteLineIndex; index += 1) {
     const line = lines[index] ?? "";
+    if (openContainer !== null) {
+      if (closesAnyIndentMarkdownContainer(line, openContainer)) {
+        openContainer = null;
+      }
+      if (!isBlankLine(line)) {
+        lastNonBlankLine = line;
+      }
+      continue;
+    }
     if (openFence !== null) {
       if (closesAnyIndentMarkdownFence(line, openFence)) {
         openFence = null;
@@ -95,6 +110,11 @@ export function splitStreamingMarkdown(
       continue;
     }
     lastNonBlankLine = line;
+    const container = parseAnyIndentMarkdownContainerOpen(line);
+    if (container !== null) {
+      openContainer = container;
+      continue;
+    }
     const fence = parseAnyIndentMarkdownFenceStart(line);
     if (fence !== null) {
       openFence = fence;
