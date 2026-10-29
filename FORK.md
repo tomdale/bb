@@ -107,6 +107,19 @@ the cache key.
   Leave `BB_RUN_REAL_FRP_TESTS` unset for routine verification. Guard regression
   tests use mocked effects and do not unpack or run FRP.
 
+### fork-test-safety
+
+Fork sync refuses to verify a tree containing the FRP client or Connect Next
+packages unless the rebased fork includes the `real-frp-tests` safety patch.
+The preceding patch-list and line-drift checks must pass first. Verification
+always sets `BB_RUN_REAL_FRP_TESTS=0` and stops on the first failed test run.
+
+- Upstream status: fork-only.
+- Owned files: `scripts/fork/test-policy.mjs` and its test.
+- Upstream files: `scripts/fork/sync`.
+- Check: `node --test scripts/fork/test-policy.test.mjs` and
+  `bash -n scripts/fork/sync`.
+
 ## Syncing with upstream
 
 `scripts/fork/sync` runs the whole sync. It prints nothing when `personal`
@@ -118,7 +131,7 @@ already contains `upstream/main`. Otherwise it:
 2. Fails if the list of `Fork-Patch` changes changed, or if any change now adds
    or removes different lines than before.
 3. Runs `pnpm install --frozen-lockfile`, the workspace typecheck, and the tests
-   of every package the fork touches, retrying the tests once.
+   of every package the fork touches, with real FRP tests disabled.
 4. Tags the previous `personal` as `personal/<date>`, force-pushes `personal`
    and the tag, and sets `origin/main` to `upstream/main`.
 5. Moves the local `personal` and `main` branches. A checkout of `personal` is
