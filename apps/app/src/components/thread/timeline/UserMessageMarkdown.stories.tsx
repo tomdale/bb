@@ -242,6 +242,7 @@ export function OrderedListMarkers() {
                       showActions={false}
                       mobileActionDisplay="inline"
                       streaming={false}
+                      textComplete={true}
                     />
                   </TimelineStage>
                 )}

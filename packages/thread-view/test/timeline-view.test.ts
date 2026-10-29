@@ -57,6 +57,7 @@ function assistantRow({
     text,
     attachments: null,
     turnRequest: null,
+    textComplete: true,
   };
 }
 

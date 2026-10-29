@@ -264,6 +264,7 @@ function conversationRowFromStep(
     ...base,
     role: "assistant",
     turnRequest: null,
+    textComplete: true,
   };
 }
 
@@ -394,6 +395,7 @@ function AssistantContentStreaming({
     text: assistantText,
     attachments: null,
     turnRequest: null,
+    textComplete: step >= ASSISTANT_STREAMING_CHUNKS.length,
   };
   const rows: TimelineRow[] = [userRow];
   if (step > 0) {

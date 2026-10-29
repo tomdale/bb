@@ -28,6 +28,7 @@ function renderAssistantMessage(text: string, streaming: boolean) {
           showActions={false}
           mobileActionDisplay="overflow"
           streaming={streaming}
+          textComplete={!streaming}
           text={text}
           timestamp={0}
         />
@@ -50,6 +51,7 @@ function renderAssistantMessage(text: string, streaming: boolean) {
               showActions={false}
               mobileActionDisplay="overflow"
               streaming={nextStreaming}
+              textComplete={!nextStreaming}
               text={nextText}
               timestamp={0}
             />

@@ -53,6 +53,7 @@ describe("ConversationMessageContent assistant images", () => {
             showActions={false}
             mobileActionDisplay="overflow"
             streaming={false}
+            textComplete={true}
             timestamp={0}
             text={
               '![Generated diagram](/workspace/output/diagram.png)\n\n<video src="/workspace/output/clip.mp4" title="Clip" controls></video>'
@@ -235,6 +236,7 @@ describe("ConversationMessageContent assistant thread mentions", () => {
                 showActions={false}
                 mobileActionDisplay="overflow"
                 streaming={false}
+                textComplete={true}
                 text="Spawned and parented: @thread:thr_xpxxt2ipz8"
                 timestamp={0}
               />

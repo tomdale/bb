@@ -118,12 +118,14 @@ export function remarkCodeFenceRenderers(args: {
 interface CodeFenceBlock {
   closed: boolean;
   code: string;
+  complete: boolean;
   language: string;
   original: ReactNode;
 }
 
 interface CodeFenceHost extends SlotPortalHost<CodeFenceBlock> {
   registry: CodeFenceRendererRegistry;
+  textComplete: boolean;
 }
 
 function reconcileCodeFenceBlock(
@@ -136,6 +138,7 @@ function reconcileCodeFenceBlock(
       previous === null ||
       previous.code !== next.code ||
       previous.closed !== next.closed ||
+      previous.complete !== next.complete ||
       previous.language !== next.language,
   };
 }
@@ -157,14 +160,14 @@ interface CodeFenceRendererHostProps {
   children: ReactNode;
   message: ExperimentalCodeFenceRendererProps["message"];
   registry: CodeFenceRendererRegistry;
-  streaming: boolean;
+  textComplete: boolean;
 }
 
 export function CodeFenceRendererHost({
   children,
   message,
   registry,
-  streaming,
+  textComplete,
 }: CodeFenceRendererHostProps) {
   const {
     entries: ordered,
@@ -173,8 +176,8 @@ export function CodeFenceRendererHost({
   } = useSlotPortals(reconcileCodeFenceBlock);
 
   const host = useMemo(
-    (): CodeFenceHost => ({ ...portals, registry }),
-    [portals, registry],
+    (): CodeFenceHost => ({ ...portals, registry, textComplete }),
+    [portals, registry, textComplete],
   );
 
   const ordinals = new Map<string, number>();
@@ -200,7 +203,11 @@ export function CodeFenceRendererHost({
               message={message}
               slot={slot}
               status={
-                block.closed ? "closed" : streaming ? "streaming" : "unclosed"
+                block.closed
+                  ? "closed"
+                  : block.complete
+                    ? "unclosed"
+                    : "streaming"
               }
             />
           )}
@@ -294,7 +301,13 @@ export function CodeFencePlaceholder({
 
   useLayoutEffect(() => {
     if (host !== null && claimed) {
-      host.update(offset, { closed, code, language, original });
+      host.update(offset, {
+        closed,
+        code,
+        complete: host.textComplete,
+        language,
+        original,
+      });
     }
   });
 

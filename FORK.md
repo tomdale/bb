@@ -187,6 +187,35 @@ first consumer.
   `pnpm exec turbo run test --filter=@bb/app -- src/components/ui src/components/thread/timeline src/lib/plugin`
   and `GIT_CONFIG_GLOBAL=/dev/null pnpm exec turbo run test --filter=@bb/server -- test/services/plugins/plugin-authoring-docs test/services/plugins/builtin test/skills`.
 
+### slot-status-text-complete
+
+Assistant timeline rows carry `textComplete`, true once the provider completes
+the message item, its turn ends, or the thread stops (the event projection's
+message status). Code fence and message block status follow it instead of
+"this message is the last row of a running turn": `streaming` until the closer
+arrives or the text is complete, `unclosed` only when the text is complete
+without a closer. Each placeholder reports the flag together with its text, so
+a reply that ends and is followed by a tool row in one update goes from
+`streaming` to `closed` with no `unclosed` render in between. Depends on
+message-blocks for the block half and the shared portal host.
+
+- Upstream status: candidate for the fence half (it fixes upstream's
+  `experimental_codeFenceRenderer`); the block half is fork-only with
+  message-blocks.
+- Owned files: `apps/app/src/components/ui/message-slot-status.test.tsx`.
+- Upstream files: `packages/server-contract/src/thread-timeline.ts`,
+  `packages/thread-view/src/build-thread-timeline.ts`,
+  `packages/client-core/src/timeline/timelineRowSignatures.ts`,
+  `apps/app/src/components/ui/markdown-code-fence-renderers.tsx`,
+  `ConversationMessageContent.tsx`, `ThreadTimelineRows.tsx`,
+  `docs/api_to_audit.md`, `frontend-renderer-slots.md`, and timeline row
+  fixtures, stories, and tests in `apps/app`, `apps/server`,
+  `apps/demo-server`, `packages/thread-view`, and `tests/integration`.
+- Check: `pnpm exec turbo run typecheck --filter=...@bb/server-contract`,
+  `pnpm exec turbo run test --filter=@bb/thread-view --filter=@bb/client-core --filter=@bb/server-contract --filter=@bb/demo-server`,
+  `pnpm exec turbo run test --filter=@bb/app -- src/components/ui src/components/thread`,
+  and `GIT_CONFIG_GLOBAL=/dev/null pnpm exec turbo run test --filter=@bb/server -- test/services/threads`.
+
 ## Syncing with upstream
 
 `scripts/fork/sync` runs the whole sync. It prints nothing when `personal`

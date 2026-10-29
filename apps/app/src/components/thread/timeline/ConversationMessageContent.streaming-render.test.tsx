@@ -61,6 +61,7 @@ function assistant(
               threadId="thr_stream"
               turnId="turn_stream"
               streaming={streaming}
+              textComplete={!streaming}
               showActions={showActions}
               mobileActionDisplay="inline"
               onOpenLocalFileLink={onOpenLocalFileLink}

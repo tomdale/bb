@@ -34,6 +34,7 @@ import type { AcceptedClientRequestContext } from "../src/accepted-client-reques
 import { parseOperationMessage } from "../src/parse-operation-message.js";
 import {
   createTimelineEventFactory,
+  flattenTimelineRows,
   fromRows,
   renderTimelineFixture,
   rowsOfKind,
@@ -836,6 +837,58 @@ function fileChangeRowIdByPath(
   }
   return idByPath;
 }
+
+describe("assistant conversation row textComplete", () => {
+  type AssistantRow = Extract<TimelineConversationRow, { role: "assistant" }>;
+
+  function assistantRows(rows: TimelineRow[]): AssistantRow[] {
+    return flattenTimelineRows(rows).filter(
+      (row): row is AssistantRow =>
+        row.kind === "conversation" && row.role === "assistant",
+    );
+  }
+
+  it("is false while the message streams, even after a later tool row, and true once the item completes", () => {
+    const event = createTimelineEventFactory({ threadId: "thread-1" });
+    const streamed = [
+      event.turnStarted(),
+      event.assistantDelta({ itemId: "reply", delta: ":::reply\nPartial" }),
+      event.commandCompleted({ itemId: "tool-after", command: "pnpm test" }),
+    ];
+    expect(
+      assistantRows(buildTimelineRows(fromRows(streamed), "active")).map(
+        (row) => row.textComplete,
+      ),
+    ).toEqual([false]);
+
+    const completed = [
+      ...streamed,
+      event.assistantCompleted({
+        itemId: "reply",
+        text: ":::reply\nPartial text.\n:::",
+      }),
+    ];
+    expect(
+      assistantRows(buildTimelineRows(fromRows(completed), "active")).map(
+        (row) => [row.text, row.textComplete],
+      ),
+    ).toEqual([[":::reply\nPartial text.\n:::", true]]);
+  });
+
+  it("is true for a message whose turn ended without completing it", () => {
+    const event = createTimelineEventFactory({ threadId: "thread-1" });
+    const events = [
+      event.turnStarted(),
+      event.assistantDelta({ itemId: "reply", delta: ":::reply\nCut off" }),
+      event.turnCompleted({ status: "interrupted" }),
+    ];
+    expect(
+      assistantRows(buildTimelineRows(fromRows(events), "active")).map(
+        (row) => row.textComplete,
+      ),
+    ).toEqual([true]);
+  });
+});
 
 describe("buildThreadTimelineFromEvents", () => {
   it("renders one turn when daemon retry history contains duplicate turn starts", () => {

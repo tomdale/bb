@@ -50,8 +50,13 @@ declare module "react" {
 }
 
 interface MessageBlock {
+  complete: boolean;
   mount: MountedMessageBlock;
   original: ReactNode;
+}
+
+interface MessageBlockHostValue extends SlotPortalHost<MessageBlock> {
+  textComplete: boolean;
 }
 
 function reconcileMessageBlock(
@@ -62,10 +67,11 @@ function reconcileMessageBlock(
     previous !== null &&
     previous.mount.source === next.mount.source &&
     previous.mount.closed === next.mount.closed &&
-    previous.mount.slot === next.mount.slot
+    previous.mount.slot === next.mount.slot &&
+    previous.complete === next.complete
   ) {
     return {
-      block: { mount: previous.mount, original: next.original },
+      block: { ...next, mount: previous.mount },
       changed: false,
     };
   }
@@ -76,8 +82,9 @@ export const MessageBlockMountsContext = createContext<
   readonly MountedMessageBlock[]
 >(EMPTY_MOUNTED_MESSAGE_BLOCKS);
 
-const MessageBlockHostContext =
-  createContext<SlotPortalHost<MessageBlock> | null>(null);
+const MessageBlockHostContext = createContext<MessageBlockHostValue | null>(
+  null,
+);
 
 const MessageBlockOriginalContext = createContext<ReactNode>(null);
 
@@ -289,15 +296,23 @@ const MessageBlockMount = memo(function MessageBlockMount({
 interface MessageBlockHostProps {
   children: ReactNode;
   message: PluginMessageDirectiveMessage;
-  streaming: boolean;
+  textComplete: boolean;
 }
 
 export function MessageBlockHost({
   children,
   message,
-  streaming,
+  textComplete,
 }: MessageBlockHostProps) {
-  const { entries, host, parkingRef } = useSlotPortals(reconcileMessageBlock);
+  const {
+    entries,
+    host: portals,
+    parkingRef,
+  } = useSlotPortals(reconcileMessageBlock);
+  const host = useMemo(
+    (): MessageBlockHostValue => ({ ...portals, textComplete }),
+    [portals, textComplete],
+  );
   const indexes = new Map<string, number>();
   const mounts: ReactNode[] = [];
   for (const entry of entries) {
@@ -317,7 +332,11 @@ export function MessageBlockHost({
             mount={mount}
             ordinal={mounts.length}
             status={
-              mount.closed ? "closed" : streaming ? "streaming" : "unclosed"
+              mount.closed
+                ? "closed"
+                : block.complete
+                  ? "unclosed"
+                  : "streaming"
             }
           />
         </MessageBlockOriginalContext.Provider>,
@@ -374,6 +393,7 @@ export function MessageBlockPlaceholder({
       return;
     }
     host.update(offset, {
+      complete: host.textComplete,
       mount,
       original: (
         <MessageDirectiveMountsContext.Provider value={directiveMounts}>
