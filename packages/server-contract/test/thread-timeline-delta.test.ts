@@ -50,6 +50,7 @@ function message(id: string, text: string, sourceSeqEnd = 1): TimelineRow {
     text,
     attachments: null,
     turnRequest: null,
+    textComplete: false,
   };
 }
 

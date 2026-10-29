@@ -68,6 +68,7 @@ function assistantRow(text: string): TimelineConversationRow {
     text,
     attachments: null,
     turnRequest: null,
+    textComplete: true,
   };
 }
 

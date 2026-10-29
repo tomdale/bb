@@ -191,7 +191,7 @@ function PluginMessageMarkdown({
   );
   const messageDirectives = useMessageDirectives(message, null);
   return (
-    <MessageCodeFences message={message} streaming={false}>
+    <MessageCodeFences message={message} textComplete>
       <PluginMarkdownBody {...props} messageDirectives={messageDirectives} />
     </MessageCodeFences>
   );

@@ -64,6 +64,7 @@ interface ConversationRowArgs extends RowBaseOverrideArgs {
   systemMessageKind?: SystemMessageKind;
   systemMessageSubject?: SystemMessageSubject | null;
   text: string;
+  textComplete?: boolean;
   turnId?: string | null;
   turnRequest?: TimelineConversationTurnRequest;
 }
@@ -458,6 +459,7 @@ export function conversationRow({
   systemMessageKind = "unlabeled",
   systemMessageSubject = null,
   text,
+  textComplete = true,
   threadId,
   turnId,
   turnRequest,
@@ -506,6 +508,7 @@ export function conversationRow({
     text,
     attachments,
     turnRequest: null,
+    textComplete,
   };
 }
 

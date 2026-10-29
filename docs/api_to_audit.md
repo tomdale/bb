@@ -3149,7 +3149,12 @@ mounts once per fence, and survives streaming: the host owns the instance and
 portals it to a placeholder keyed by the fence's source offset, keeping
 iframes alive where `Element.moveBefore` exists. Contested languages, a
 missing plugin, and a throwing fence fall back to `Original`. The harness
-exposes `loadPluginApp(...).codeFenceRenderers`.
+exposes `loadPluginApp(...).codeFenceRenderers`. `status` follows the
+message's own text: the assistant timeline row's `textComplete` is true once
+the provider completes the message item, its turn ends, or the thread stops,
+so a later row such as a tool call does not end `streaming`. The placeholder
+reports the flag with the fence's text, so status and text change in the same
+update.
 
 **Core callers.** `MarkdownPreview`'s code renderer
 (`markdown-code-fence-renderers.tsx`), the pipeline that also resolves
@@ -3196,7 +3201,8 @@ share one namespace with `messageDirective` ids. The harness exposes
 
 **Relation to `experimental_codeFenceRenderer`.** The two slots share one
 contract shape and one host. `status` is the same type
-(`streaming | closed | unclosed`); `index` counts blocks of the same name the
+(`streaming | closed | unclosed`) and follows the same rule, the message's
+`textComplete`; `index` counts blocks of the same name the
 way fence `index` counts fences of the same language; `Original` is BB's own
 rendering. Both hosts keep one component instance per block, keyed by the
 source offset of its opening line, and portal it into a placeholder that
@@ -4155,7 +4161,7 @@ mounts fences and directives through the same `useMessageDirectives` and
 `MessageCodeFences` (`apps/app/src/components/ui/message-markdown-slots.tsx`).
 
 Stabilize after plugin consumers verify streaming text (the host passes
-`streaming: false`), workspace file opening, and fence state keyed by a plugin
+`textComplete: true`), workspace file opening, and fence state keyed by a plugin
 message id across remounts.
 
 ## `PluginFileOpenerProps.experimental_lineRange` (`@get-bb/plugin-sdk/app`)

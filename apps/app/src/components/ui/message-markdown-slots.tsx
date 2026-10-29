@@ -59,11 +59,11 @@ export function useMessageDirectives(
 export function MessageCodeFences({
   children,
   message,
-  streaming,
+  textComplete,
 }: {
   children: ReactNode;
   message: PluginMessageDirectiveMessage;
-  streaming: boolean;
+  textComplete: boolean;
 }) {
   const registry = useCodeFenceRendererRegistry();
   if (registry === null) {
@@ -73,7 +73,7 @@ export function MessageCodeFences({
     <CodeFenceRendererHost
       registry={registry}
       message={message}
-      streaming={streaming}
+      textComplete={textComplete}
     >
       {children}
     </CodeFenceRendererHost>

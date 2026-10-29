@@ -44,6 +44,7 @@ const SURFACES: readonly MarkdownSurface[] = [
         showActions={false}
         mobileActionDisplay="overflow"
         streaming={false}
+        textComplete={true}
         text={content}
         timestamp={0}
       />
