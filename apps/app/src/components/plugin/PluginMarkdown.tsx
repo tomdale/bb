@@ -10,7 +10,6 @@ import {
   MarkdownPreview,
 } from "@/components/ui/markdown-preview";
 import { buildMarkdownFileRouting } from "@/components/ui/markdown-file-routing";
-import { WithoutCodeFenceRenderers } from "@/components/ui/markdown-code-fence-renderers";
 import type { MarkdownMessageDirectives } from "@/components/ui/markdown-message-directives";
 import {
   MessageCodeFences,
@@ -29,6 +28,7 @@ import {
 import { normalizeExperimentalLiveFileTarget } from "@/lib/live-file-navigation";
 import { useLocalFileLinkOpener } from "@/hooks/useLocalFileLinkOpener";
 import { useResolvedLiveFileRoot } from "@/hooks/useResolvedLiveFileTarget";
+import { MessageBlockMarkdown } from "@/components/ui/message-block-markdown";
 
 function parsePluginMarkdownDocument(
   document: NonNullable<MarkdownProps["experimental_document"]>,
@@ -205,16 +205,21 @@ export function PluginMarkdown({
     experimental_message === undefined
       ? null
       : parsePluginMarkdownMessage(experimental_message);
-  if (message === null) {
-    return (
-      <WithoutCodeFenceRenderers>
-        <PluginMarkdownBody {...props} messageDirectives={undefined} />
-      </WithoutCodeFenceRenderers>
-    );
-  }
   return (
-    <MessageSlotRegistriesProvider>
-      <PluginMessageMarkdown {...props} message={message} />
-    </MessageSlotRegistriesProvider>
+    <MessageBlockMarkdown
+      inheritMessage={
+        message === null && props.experimental_document === undefined
+      }
+    >
+      {(messageDirectives) =>
+        message === null ? (
+          <PluginMarkdownBody {...props} messageDirectives={messageDirectives} />
+        ) : (
+          <MessageSlotRegistriesProvider>
+            <PluginMessageMarkdown {...props} message={message} />
+          </MessageSlotRegistriesProvider>
+        )
+      }
+    </MessageBlockMarkdown>
   );
 }
