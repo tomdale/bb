@@ -138,6 +138,7 @@ export const timelineAssistantConversationRowSchema =
   timelineConversationRowBaseSchema.extend({
     role: z.literal("assistant"),
     turnRequest: z.null(),
+    textComplete: z.boolean(),
   });
 
 export const timelineConversationRowSchema = z.discriminatedUnion("role", [

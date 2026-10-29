@@ -342,6 +342,7 @@ function computeTimelineRowRenderSignature(row: ThreadTimelineViewRow): string {
       return joinSignatureParts([
         baseSignature,
         row.role,
+        row.role === "assistant" ? row.textComplete : null,
         row.turnRequest?.kind,
         row.turnRequest?.status,
         row.attachments?.localFiles,
