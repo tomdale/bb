@@ -19,6 +19,7 @@ import {
 import { normalizeExperimentalLiveFileTarget } from "@/lib/live-file-navigation";
 import { useLocalFileLinkOpener } from "@/hooks/useLocalFileLinkOpener";
 import { useResolvedLiveFileRoot } from "@/hooks/useResolvedLiveFileTarget";
+import { MessageBlockMarkdown } from "@/components/ui/message-block-markdown";
 
 const PLUGIN_MARKDOWN_THREAD_MENTIONS: MarkdownThreadMentions = {
   mentions: [],
@@ -106,13 +107,18 @@ function PluginDocumentMarkdown({
     [hostId, messageRouting, openLink, rootPath, target, threadId],
   );
   return (
-    <MarkdownPreview
-      allowHtml
-      content={content}
-      className={className}
-      linkRouting={linkRouting}
-      threadMentions={PLUGIN_MARKDOWN_THREAD_MENTIONS}
-    />
+    <MessageBlockMarkdown inheritMessage={false}>
+      {(messageDirectives) => (
+        <MarkdownPreview
+          allowHtml
+          content={content}
+          className={className}
+          linkRouting={linkRouting}
+          messageDirectives={messageDirectives}
+          threadMentions={PLUGIN_MARKDOWN_THREAD_MENTIONS}
+        />
+      )}
+    </MessageBlockMarkdown>
   );
 }
 
@@ -139,12 +145,17 @@ export function PluginMarkdown({
     );
   }
   return (
-    <MarkdownPreview
-      allowHtml
-      content={content}
-      className={className}
-      linkRouting={document === null ? {} : messageRouting}
-      threadMentions={PLUGIN_MARKDOWN_THREAD_MENTIONS}
-    />
+    <MessageBlockMarkdown inheritMessage={experimental_document === undefined}>
+      {(messageDirectives) => (
+        <MarkdownPreview
+          allowHtml
+          content={content}
+          className={className}
+          linkRouting={document === null ? {} : messageRouting}
+          messageDirectives={messageDirectives}
+          threadMentions={PLUGIN_MARKDOWN_THREAD_MENTIONS}
+        />
+      )}
+    </MessageBlockMarkdown>
   );
 }
