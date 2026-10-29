@@ -22,6 +22,7 @@ import {
 } from "@bb/frp-client";
 import {
   GATE_REFUSAL_REASON,
+  REAL_FRP_TESTS_ENABLED,
   installTestFrp,
   runningChild,
   startFrps,
@@ -383,7 +384,9 @@ async function startDevServer() {
   return dev;
 }
 
-describe("MachineNextTunnel with real frpc and frps", () => {
+const describeRealFrp = describe.runIf(REAL_FRP_TESTS_ENABLED);
+
+describeRealFrp("MachineNextTunnel with real frpc and frps", () => {
   beforeAll(async () => {
     workDir = await fs.mkdtemp(path.join(os.tmpdir(), "machine-next-"));
     binaries = await installTestFrp(path.join(workDir, "bin"));
