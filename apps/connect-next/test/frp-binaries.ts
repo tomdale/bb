@@ -89,6 +89,13 @@ async function download(dir: string): Promise<FrpBinaries> {
 let pending: Promise<FrpAvailability> | null = null;
 
 export function frpBinaries(): Promise<FrpAvailability> {
+  if (process.env.BB_RUN_REAL_FRP_TESTS !== "1") {
+    return Promise.resolve({
+      ok: false,
+      reason:
+        "real FRP tests require BB_RUN_REAL_FRP_TESTS=1 in an approved test environment",
+    });
+  }
   pending ??= download(join(homedir(), ".cache", "bb-frp", FRP_VERSION)).then(
     (binaries): FrpAvailability => ({ ok: true, binaries }),
     (error: unknown): FrpAvailability => ({
