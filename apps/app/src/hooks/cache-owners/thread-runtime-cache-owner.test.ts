@@ -1222,6 +1222,7 @@ describe("thread runtime cache owner", () => {
     sourceSeqEnd: 6,
     text: "Background agent progress",
     turnRequest: null,
+    textComplete: true,
   };
 
   it.each([

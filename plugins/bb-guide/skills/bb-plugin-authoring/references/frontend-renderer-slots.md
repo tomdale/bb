@@ -170,10 +170,11 @@ message, Original }` — render fenced code blocks of chosen languages in
   `/^[a-z0-9][a-z0-9+#._-]*$/`. A plugin may claim a language once across its
   registrations (duplicates are rejected at load). Props: `code` is the fence
   body so far, without the delimiters; `status` is `"streaming"` while the
-  closing fence has not arrived and the reply is still being written,
+  closing fence has not arrived and the message's text is still arriving,
   `"closed"` once the closing fence is present (`code` is final), and
-  `"unclosed"` when the reply ended without one (for example an interrupted
-  reply); `index` is the zero-based ordinal among fences of the same language
+  `"unclosed"` when the message's text is complete without one (for example
+  an interrupted reply). A later timeline row, such as a tool call, does not
+  end `"streaming"`; only the message's own text completing does; `index` is the zero-based ordinal among fences of the same language
   in the message (other languages don't shift it); `message` matches
   `messageDirective`'s; `Original` renders BB's code block (highlighting,
   copy button, mermaid diagrams). BB mounts the component once per fence and
@@ -235,9 +236,9 @@ message, Original }` — claim a container block in assistant-message
   `toText(data)` returns plain text for surfaces that cannot draw the
   component; bb does not call it.
   Props: `data` and `error` are the parse result; `status` uses the
-  `experimental_codeFenceRenderer` values: `"streaming"` (opener seen,
-  closer not yet, reply still streaming), `"closed"`, or `"unclosed"` (the
-  reply ended without a closer); `source` is the full original text
+  `experimental_codeFenceRenderer` values and rules: `"streaming"` (opener
+  seen, closer not yet, the message's text still arriving), `"closed"`, or
+  `"unclosed"` (the message's text is complete without a closer); `source` is the full original text
   including the marker lines; `index` is the zero-based ordinal among blocks
   of the same name in the message; `message` matches `messageDirective`'s;
   `Original` renders BB's literal block (marker lines and the contents as
