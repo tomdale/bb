@@ -1196,6 +1196,59 @@ describe("loadPluginApp", () => {
     ).toBe(false);
   });
 
+  it("captures experimental_messageBlock registrations and validates them like the host", async () => {
+    const parse = () => ({ ok: true as const, data: null });
+    const toText = () => "";
+    const Block = () => null;
+    const captured = await loadPluginApp(
+      definePluginApp((builder) => {
+        builder.slots.experimental_messageBlock({
+          name: "reply",
+          versions: [1, 2, 2],
+          parse,
+          toText,
+          component: Block,
+        });
+      }),
+    );
+    expect(captured.messageBlocks).toEqual([
+      { name: "reply", versions: [1, 2], parse, toText, component: Block },
+    ]);
+
+    const register = (registration: Record<string, unknown>) =>
+      loadPluginApp(
+        definePluginApp((builder) => {
+          builder.slots.messageDirective({ id: "reply", component: InlineVis });
+          builder.slots.experimental_messageBlock({
+            name: "card",
+            versions: [1],
+            parse,
+            toText,
+            component: Block,
+            ...registration,
+          } as Parameters<typeof builder.slots.experimental_messageBlock>[0]);
+        }),
+      );
+    await expect(register({ name: "Card" })).rejects.toThrow(
+      'slots.experimental_messageBlock: "name" must match',
+    );
+    await expect(register({ name: "reply" })).rejects.toThrow(
+      'duplicate id "reply"',
+    );
+    await expect(register({ versions: [] })).rejects.toThrow(
+      '"versions" must be a non-empty array of positive integers',
+    );
+    await expect(register({ versions: [0] })).rejects.toThrow(
+      '"versions" must be a non-empty array of positive integers',
+    );
+    await expect(register({ parse: undefined })).rejects.toThrow(
+      '"parse" must be a function',
+    );
+    await expect(register({ toText: "nope" })).rejects.toThrow(
+      '"toText" must be a function',
+    );
+  });
+
   it("rejects invalid and duplicate messageDirective ids like the host", async () => {
     await expect(
       loadPluginApp(

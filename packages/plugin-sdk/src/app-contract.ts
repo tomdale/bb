@@ -42,6 +42,7 @@ import type {
   ThreadPluginMetadataResult,
   ThreadPluginMetadataUpdateArgs,
 } from "@bb/sdk";
+import type { Root as MdastRoot } from "mdast";
 import type { JsonValue } from "./json-value.js";
 import type { PluginMentionTrigger } from "./backend-contract.js";
 
@@ -786,6 +787,161 @@ export interface ExperimentalCodeFenceRendererProps {
   /**
    * BB's own code block for this fence. Render it to show the source, for
    * example while `status` is `"streaming"` or when `code` does not parse.
+   */
+  Original: ComponentType;
+}
+
+/**
+ * Where a message block stands while its message is written. The values and
+ * their meaning match {@link ExperimentalCodeFenceStatus}:
+ *
+ * - `"streaming"`: the opener line has arrived, the closer has not, and the
+ *   message is still being written; the block's contents are partial.
+ * - `"closed"`: the closer line is present; the contents are final.
+ * - `"unclosed"`: the message ended without a closer, so the block ran to the
+ *   end of the message; the contents will not grow.
+ *
+ * @experimental See docs/api_to_audit.md (`experimental_messageBlock`).
+ */
+export type ExperimentalMessageBlockStatus = ExperimentalCodeFenceStatus;
+
+/**
+ * What the host hands to {@link ExperimentalMessageBlockCodec.parse} for one
+ * block.
+ *
+ * @experimental See docs/api_to_audit.md (`experimental_messageBlock`).
+ */
+export interface ExperimentalMessageBlockInput {
+  /**
+   * Untrusted opener attributes: `:::reply{v="1" state="done"}` gives
+   * `{ v: "1", state: "done" }`. Only string values are kept.
+   */
+  attributes: Readonly<Record<string, string>>;
+  /**
+   * Raw text between the opener and closer lines, without trailing line
+   * breaks. While the block streams this is the text received so far. Parse
+   * it directly when the block's contents are not Markdown.
+   */
+  source: string;
+  /**
+   * The host's mdast tree of `source`. Node positions (`offset`, `line`,
+   * `column`) are relative to `source`, so `source.slice(start.offset,
+   * end.offset)` recovers a node's Markdown, for example to render one
+   * section with `<Markdown>`.
+   *
+   * This is the tree bb renders from, not a plain CommonMark parse: it
+   * includes GFM (tables, task lists, strikethrough, autolinks, footnotes),
+   * `$$` math (`math` and `inlineMath` nodes), directives
+   * (`containerDirective`, `leafDirective`, `textDirective`), and thread
+   * mentions, which appear as `text` nodes whose `data.hName` is
+   * `"bb-thread-mention"`. Fenced code blocks inside the block are `code`
+   * nodes. Raw HTML stays as `html` nodes holding the raw string. Treat the
+   * tree as read-only: the host reuses its nodes between calls.
+   */
+  tree: MdastRoot;
+}
+
+/**
+ * Host-supplied context for one {@link ExperimentalMessageBlockCodec.parse}
+ * call.
+ *
+ * @experimental See docs/api_to_audit.md (`experimental_messageBlock`).
+ */
+export interface ExperimentalMessageBlockParseContext {
+  /** From the opener's `v` attribute; `1` when the attribute is absent. */
+  version: number;
+  status: ExperimentalMessageBlockStatus;
+}
+
+/**
+ * Result of {@link ExperimentalMessageBlockCodec.parse}. `error` is a short
+ * diagnostic for the developer console; readers never see it.
+ *
+ * @experimental See docs/api_to_audit.md (`experimental_messageBlock`).
+ */
+export type ExperimentalMessageBlockParseResult =
+  | { ok: true; data: JsonValue }
+  | { ok: false; error: string };
+
+/**
+ * The pure half of a message block registration. `parse` and `toText` must
+ * be deterministic and free of side effects: the host may call them more
+ * than once for the same input, and a later bb version may also run them on
+ * the server.
+ *
+ * @experimental See docs/api_to_audit.md (`experimental_messageBlock`).
+ */
+export interface ExperimentalMessageBlockCodec {
+  /**
+   * The container name: `reply` claims `:::reply{...}` ... `:::`. Lowercase
+   * kebab-case beginning with a letter. Block and directive names share one
+   * namespace across all plugins; when two registrations claim the same name,
+   * every claimant is dropped and the text renders literally.
+   */
+  name: string;
+  /**
+   * Versions this plugin renders, matched against the opener's `v`
+   * attribute (absent means `1`). A block with any other version renders as
+   * its literal text.
+   */
+  versions: readonly number[];
+  /**
+   * Turns a block into data. Called while the block streams (status
+   * `"streaming"`) and again with its final status (`"closed"` or
+   * `"unclosed"`). A failed or thrown final parse, or a final parse that
+   * takes longer than 4 ms, makes the host show the block's literal text with
+   * a short note and log the error to the console.
+   */
+  parse(
+    input: ExperimentalMessageBlockInput,
+    context: ExperimentalMessageBlockParseContext,
+  ): ExperimentalMessageBlockParseResult;
+  /**
+   * Plain text for `data`, for surfaces that cannot draw the component, such
+   * as copied text or notifications. bb does not call it; it is part of the
+   * codec so such surfaces can use it without a new registration.
+   */
+  toText(data: JsonValue): string;
+}
+
+/**
+ * Props passed to an `experimental_messageBlock` component. BB mounts the
+ * component once per block and keeps that instance for as long as the
+ * message stays on screen, so component state survives the whole stream,
+ * including the moment the closer arrives and the moment the reply finishes.
+ * A failed final parse is the exception: the component is replaced by the
+ * block's literal text.
+ *
+ * @experimental See docs/api_to_audit.md (`experimental_messageBlock`).
+ */
+export interface ExperimentalMessageBlockProps {
+  /**
+   * The value from `parse`, or null when it failed. Untrusted: it comes from
+   * model output, so validate it before use. A failed parse reaches the
+   * component only while the block streams; a failed final parse shows the
+   * literal text instead.
+   */
+  data: JsonValue | null;
+  /** The parse error while `data` is null, otherwise null. */
+  error: string | null;
+  status: ExperimentalMessageBlockStatus;
+  /**
+   * The block's full original text, marker lines included, for example for
+   * a "show source" view.
+   */
+  source: string;
+  /**
+   * Zero-based ordinal of this block among the blocks with the same name in
+   * the same message. It does not change while the message streams, so
+   * `${message.id}#${name}#${index}` keys state that must outlive the
+   * mounted component.
+   */
+  index: number;
+  message: PluginMessageDirectiveMessage;
+  /**
+   * BB's rendering of the block without the plugin: the opener line, the
+   * contents as ordinary Markdown, and the closer line. Render it to fall
+   * back, for example when `status` is `"unclosed"`.
    */
   Original: ComponentType;
 }
@@ -3182,6 +3338,36 @@ export interface ExperimentalCodeFenceRendererRegistration {
 }
 
 /**
+ * Draw a component in place of a `:::name{...}` ... `:::` container block in
+ * assistant (and nested agent) message Markdown. BB finds containers at the
+ * top level of a message, parses each with `parse`, and draws `component`
+ * in its place. The raw text stays in the message, so transcripts,
+ * `bb thread output`, and clients without the plugin show the block as
+ * ordinary Markdown between its two marker lines.
+ *
+ * The contents are Markdown, so a fenced code block with three backticks
+ * works inside a block. A line holding only `:::` ends the block, even inside
+ * such a code block; a block that must contain one uses a longer marker
+ * (`::::reply` ... `::::`).
+ *
+ * The block's literal text renders, with a short "Couldn't display this
+ * block" note once the block is `"closed"` or `"unclosed"`, when the final
+ * parse fails, throws, or takes over 4 ms, when the version is not in
+ * `versions`, when the block is past 8 per message or its contents
+ * ({@link ExperimentalMessageBlockInput.source}) are over 64 KiB, when the component throws, or when two plugins claim the name
+ * (BB logs a warning naming them). A throw affects that block only, and BB
+ * tries the component again when the block's text or status changes. With
+ * the plugin disabled the literal text renders without a note. Blocks inside
+ * lists, quotes, code, or other containers stay literal, and user messages
+ * never activate blocks.
+ *
+ * @experimental See docs/api_to_audit.md (`experimental_messageBlock`).
+ */
+export interface ExperimentalMessageBlockRegistration extends ExperimentalMessageBlockCodec {
+  component: ComponentType<ExperimentalMessageBlockProps>;
+}
+
+/**
  * A narrow, stable reference to one rendered chat message — NOT an internal
  * timeline row. `sourceSeqEnd` is the last source event sequence the message
  * covers, the anchor the server accepts for provider-history forks.
@@ -3662,6 +3848,14 @@ export interface PluginAppSlots {
    */
   experimental_codeFenceRenderer(
     registration: ExperimentalCodeFenceRendererRegistration,
+  ): void;
+  /**
+   * Draw a component in place of a `:::name` ... `:::` block in assistant
+   * messages (see {@link ExperimentalMessageBlockRegistration}).
+   * Experimental: see docs/api_to_audit.md.
+   */
+  experimental_messageBlock(
+    registration: ExperimentalMessageBlockRegistration,
   ): void;
   messageAction(registration: PluginMessageActionRegistration): void;
   /** Register React message metadata. Experimental: see docs/api_to_audit.md. */

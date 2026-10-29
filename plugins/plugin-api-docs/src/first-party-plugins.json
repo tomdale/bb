@@ -208,5 +208,10 @@
     "id": "thread-list",
     "name": "Thread list",
     "icon": "ListView"
+  },
+  {
+    "id": "bb--message-block-demo",
+    "name": "Message block demo",
+    "icon": "ListTodo"
   }
 ]

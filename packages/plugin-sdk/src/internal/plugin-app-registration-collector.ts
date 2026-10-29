@@ -5,6 +5,7 @@ import type {
   ComposerCustomization,
   ExperimentalAppOverlayRegistration,
   ExperimentalCodeFenceRendererRegistration,
+  ExperimentalMessageBlockRegistration,
   ExperimentalSidebarFooter,
   ExperimentalSidebarFooterActionRegistration,
   ExperimentalSidebarFooterDisclosureController,
@@ -48,6 +49,9 @@ import {
   PLUGIN_SLOT_ID_PATTERN,
   requireComponent,
   requireEnvironmentProviderId,
+  requireFunction,
+  requireMessageBlockName,
+  requireMessageBlockVersions,
   requireMessageDirectiveId,
   requireNonEmptyString,
   requireOptionalString,
@@ -328,6 +332,7 @@ export interface CollectedPluginAppRegistrations {
   composers: ExperimentalComposerRegistration[];
   messageDirectives: PluginMessageDirectiveRegistration[];
   codeFenceRenderers: ExperimentalCodeFenceRendererRegistration[];
+  messageBlocks: ExperimentalMessageBlockRegistration[];
   messageActions: PluginMessageActionRegistration[];
   messageMetadata: ExperimentalMessageMetadataRegistration[];
   commandPaletteActions: CollectedPluginCommandRegistration[];
@@ -469,6 +474,7 @@ export function collectPluginAppRegistrations(
     composers: [],
     messageDirectives: [],
     codeFenceRenderers: [],
+    messageBlocks: [],
     messageActions: [],
     messageMetadata: [],
     commandPaletteActions: [],
@@ -1145,6 +1151,18 @@ export function collectPluginAppRegistrations(
         collected.codeFenceRenderers.push({
           id,
           languages,
+          component: requireComponent(kind, registration.component),
+        });
+      },
+      experimental_messageBlock(registration) {
+        const kind = "slots.experimental_messageBlock";
+        const name = requireMessageBlockName(kind, registration?.name);
+        requireUniqueId(kind, seenIds.messageDirective, name);
+        collected.messageBlocks.push({
+          name,
+          versions: requireMessageBlockVersions(kind, registration.versions),
+          parse: requireFunction(kind, "parse", registration.parse),
+          toText: requireFunction(kind, "toText", registration.toText),
           component: requireComponent(kind, registration.component),
         });
       },

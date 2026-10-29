@@ -114,6 +114,15 @@ import {
   type MountedMessageDirective,
 } from "./markdown-message-directives.js";
 import {
+  MessageBlockMountsContext,
+  MessageBlockPlaceholder,
+  type MessageBlockElementProps,
+} from "./markdown-message-blocks.js";
+import {
+  EMPTY_MOUNTED_MESSAGE_BLOCKS,
+  type MountedMessageBlock,
+} from "./markdown-message-block-parts.js";
+import {
   CodeFencePlaceholder,
   remarkCodeFenceRenderers,
   useCodeFenceLanguages,
@@ -1495,6 +1504,34 @@ function MarkdownSource({
   );
 }
 
+function MessageBlockElement(props: MessageBlockElementProps) {
+  const options = useMarkdownRenderOptions();
+  const threadMentions = useContext(ThreadMentionsContext);
+  const promptMentions = useContext(PromptMentionsContext);
+  const wrapOriginal = (children: ReactNode) => (
+    <MarkdownRenderOptionsContext.Provider value={options}>
+      <ThreadMentionsContext.Provider value={threadMentions}>
+        <PromptMentionsContext.Provider value={promptMentions}>
+          {options.threadMentions === undefined ? (
+            children
+          ) : (
+            <RawThreadMentionBatchProvider>
+              {children}
+            </RawThreadMentionBatchProvider>
+          )}
+        </PromptMentionsContext.Provider>
+      </ThreadMentionsContext.Provider>
+    </MarkdownRenderOptionsContext.Provider>
+  );
+  return (
+    <MessageBlockPlaceholder
+      {...props}
+      sourceOffset={options.imageSourceOffset}
+      wrapOriginal={wrapOriginal}
+    />
+  );
+}
+
 function buildMarkdownComponents({
   tableLayout,
   hasThreadMentions,
@@ -1536,6 +1573,7 @@ function buildMarkdownComponents({
 
   if (hasMessageDirectives) {
     components["bb-message-directive"] = MessageDirectiveElement;
+    components["bb-message-block"] = MessageBlockElement;
   }
 
   return components;
@@ -1893,7 +1931,9 @@ function MarkdownPreviewComponent({
       return null;
     }
     const mounts: MountedMessageDirective[] = [];
+    const blockMounts: MountedMessageBlock[] = [];
     return {
+      blockMounts,
       mounts,
       message: messageDirectives.message,
       openWorkspaceFile: messageDirectives.openWorkspaceFile,
@@ -1962,10 +2002,13 @@ function MarkdownPreviewComponent({
       plugins.push([
         remarkMessageDirectives,
         {
+          blockMounts: messageDirectiveMounts.blockMounts,
           indexBase: 0,
           limit: MESSAGE_DIRECTIVE_MOUNT_LIMIT,
           mounts: messageDirectiveMounts.mounts,
           registry: messageDirectiveMounts.registry,
+          sourceOffset: 0,
+          topLevel: true,
         },
       ]);
     }
@@ -2076,23 +2119,33 @@ function MarkdownPreviewComponent({
             render: messageDirectiveMounts,
           }}
         >
-          <MarkdownRenderOptionsContext.Provider value={markdownRenderOptions}>
-            <ThreadMentionsContext.Provider
-              value={threadMentions?.mentions ?? EMPTY_THREAD_MENTIONS}
+          <MessageBlockMountsContext.Provider
+            value={
+              markdownPieces?.blockMounts ??
+              messageDirectiveMounts?.blockMounts ??
+              EMPTY_MOUNTED_MESSAGE_BLOCKS
+            }
+          >
+            <MarkdownRenderOptionsContext.Provider
+              value={markdownRenderOptions}
             >
-              <PromptMentionsContext.Provider
-                value={resolvedPromptMentions ?? EMPTY_PROMPT_MENTIONS}
+              <ThreadMentionsContext.Provider
+                value={threadMentions?.mentions ?? EMPTY_THREAD_MENTIONS}
               >
-                {threadMentions === undefined ? (
-                  renderedMarkdown
-                ) : (
-                  <RawThreadMentionBatchProvider>
-                    {renderedMarkdown}
-                  </RawThreadMentionBatchProvider>
-                )}
-              </PromptMentionsContext.Provider>
-            </ThreadMentionsContext.Provider>
-          </MarkdownRenderOptionsContext.Provider>
+                <PromptMentionsContext.Provider
+                  value={resolvedPromptMentions ?? EMPTY_PROMPT_MENTIONS}
+                >
+                  {threadMentions === undefined ? (
+                    renderedMarkdown
+                  ) : (
+                    <RawThreadMentionBatchProvider>
+                      {renderedMarkdown}
+                    </RawThreadMentionBatchProvider>
+                  )}
+                </PromptMentionsContext.Provider>
+              </ThreadMentionsContext.Provider>
+            </MarkdownRenderOptionsContext.Provider>
+          </MessageBlockMountsContext.Provider>
         </MessageDirectiveMountsContext.Provider>
       </div>
 

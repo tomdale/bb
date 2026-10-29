@@ -1270,6 +1270,18 @@ function AppShellWireframeBody({
                   ```ui
                 </span>
               </Mark>
+              <Mark
+                id="message-blocks"
+                label="A plugin component drawn in place of a message block"
+                className="block w-3/4 space-y-1.5 px-2.5 py-2.5"
+              >
+                <span className="flex items-center gap-1.5">
+                  <PluginGlyph className="size-3.5" />
+                  :::your-block
+                </span>
+                <span className="block h-1.5 w-4/5 rounded-sm bg-muted" />
+                <span className="block h-1.5 w-3/5 rounded-sm bg-muted" />
+              </Mark>
               <div className="space-y-1.5">
                 {messageActionsSelected ? (
                   <div

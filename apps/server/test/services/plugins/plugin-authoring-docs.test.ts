@@ -22,6 +22,7 @@ import {
   type PluginMessageActionContext,
   type PluginMessageActionRegistration,
   type ThreadChatMessageReference,
+  type ExperimentalMessageBlockProps,
   type PluginMessageDirectiveProps,
   type ExperimentalCodeFenceRendererProps,
   type PluginNavPanelProps,
@@ -297,6 +298,7 @@ type SlotPropsByName = {
   experimental_composer: ExperimentalComposerProps;
   messageDirective: PluginMessageDirectiveProps;
   experimental_codeFenceRenderer: ExperimentalCodeFenceRendererProps;
+  experimental_messageBlock: ExperimentalMessageBlockProps;
   messageAction: PluginMessageActionContext;
   experimental_messageMetadata: ExperimentalMessageMetadataProps;
   commandPaletteAction: PluginCommandContext;
@@ -429,6 +431,15 @@ const FRONTEND_SLOT_PROP_FIELDS = {
     "Original",
   ],
   experimental_messageMetadata: ["message"],
+  experimental_messageBlock: [
+    "data",
+    "error",
+    "status",
+    "source",
+    "index",
+    "message",
+    "Original",
+  ],
   messageAction: [
     "threadId",
     "message",

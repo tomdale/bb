@@ -34,8 +34,10 @@ import {
   type MountedMessageDirective,
 } from "./markdown-message-directives";
 import { remarkThreadMentions } from "./markdown-thread-mentions";
+import type { MountedMessageBlock } from "./markdown-message-block-parts";
 
 interface RenderedMarkdownDocument {
+  blocks: readonly string[];
   html: string;
   keys: readonly string[];
   mounts: readonly string[];
@@ -60,11 +62,84 @@ const config: MarkdownPieceRenderConfig = {
   urlTransform: undefined,
 };
 
+const blockRegistry = buildMessageDirectiveRegistry(
+  [
+    {
+      id: "inline-vis",
+      pluginId: "demo",
+      generation: 1,
+      component: () => null,
+    },
+  ],
+  {
+    blocks: [
+      {
+        pluginId: "cards",
+        generation: 1,
+        name: "card",
+        versions: [1],
+        parse: () => ({ ok: true, data: null }),
+        toText: () => "",
+        component: () => null,
+      },
+    ],
+  },
+);
+
+const blockConfig: MarkdownPieceRenderConfig = {
+  ...config,
+  messageDirectiveRegistry: blockRegistry,
+};
+
+const BLOCK_DOCUMENTS: ReadonlyArray<readonly [string, string]> = [
+  [
+    "claimed block between paragraphs",
+    'Intro.\n\n:::card{v="1"}\n### Done\n\nA *b* and thr_abcdefghij.\n\n- one\n- two\n\n| a |\n| - |\n| 1 |\n\n### Next\nC.\n:::\n\nOutro.',
+  ],
+  [
+    "claimed block holding a directive, a nested container, and a fence",
+    ':::card\n::inline-vis{file="a.html"}\n\n:::note\ninner\n:::\n\n```\ncode\n\nmore\n```\n\nTail.\n:::\nAfter.',
+  ],
+  [
+    "claimed block left open",
+    ":::card\n### One\n\nText.\n\n### Two\n\n$$\nx\n\ny\n$$\n\nEnd",
+  ],
+  [
+    "claimed block after a paragraph without a blank line",
+    "Lead.\n:::card\n### One\n\nText.\n:::\n\n:::card\n### Two\n:::",
+  ],
+];
+
+function streamEveryCharacterWithBlocks(document: string, label: string): void {
+  const cache = createMarkdownPieceCache();
+  for (let end = 1; end <= document.length; end += 1) {
+    const body = document.slice(0, end);
+    expect(
+      renderPieces(cache, body, blockConfig),
+      `${label}: ${JSON.stringify(body)}`,
+    ).toEqual(renderWholeDocument(body, blockConfig));
+  }
+}
+
 function describeMarkdownChildren(
   children: readonly ReactNode[],
   mounts: readonly MountedMessageDirective[],
+  blockMounts: readonly MountedMessageBlock[] = [],
 ): RenderedMarkdownDocument {
   return {
+    blocks: blockMounts.map((mount) =>
+      JSON.stringify({
+        attributes: mount.attributes,
+        closed: mount.closed,
+        inner: mount.inner,
+        name: mount.name,
+        offset: mount.offset,
+        oversized: mount.oversized,
+        plugin: mount.slot?.pluginId ?? null,
+        source: mount.source,
+        tree: mount.tree,
+      }),
+    ),
     html: renderToStaticMarkup(createElement(Fragment, null, ...children)),
     keys: children.map((child) =>
       isValidElement(child) ? `key:${String(child.key)}` : "text",
@@ -80,6 +155,7 @@ function renderWholeDocument(
   renderConfig: MarkdownPieceRenderConfig = config,
 ): RenderedMarkdownDocument {
   const mounts: MountedMessageDirective[] = [];
+  const blockMounts: MountedMessageBlock[] = [];
   const element = ReactMarkdown({
     children: body,
     components: renderConfig.components,
@@ -89,10 +165,13 @@ function renderWholeDocument(
       [
         remarkMessageDirectives,
         {
+          blockMounts,
           indexBase: 0,
           limit: MESSAGE_DIRECTIVE_MOUNT_LIMIT,
           mounts,
-          registry,
+          registry: renderConfig.messageDirectiveRegistry ?? registry,
+          sourceOffset: 0,
+          topLevel: true,
         },
       ],
     ],
@@ -106,6 +185,7 @@ function renderWholeDocument(
         ? children
         : [children],
     mounts,
+    blockMounts,
   );
 }
 
@@ -115,7 +195,11 @@ function renderPieces(
   renderConfig: MarkdownPieceRenderConfig = config,
 ): RenderedMarkdownDocument {
   const result = resolveMarkdownPieces(cache, renderConfig, body);
-  return describeMarkdownChildren(result.children, result.mounts);
+  return describeMarkdownChildren(
+    result.children,
+    result.mounts,
+    result.blockMounts,
+  );
 }
 
 function remarkRecordParsedSource(recorded: string[]) {
@@ -466,6 +550,45 @@ describe("resolveMarkdownPieces", () => {
       renderWholeDocument(grown),
     );
     expect(recorded).toEqual(["After more."]);
+  });
+
+  it.each(BLOCK_DOCUMENTS)(
+    "matches a single document with claimed blocks at every character prefix: %s",
+    (label, document) => {
+      streamEveryCharacterWithBlocks(document, label);
+    },
+  );
+
+  it("re-parses only the last piece of a claimed block and shifts its tree into the block", () => {
+    const recorded: string[] = [];
+    const recordingConfig: MarkdownPieceRenderConfig = {
+      ...createRecordingConfig(recorded),
+      messageDirectiveRegistry: blockRegistry,
+    };
+    const cache = createMarkdownPieceCache();
+    resolveMarkdownPieces(cache, recordingConfig, "Intro.\n\n");
+    resolveMarkdownPieces(
+      cache,
+      recordingConfig,
+      "Intro.\n\n:::card\n### A\n\nOne.\n\n### B",
+    );
+    recorded.length = 0;
+    const grown = "Intro.\n\n:::card\n### A\n\nOne.\n\n### B\n\nTwo.";
+    const result = resolveMarkdownPieces(cache, recordingConfig, grown);
+
+    expect(recorded).toEqual(["### B\n\n", "Two."]);
+    const block = result.blockMounts[0];
+    expect(block?.inner).toBe("### A\n\nOne.\n\n### B\n\nTwo.");
+    const positions = block?.tree.children.map((node) => [
+      block.inner.slice(node.position?.start.offset, node.position?.end.offset),
+      node.position?.start.line,
+    ]);
+    expect(positions).toEqual([
+      ["### A", 1],
+      ["One.", 3],
+      ["### B", 5],
+      ["Two.", 7],
+    ]);
   });
 
   it("splits a previous piece that ended mid-block at its internal boundaries", () => {

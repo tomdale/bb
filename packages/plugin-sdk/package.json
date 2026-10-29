@@ -159,6 +159,7 @@
   },
   "dependencies": {
     "@tanstack/react-query": "^5.62.0",
+    "@types/mdast": "^4.0.4",
     "cross-spawn": "^7.0.6",
     "zod": "^4.6.5"
   },

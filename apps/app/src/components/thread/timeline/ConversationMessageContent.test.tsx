@@ -207,7 +207,11 @@ describe("ConversationMessageContent assistant thread mentions", () => {
     const messageDirectiveRegistry: MessageDirectiveRegistry = new Map([
       [
         "inline-vis",
-        { status: "collision", pluginIds: ["plugin-a", "plugin-b"] },
+        {
+          status: "collision",
+          kinds: ["directive"],
+          pluginIds: ["plugin-a", "plugin-b"],
+        },
       ],
     ]);
 

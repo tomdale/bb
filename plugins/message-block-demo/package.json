@@ -1,0 +1,48 @@
+{
+  "name": "bb-plugin-bb--message-block-demo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Reference plugin for message blocks: draws :::demo-card blocks in assistant messages as a card with one section per heading.",
+  "engines": {
+    "bb": ">=0.0",
+    "bbPluginSdk": ">=0.6.99"
+  },
+  "bb": {
+    "name": "Message block demo",
+    "description": "Reference plugin for message blocks: draws :::demo-card blocks in assistant messages as a card with one section per heading.",
+    "branding": {
+      "icon": "ListTodo"
+    },
+    "server": "./server.ts",
+    "app": "./app.tsx"
+  },
+  "keywords": [
+    "bb-plugin"
+  ],
+  "scripts": {
+    "test": "vitest run --config vitest.config.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint --ignore-pattern node_modules --ignore-pattern dist .",
+    "prepare:bundled": "bb-plugin-build prepare-bundled"
+  },
+  "dependencies": {
+    "@bb/shared-ui": "workspace:*"
+  },
+  "devDependencies": {
+    "@bb/plugin-build": "workspace:*",
+    "@get-bb/plugin-sdk": "workspace:*",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/mdast": "^4.0.4",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "jsdom": "^29.0.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "typescript": "npm:@typescript/typescript6@^6.0.2",
+    "typescript-7": "npm:typescript@^7.0.2",
+    "vitest": "^4.1.1"
+  }
+}

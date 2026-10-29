@@ -148,6 +148,45 @@ update re-parses only the last inner piece. Depends on container-literal.
 - Check: `pnpm exec turbo run typecheck --filter=@bb/app`, then
   `pnpm exec turbo run test --filter=@bb/app -- src/components/ui/markdown src/components/thread/timeline/streaming-markdown-split`.
 
+### message-blocks
+
+Adds `app.slots.experimental_messageBlock`: a plugin claims a `:::name{v="1"}`
+… `:::` container in assistant and nested-agent messages, gets the raw text
+and bb's Markdown tree through a pure `parse`, and draws a component in its
+place, with the literal block as fallback (`Original`) and a short note when a
+registered plugin cannot draw it. The host keeps one component instance per
+block through streaming, sharing the portal bookkeeping of
+`experimental_codeFenceRenderer` (moved into `markdown-slot-portals.tsx`).
+Includes the SDK types and harness capture, the `docs/api_to_audit.md` entry,
+the Plugin Guide card, the plugin-authoring skill references, and the bundled
+reference plugin `plugins/message-block-demo` (off by default). Depends on
+container-literal and container-streaming. Workstreams' `reply` block is the
+first consumer.
+
+- Upstream status: fork-only unless upstream wants the slot.
+- Owned files: `apps/app/src/components/ui/markdown-message-blocks.*`,
+  `markdown-message-block-parts.ts`, `markdown-slot-portals.tsx`, and
+  `plugins/message-block-demo/`.
+- Upstream files: in `apps/app/src`, `markdown-preview.tsx`,
+  `markdown-incremental-pieces.ts`, `markdown-message-directives.tsx`,
+  `markdown-code-fence-renderers.tsx`, `markdown-html.tsx`,
+  `ConversationMessageContent.tsx`, `ThreadTimelineRows.tsx`,
+  `PluginCapabilities.tsx`, `lib/plugin-slots.ts`,
+  `lib/plugin-slot-resolvers.ts`, and tests and fixtures beside them; in
+  `packages/plugin-sdk`, `package.json` (`@types/mdast`),
+  `scripts/build-bundled-dts.mjs`, `src/app-contract.ts`,
+  `src/internal/composer-customization-validation.ts`,
+  `src/internal/plugin-app-registration-collector.ts`, `src/testing/app.tsx`,
+  and the harness test; `apps/server/src/services/plugins/builtin-registry.ts`
+  and `plugin-authoring-docs.test.ts`; `docs/api_to_audit.md`; the
+  plugin-authoring references in `plugins/bb-guide`; the Plugin Guide sources
+  in `plugins/plugin-api-docs`; `plugins/bb-official.json`;
+  `packages/bundled-plugins/package.json`; `turbo.json`; `pnpm-lock.yaml`.
+- Check: `pnpm exec turbo run typecheck test --filter=@get-bb/plugin-sdk --filter=bb-plugin-bb--message-block-demo --filter=bb-plugin-plugin-api-docs --filter=bb-plugin-bb-guide`,
+  `pnpm exec turbo run typecheck --filter=@bb/app`, then
+  `pnpm exec turbo run test --filter=@bb/app -- src/components/ui src/components/thread/timeline src/lib/plugin`
+  and `GIT_CONFIG_GLOBAL=/dev/null pnpm exec turbo run test --filter=@bb/server -- test/services/plugins/plugin-authoring-docs test/services/plugins/builtin test/skills`.
+
 ## Syncing with upstream
 
 `scripts/fork/sync` runs the whole sync. It prints nothing when `personal`

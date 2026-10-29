@@ -70,6 +70,7 @@ const EXTERNAL = [
   /^@testing-library\/react($|\/)/,
   /^better-sqlite3/,
   /^hono($|\/)/,
+  /^mdast$/,
   /^react($|\/|-)/,
   /^react-dom($|\/)/,
   /^zod($|\/)/,

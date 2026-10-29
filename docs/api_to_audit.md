@@ -2640,6 +2640,94 @@ Docs: `frontend-renderer-slots.md`, `testing.md`.
 5. **Source visibility.** Decide whether BB should offer its own "view
    source" control for claimed fences instead of leaving it to each plugin.
 
+## `app.slots.experimental_messageBlock` (`@get-bb/plugin-sdk/app`)
+
+Lets a plugin claim a container block in assistant and nested-agent message
+Markdown, where `messageDirective` and `experimental_codeFenceRenderer`
+activate, and draw a component in its place. Registration:
+`{ name, versions, parse, toText, component }`. An agent writes
+`:::name{v="1" ...}` on its own line, ordinary Markdown, and a closing `:::`
+line. The host finds each top-level container whose name a plugin claimed and
+calls `parse` with the untrusted opener attributes, the raw text between the
+marker lines, and bb's mdast tree of that text (positions relative to the
+text), plus `{ version, status }`. `version` comes from `v` (absent means 1).
+The component receives `{ data, error, status, source, index, message,
+Original }`. The raw text stays in the message: `bb thread output`,
+transcripts, and clients without the plugin show it unchanged. Block names
+share one namespace with `messageDirective` ids. The harness exposes
+`loadPluginApp(...).messageBlocks`.
+
+**Relation to `experimental_codeFenceRenderer`.** The two slots share one
+contract shape and one host. `status` is the same type
+(`streaming | closed | unclosed`); `index` counts blocks of the same name the
+way fence `index` counts fences of the same language; `Original` is BB's own
+rendering. Both hosts keep one component instance per block, keyed by the
+source offset of its opening line, and portal it into a placeholder that
+follows the block from the streaming tail to the settled region; the portal
+bookkeeping lives in `markdown-slot-portals.tsx` and both use it. Both retry a
+crashed component when its input or status changes. They differ in what the
+agent writes and what readers see without the plugin. A fence body is raw
+text, its fallback is a code block, and a three-backtick fence inside it ends
+it early, so the fence slot suits payloads that are data or code (JSON, HTML,
+a DSL). A block body is Markdown: code fences work inside it, the plugin gets
+a tree, and without the plugin the reply reads as ordinary Markdown between
+two marker lines, so the block slot suits prose the plugin restyles (a reply
+body, a report). Blocks add what prose needs and fences do not: a pure
+`parse` with versioning, top-level-only activation, size and count limits,
+and a "Couldn't display this block" note.
+
+Host behavior: the streaming splitter never cuts inside an open container,
+and the incremental renderer caches the inside of a top-level container in
+pieces, so an update parses only the last piece. Anything the host cannot
+draw renders as `Original`: nested positions, code spans and fences, user
+messages, and names nobody registered stay literal silently. Once the block
+is `closed` or `unclosed`, a failed or throwing final parse, a final parse
+over 4 ms (timed after the fact), an unlisted version, more than 8 blocks per
+message, contents (the text between the marker lines) over 64 KiB, a crashed component, and a name claimed
+by more than one plugin (every claimant dropped, warning logged) also add a
+muted "Couldn't display this block" line. A failed parse while streaming
+still mounts the component with `data: null`. A line holding only `:::` ends
+the block even inside an inner code fence, as in `remark-directive`; a longer
+outer marker (`::::name`) holds one.
+
+**Core callers.** `MarkdownPreview` and the incremental piece renderer
+(`markdown-message-blocks.tsx`, `markdown-message-block-parts.ts`), the
+pipeline that also resolves `messageDirective` and code fences. No core
+feature draws a block yet. Reference plugin: `plugins/message-block-demo`.
+Intended first consumer: Workstreams' `reply` block (toolbelt).
+
+Docs: `frontend-renderer-slots.md`, `frontend-hooks-and-ui.md`.
+
+**Audit before stabilizing.**
+
+1. **Tree contract.** The tree is bb's rendering tree (GFM, `$$` math,
+   directives, thread mentions as `text` nodes with
+   `data.hName = "bb-thread-mention"`), typed with `@types/mdast` as an SDK
+   dependency. Decide whether that is the long-term contract or whether
+   plugins should receive a clean CommonMark tree, and whether nodes should
+   be frozen rather than documented as read-only.
+2. **Failed streaming parses.** The component sees `data: null` and `error`
+   only while the block streams; a failed final parse shows `Original` with
+   the note and unmounts the component. Confirm this split, and whether a
+   plugin should instead decide by rendering `Original` itself as fence
+   renderers do.
+3. **`toText`.** bb never calls it yet. Wire it to copy, notifications, or
+   digests, or drop it before freezing the registration shape.
+4. **Limits.** 8 blocks per message, 64 KiB of source (UTF-8 bytes of the
+   inside text), and a 4 ms budget on the final parse. Revisit after
+   Workstreams dogfooding, and decide whether the budget should also guard
+   streaming parses.
+5. **Backend and hooks.** The design defers `bb.messageBlocks.register`, an
+   `experimental_messageBlock.parsed` event, and
+   `experimental_useMessageBlock(s)` hooks until a consumer needs block data
+   outside the block. Their arrival may move the delimiter into a package the
+   server imports and change where `parse` runs.
+6. **One slot or two.** Decide whether the fence and block slots should
+   converge on one registration with two syntaxes, or stay separate because
+   their fallbacks and parse steps differ.
+7. **Rename.** Stabilization drops the `experimental_` prefix project-wide
+   and removes this entry.
+
 ## `experimental_useSidebarThreads` / `experimental_useSidebarThreadActions` (`@get-bb/plugin-sdk/app`)
 
 **Kept experimental (2026-08-22).** There are no consumers. Items 4 (a

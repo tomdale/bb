@@ -412,6 +412,14 @@ function pluginAppSurfaceItems(
         detail: "Renders these fenced code blocks inside assistant messages.",
         mono: true,
       })),
+    ...slots.messageBlocks
+      .filter((slot) => slot.pluginId === pluginId)
+      .map((slot) => ({
+        key: `block:${slot.name}`,
+        label: `:::${slot.name}`,
+        detail: "Draws plugin-provided blocks inside assistant messages.",
+        mono: true,
+      })),
   ];
 }
 

@@ -328,6 +328,29 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
         experimental: true,
       },
       {
+        id: "message-blocks",
+        title: "Message blocks",
+        summary:
+          "Replace a block of an agent's reply that your plugin claims with your component. With this, a plugin can:",
+        bullets: [
+          "Let an agent wrap ordinary Markdown, code fences included, in `:::name` and `:::` lines",
+          "Turn the block's text and Markdown tree into data with a pure parse step",
+          "Keep one component, with its state, per block while the reply streams and finishes",
+          "Fall back to readable Markdown between the marker lines when the plugin is off or fails",
+        ],
+        apiSymbols: [
+          "ExperimentalMessageBlockRegistration",
+          "ExperimentalMessageBlockCodec",
+          "ExperimentalMessageBlockInput",
+          "ExperimentalMessageBlockParseContext",
+          "ExperimentalMessageBlockParseResult",
+          "ExperimentalMessageBlockProps",
+          "ExperimentalMessageBlockStatus",
+        ],
+        firstParty: ["Message block demo"],
+        experimental: true,
+      },
+      {
         id: "message-actions",
         title: "Message actions",
         summary:

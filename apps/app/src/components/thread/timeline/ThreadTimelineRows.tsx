@@ -2373,6 +2373,11 @@ function ThreadTimelineRowsForTimelineView(props: ThreadTimelineRowsProps) {
     () => getPluginSlotSnapshot().messageDirectives,
     () => EMPTY_PLUGIN_SLOT_SNAPSHOT.messageDirectives,
   );
+  const messageBlockSlots = useSyncExternalStore(
+    subscribePluginSlots,
+    () => getPluginSlotSnapshot().messageBlocks,
+    () => EMPTY_PLUGIN_SLOT_SNAPSHOT.messageBlocks,
+  );
   const codeFenceRendererSlots = useSyncExternalStore(
     subscribePluginSlots,
     () => getPluginSlotSnapshot().codeFenceRenderers,
@@ -2389,8 +2394,11 @@ function ThreadTimelineRowsForTimelineView(props: ThreadTimelineRowsProps) {
     () => EMPTY_PLUGIN_SLOT_SNAPSHOT.messageMetadata,
   );
   const messageDirectiveRegistry = useMemo(
-    () => buildMessageDirectiveRegistry(messageDirectiveSlots),
-    [messageDirectiveSlots],
+    () =>
+      buildMessageDirectiveRegistry(messageDirectiveSlots, {
+        blocks: messageBlockSlots,
+      }),
+    [messageDirectiveSlots, messageBlockSlots],
   );
   const codeFenceRendererRegistry = useMemo(
     () => buildCodeFenceRendererRegistry(codeFenceRendererSlots),

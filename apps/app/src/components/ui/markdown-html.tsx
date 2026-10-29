@@ -16,6 +16,7 @@ const MARKDOWN_HTML_SCHEMA = {
     "bb-thread-mention",
     "bb-prompt-mention",
     "bb-message-directive",
+    "bb-message-block",
   ],
   protocols: {
     ...defaultSchema.protocols,
@@ -56,6 +57,7 @@ const MARKDOWN_HTML_SCHEMA = {
     ],
     "bb-prompt-mention": ["dataMentionIndex"],
     "bb-message-directive": ["dataDirectiveIndex"],
+    "bb-message-block": ["dataBlockOffset"],
   },
 };
 

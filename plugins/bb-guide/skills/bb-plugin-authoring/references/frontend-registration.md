@@ -131,6 +131,7 @@ export default definePluginApp((app) => {
     languages: ["ui"],
     component: UiBlock,
   });
+  app.slots.experimental_messageBlock({ ...replyCodec, component: ReplyBlock });
   app.slots.experimental_threadList({
     id: "inbox",
     title: "Inbox",

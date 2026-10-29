@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "lib": ["ES2022", "DOM"],
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "paths": {
+      "@/*": ["../../packages/shared-ui/src/*"]
+    }
+  },
+  "include": [
+    "server.ts",
+    "app.tsx",
+    "card.ts",
+    "app.test.tsx",
+    "vitest.config.ts"
+  ]
+}

@@ -262,6 +262,8 @@ Read the installed declarations for exact current signatures.
 - `PluginMessageDirectiveRegistration`
 - `ExperimentalCodeFenceRendererRegistration`
 - `ExperimentalCodeFenceStatus`
+- `ExperimentalMessageBlockRegistration`, `ExperimentalMessageBlockProps`, `ExperimentalMessageBlockStatus`
+- `ExperimentalMessageBlockCodec`, `ExperimentalMessageBlockInput`, `ExperimentalMessageBlockParseContext`, `ExperimentalMessageBlockParseResult`
 - `PluginNavPanelProps`
 - `PluginNavPanelRegistration`
 - `ExperimentalPageTitle`
