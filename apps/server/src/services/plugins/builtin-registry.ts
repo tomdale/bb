@@ -106,6 +106,11 @@ export const BUILTIN_PLUGINS = [
     defaultEnabled: false,
   },
   {
+    name: "message-block-demo",
+    pluginId: "bb--message-block-demo",
+    defaultEnabled: false,
+  },
+  {
     name: "inline-vis",
     pluginId: "inline-vis",
     defaultEnabled: true,

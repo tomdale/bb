@@ -48,6 +48,7 @@ export function makePluginRegistrationSet(
     composers: [],
     messageDirectives: [],
     codeFenceRenderers: [],
+    messageBlocks: [],
     messageActions: [],
     commandPaletteActions: [],
     providerIcons: [],

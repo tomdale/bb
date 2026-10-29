@@ -132,7 +132,11 @@ describe("keyed renderer resolvers", () => {
 
     expect(
       resolveMessageDirectiveRegistry([alpha, beta, chart]).get("card"),
-    ).toEqual({ status: "collision", pluginIds: ["alpha", "zeta"] });
+    ).toEqual({
+      status: "collision",
+      kinds: ["directive"],
+      pluginIds: ["alpha", "zeta"],
+    });
   });
 });
 

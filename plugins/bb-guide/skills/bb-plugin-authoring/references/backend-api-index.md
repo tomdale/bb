@@ -261,6 +261,7 @@ Check imports here, behavior in the Plugin Guide, and signatures in the installe
 - `PluginMessageDirectiveRegistration`
 - `ExperimentalCodeFenceRendererRegistration`
 - `ExperimentalCodeFenceStatus`
+- `ExperimentalMessageBlockRegistration`, `ExperimentalMessageBlockProps`, `ExperimentalMessageBlockStatus`, `ExperimentalMessageBlockCodec`, `ExperimentalMessageBlockInput`, `ExperimentalMessageBlockParseContext`, `ExperimentalMessageBlockParseResult`
 - `PluginNavPanelProps`
 - `PluginNavPanelRegistration`
 - `ExperimentalPageTitle`
