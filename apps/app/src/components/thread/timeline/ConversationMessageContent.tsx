@@ -141,6 +141,7 @@ interface ConversationMessageContentAssistantProps
   showActions: boolean;
   mobileActionDisplay: "inline" | "overflow";
   streaming: boolean;
+  textComplete: boolean;
 }
 
 type ConversationMessageContentProps =
@@ -188,6 +189,7 @@ interface AssistantConversationMessageProps extends AssistantMessageRowIdentity 
   mobileActionDisplay: "inline" | "overflow";
   streaming: boolean;
   text: string;
+  textComplete: boolean;
   timestamp: number;
 }
 
@@ -494,6 +496,7 @@ function AssistantConversationMessage({
   mobileActionDisplay,
   streaming,
   text,
+  textComplete,
   timestamp,
   threadId,
   turnId,
@@ -582,7 +585,7 @@ function AssistantConversationMessage({
     </>
   );
   const markdown = hasMessageBlocks ? (
-    <MessageBlockHost message={slotMessage} streaming={streaming}>
+    <MessageBlockHost message={slotMessage} textComplete={textComplete}>
       {previews}
     </MessageBlockHost>
   ) : (
@@ -598,7 +601,7 @@ function AssistantConversationMessage({
       data-message-column=""
     >
       <SelectableMessageProse onSelect={onSelectProse}>
-        <MessageCodeFences message={slotMessage} streaming={streaming}>
+        <MessageCodeFences message={slotMessage} textComplete={textComplete}>
           {markdown}
         </MessageCodeFences>
       </SelectableMessageProse>
@@ -696,6 +699,7 @@ export function ConversationMessageContent(
       showActions={props.showActions}
       mobileActionDisplay={props.mobileActionDisplay}
       streaming={props.streaming}
+      textComplete={props.textComplete}
       text={text}
       timestamp={props.timestamp}
       threadId={props.threadId}

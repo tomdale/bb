@@ -197,6 +197,7 @@ export function Overview() {
             showActions={true}
             mobileActionDisplay="inline"
             streaming={false}
+            textComplete={true}
             timestamp={0}
           />
         </TimelineStage>
@@ -216,6 +217,7 @@ export function Overview() {
             showActions={true}
             mobileActionDisplay="inline"
             streaming={false}
+            textComplete={true}
             timestamp={0}
           />
         </TimelineStage>
@@ -281,6 +283,7 @@ export function ActionOverflow() {
               showActions={true}
               mobileActionDisplay="inline"
               streaming={false}
+              textComplete={true}
               timestamp={0}
               onAddToChat={noop}
               onFork={noop}
@@ -304,6 +307,7 @@ export function ActionOverflow() {
             showActions={true}
             mobileActionDisplay="inline"
             streaming={false}
+            textComplete={true}
             timestamp={0}
             onAddToChat={noop}
             onFork={noop}
