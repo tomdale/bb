@@ -108,6 +108,28 @@ function slot(
   };
 }
 
+function paragraphTexts(root: ParentNode): string[] {
+  return [...root.querySelectorAll("p")].map(
+    (paragraph) => paragraph.textContent ?? "",
+  );
+}
+
+function renderWithDirectiveRegistry(content: string) {
+  const registry = buildMessageDirectiveRegistry([
+    slot({ id: "inline-vis", pluginId: "demo", component: InlineVis }),
+  ]);
+  return render(
+    <MarkdownPreview
+      content={content}
+      messageDirectives={{
+        registry,
+        message: MESSAGE,
+        openWorkspaceFile: null,
+      }}
+    />,
+  );
+}
+
 const MESSAGE = {
   id: "msg_1",
   threadId: "thr_1",
@@ -401,14 +423,14 @@ describe("MarkdownPreview message directives", () => {
     expect(paragraph?.childNodes[0]?.nodeType).toBe(Node.TEXT_NODE);
   });
 
-  it("leaves container directives on the default rendering path", () => {
+  it("renders an unclaimed container as literal marker lines around its markdown", () => {
     const registry = buildMessageDirectiveRegistry([
       slot({ id: "inline-vis", pluginId: "demo", component: InlineVis }),
     ]);
-    render(
+    const { container } = render(
       <MarkdownPreview
         content={
-          ':::note\nhello **world**\n\n::inline-vis{file="demo.html"}\n:::'
+          ':::note{v="1"}\nhello **world**\n\n::inline-vis{file="demo.html"}\n:::'
         }
         messageDirectives={{
           registry,
@@ -418,10 +440,71 @@ describe("MarkdownPreview message directives", () => {
       />,
     );
 
+    expect(paragraphTexts(container)).toEqual([
+      ':::note{v="1"}',
+      "hello world",
+      ":::",
+    ]);
     expect(screen.getByText("world").tagName).toBe("STRONG");
     expect(screen.getByTestId("inline-vis").getAttribute("data-file")).toBe(
       "demo.html",
     );
+    expect(
+      container.querySelector(
+        "[data-markdown-preview] > div:not([data-bb-plugin-root])",
+      ),
+    ).toBeNull();
+  });
+
+  it("keeps an unclosed container's opener literal and adds no closer", () => {
+    const { container } = renderWithDirectiveRegistry(
+      ":::note\nfirst\n\nsecond",
+    );
+    expect(paragraphTexts(container)).toEqual([":::note", "first", "second"]);
+  });
+
+  it("keeps a container label and attributes as exact opener text", () => {
+    const { container } = renderWithDirectiveRegistry(
+      ':::note[Title *x*]{a="1"}\nbody\n:::',
+    );
+    expect(paragraphTexts(container)).toEqual([
+      ':::note[Title *x*]{a="1"}',
+      "body",
+      ":::",
+    ]);
+    expect(container.querySelector("em")).toBeNull();
+  });
+
+  it("renders a container inside a list item as literal text in that item", () => {
+    const { container } = renderWithDirectiveRegistry(
+      "- item\n\n  :::note\n  inside\n  :::\n",
+    );
+    const item = container.querySelector("li");
+    expect(item).not.toBeNull();
+    expect(paragraphTexts(item!)).toEqual(["item", ":::note", "inside", ":::"]);
+  });
+
+  it("renders nested containers as literal text at every level", () => {
+    const { container } = renderWithDirectiveRegistry(
+      "::::outer\n:::inner\ntext\n:::\n::::",
+    );
+    expect(paragraphTexts(container)).toEqual([
+      "::::outer",
+      ":::inner",
+      "text",
+      ":::",
+      "::::",
+    ]);
+  });
+
+  it("leaves text that only resembles a container as an ordinary paragraph", () => {
+    const { container } = renderWithDirectiveRegistry(
+      '::: note\ntext\n:::\n\n:::note {v="1"}\nmore',
+    );
+    expect(paragraphTexts(container)).toEqual([
+      "::: note\ntext\n:::",
+      ':::note {v="1"}\nmore',
+    ]);
   });
 
   it("falls back to original directive text when the plugin component crashes", () => {

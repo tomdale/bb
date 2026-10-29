@@ -1,9 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PluginMessageDirectiveProps } from "@get-bb/plugin-sdk";
+import remarkDirective from "remark-directive";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
 import {
   buildMessageDirectiveRegistry,
+  MESSAGE_DIRECTIVE_MOUNT_LIMIT,
   normalizeDirectiveAttributes,
   reconstructDirectiveSource,
+  remarkMessageDirectives,
+  type MountedMessageDirective,
 } from "./markdown-message-directives";
 import type { PluginMessageDirectiveSlot } from "@/lib/plugin-slots";
 
@@ -85,5 +91,35 @@ describe("normalizeDirectiveAttributes / reconstructDirectiveSource", () => {
   it("uses the supplied marker for text directives", () => {
     expect(reconstructDirectiveSource("30", {}, ":")).toBe(":30");
     expect(reconstructDirectiveSource("x", { a: "1" }, ":")).toBe(':x{a="1"}');
+  });
+});
+
+describe("remarkMessageDirectives containers", () => {
+  it("mounts a directive inside an unclaimed container exactly once", () => {
+    const mounts: MountedMessageDirective[] = [];
+    const source = ':::note\nText.\n\n::inline-vis{file="a.html"}\n:::';
+    const processor = unified()
+      .use(remarkParse)
+      .use(remarkDirective)
+      .use(remarkMessageDirectives, {
+        indexBase: 0,
+        limit: MESSAGE_DIRECTIVE_MOUNT_LIMIT,
+        mounts,
+        registry: buildMessageDirectiveRegistry([
+          slot({ id: "inline-vis", pluginId: "demo" }),
+        ]),
+      });
+    const tree = processor.parse(source);
+    processor.runSync(tree, source);
+
+    expect(mounts.map((mount) => mount.source)).toEqual([
+      '::inline-vis{file="a.html"}',
+    ]);
+    expect(tree.children.map((node) => node.type)).toEqual([
+      "paragraph",
+      "paragraph",
+      "paragraph",
+      "paragraph",
+    ]);
   });
 });

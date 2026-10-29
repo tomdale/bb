@@ -120,6 +120,19 @@ always sets `BB_RUN_REAL_FRP_TESTS=0`.
 - Check: `node --test scripts/fork/test-policy.test.mjs` and
   `bash -n scripts/fork/sync`.
 
+### container-literal
+
+A `:::name` container directive that no plugin claims renders as literal
+text: its opener and closer lines stay visible and its contents render as
+ordinary Markdown, in lists and nested containers too. Upstream drops the
+markers and renders the contents in a bare `<div>`.
+
+- Upstream status: candidate.
+- Upstream files: `apps/app/src/components/ui/markdown-message-directives.tsx`
+  and its two test files.
+- Check: `pnpm exec turbo run typecheck --filter=@bb/app`, then
+  `pnpm exec turbo run test --filter=@bb/app -- src/components/ui/markdown-message-directives`.
+
 ## Syncing with upstream
 
 `scripts/fork/sync` runs the whole sync. It prints nothing when `personal`
