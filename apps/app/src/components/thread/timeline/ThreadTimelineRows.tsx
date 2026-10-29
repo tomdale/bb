@@ -1068,6 +1068,7 @@ const ConversationRowContent = memo(function ConversationRowContent({
         mobileActionDisplay={mobileActionDisplay}
         streaming={streaming}
         text={row.text}
+        textComplete={row.textComplete}
         timestamp={row.startedAt}
         threadId={row.threadId}
         turnId={row.turnId}
@@ -1544,6 +1545,7 @@ function DelegationRowBody({ row }: { row: TimelineViewDelegationWorkRow }) {
               mobileActionDisplay="overflow"
               streaming={delegationActive}
               text={row.output}
+              textComplete={!delegationActive}
               timestamp={row.startedAt}
               threadId={row.threadId}
               turnId={row.turnId}

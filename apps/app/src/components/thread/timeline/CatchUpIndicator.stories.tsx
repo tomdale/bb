@@ -50,6 +50,7 @@ function conversationRow(index: number): TimelineRow {
     text: `Reply ${(index + 1) / 2}: the query uses the covering index and the flag defaults to off.`,
     role: "assistant",
     turnRequest: null,
+    textComplete: true,
   };
 }
 

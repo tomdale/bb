@@ -148,6 +148,7 @@ interface ConversationMessageContentAssistantProps
   showActions: boolean;
   mobileActionDisplay: "inline" | "overflow";
   streaming: boolean;
+  textComplete: boolean;
 }
 
 type ConversationMessageContentProps =
@@ -195,6 +196,7 @@ interface AssistantConversationMessageProps extends AssistantMessageRowIdentity 
   mobileActionDisplay: "inline" | "overflow";
   streaming: boolean;
   text: string;
+  textComplete: boolean;
   timestamp: number;
 }
 
@@ -501,6 +503,7 @@ function AssistantConversationMessage({
   mobileActionDisplay,
   streaming,
   text,
+  textComplete,
   timestamp,
   threadId,
   turnId,
@@ -613,7 +616,7 @@ function AssistantConversationMessage({
     </>
   );
   const markdown = hasMessageBlocks ? (
-    <MessageBlockHost message={codeFenceMessage} streaming={streaming}>
+    <MessageBlockHost message={codeFenceMessage} textComplete={textComplete}>
       {previews}
     </MessageBlockHost>
   ) : (
@@ -635,7 +638,7 @@ function AssistantConversationMessage({
           <CodeFenceRendererHost
             registry={codeFenceRendererRegistry}
             message={codeFenceMessage}
-            streaming={streaming}
+            textComplete={textComplete}
           >
             {markdown}
           </CodeFenceRendererHost>
@@ -735,6 +738,7 @@ export function ConversationMessageContent(
       showActions={props.showActions}
       mobileActionDisplay={props.mobileActionDisplay}
       streaming={props.streaming}
+      textComplete={props.textComplete}
       text={text}
       timestamp={props.timestamp}
       threadId={props.threadId}

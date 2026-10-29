@@ -61,6 +61,7 @@ function assistantRow(
     text: `assistant ${seq}`,
     attachments: null,
     turnRequest: null,
+    textComplete: true,
   };
 }
 

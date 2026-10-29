@@ -139,7 +139,7 @@ function previewElement(
 ) {
   const registry = buildMessageDirectiveRegistry([], { blocks });
   return (
-    <MessageBlockHost message={MESSAGE} streaming={streaming}>
+    <MessageBlockHost message={MESSAGE} textComplete={!streaming}>
       <MarkdownPreview
         allowHtml
         content={content}
@@ -463,6 +463,7 @@ describe("message blocks in conversation messages", () => {
                 showActions={false}
                 mobileActionDisplay="overflow"
                 streaming={streaming}
+                textComplete={!streaming}
                 text={text}
                 timestamp={0}
                 projectId="proj_a"
