@@ -216,6 +216,22 @@ message-blocks for the block half and the shared portal host.
   `pnpm exec turbo run test --filter=@bb/app -- src/components/ui src/components/thread`,
   and `GIT_CONFIG_GLOBAL=/dev/null pnpm exec turbo run test --filter=@bb/server -- test/services/threads`.
 
+### preview-container-markers
+
+Notification previews (push, web, and desktop share one body) skip container
+directive lines (`:::name{...}`, `:::`, and longer markers such as
+`::::name`) the way leaf directives are skipped, and strip task-list markers.
+A level-1 heading on the first line inside a container block is the block's
+headline and becomes the preview, so a reply ending in a `:::reply` block
+previews its headline instead of the opener line. A message with no prose
+paragraph previews its first heading instead of the generic fallback; prose
+still wins over a leading heading in ordinary Markdown.
+
+- Upstream status: candidate.
+- Owned files: `plugins/push-notifications/notification-text.test.ts`.
+- Upstream files: `plugins/push-notifications/notification-text.ts`.
+- Check: `pnpm exec turbo run typecheck lint test --filter=bb-plugin-push-notifications`.
+
 ## Syncing with upstream
 
 `scripts/fork/sync` runs the whole sync. It prints nothing when `personal`
