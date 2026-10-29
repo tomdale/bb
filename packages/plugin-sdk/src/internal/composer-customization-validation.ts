@@ -131,6 +131,39 @@ export function requireMessageDirectiveId(
   return value;
 }
 
+export function requireMessageBlockName(kind: string, value: unknown): string {
+  if (
+    typeof value !== "string" ||
+    !PLUGIN_MESSAGE_DIRECTIVE_ID_PATTERN.test(value)
+  ) {
+    throw new Error(
+      `${kind}: "name" must match ${String(PLUGIN_MESSAGE_DIRECTIVE_ID_PATTERN)}, got ${JSON.stringify(value)}`,
+    );
+  }
+  return value;
+}
+
+export function requireMessageBlockVersions(
+  kind: string,
+  value: unknown,
+): readonly number[] {
+  if (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    !value.every(
+      (version: unknown) =>
+        typeof version === "number" &&
+        Number.isSafeInteger(version) &&
+        version > 0,
+    )
+  ) {
+    throw new Error(
+      `${kind}: "versions" must be a non-empty array of positive integers, got ${JSON.stringify(value)}`,
+    );
+  }
+  return [...new Set<number>(value)];
+}
+
 export function requireNonEmptyString(
   kind: string,
   field: string,
@@ -160,7 +193,11 @@ export function requireComponent<T>(kind: string, value: unknown): T {
   return value as T;
 }
 
-function requireFunction<T>(kind: string, field: string, value: unknown): T {
+export function requireFunction<T>(
+  kind: string,
+  field: string,
+  value: unknown,
+): T {
   if (typeof value !== "function") {
     throw new Error(`${kind}: "${field}" must be a function`);
   }

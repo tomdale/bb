@@ -7,6 +7,7 @@ import type {
   PluginCodeFenceRendererSlot,
   PluginComposerCustomizationSlot,
   PluginFileOpenerSlot,
+  PluginMessageBlockSlot,
   PluginMessageDirectiveSlot,
   PluginPendingInteractionSlot,
   PluginTimelineRendererSlot,
@@ -233,43 +234,57 @@ export function resolveTimelineRenderer(
   );
 }
 
-export type ResolvedMessageDirective =
-  | { status: "ok"; slot: PluginMessageDirectiveSlot }
-  | { status: "collision"; pluginIds: readonly string[] };
+export type MessageNameClaimantKind = "directive" | "block";
 
-function resolveMessageDirectiveClaimants(
-  claimants: readonly PluginMessageDirectiveSlot[],
-): ResolvedMessageDirective | null {
-  if (claimants.length === 0) return null;
-  const only = claimants[0];
-  if (claimants.length === 1 && only !== undefined) {
-    return { status: "ok", slot: only };
-  }
-  return {
-    status: "collision",
-    pluginIds: [
-      ...new Set(claimants.map((claimant) => claimant.pluginId)),
-    ].sort(),
-  };
-}
+export type ResolvedMessageDirective =
+  | { status: "ok"; kind: "directive"; slot: PluginMessageDirectiveSlot }
+  | { status: "ok"; kind: "block"; slot: PluginMessageBlockSlot }
+  | {
+      status: "collision";
+      kinds: readonly MessageNameClaimantKind[];
+      pluginIds: readonly string[];
+    };
+
+type MessageNameClaimant =
+  | { kind: "directive"; slot: PluginMessageDirectiveSlot }
+  | { kind: "block"; slot: PluginMessageBlockSlot };
 
 export function resolveMessageDirectiveRegistry(
-  registrations: readonly PluginMessageDirectiveSlot[],
+  directives: readonly PluginMessageDirectiveSlot[],
+  blocks: readonly PluginMessageBlockSlot[] = [],
 ): ReadonlyMap<string, ResolvedMessageDirective> {
-  const claimantsById = new Map<string, PluginMessageDirectiveSlot[]>();
-  for (const registration of registrations) {
-    const claimants = claimantsById.get(registration.id);
+  const claimantsByName = new Map<string, MessageNameClaimant[]>();
+  const claim = (name: string, claimant: MessageNameClaimant) => {
+    const claimants = claimantsByName.get(name);
     if (claimants === undefined) {
-      claimantsById.set(registration.id, [registration]);
+      claimantsByName.set(name, [claimant]);
     } else {
-      claimants.push(registration);
+      claimants.push(claimant);
     }
-  }
+  };
+  for (const slot of directives) claim(slot.id, { kind: "directive", slot });
+  for (const slot of blocks) claim(slot.name, { kind: "block", slot });
 
   const resolved = new Map<string, ResolvedMessageDirective>();
-  for (const [id, claimants] of claimantsById) {
-    const directive = resolveMessageDirectiveClaimants(claimants);
-    if (directive !== null) resolved.set(id, directive);
+  for (const [name, claimants] of claimantsByName) {
+    const only = claimants[0];
+    if (only === undefined) continue;
+    if (claimants.length === 1) {
+      resolved.set(
+        name,
+        only.kind === "directive"
+          ? { status: "ok", kind: "directive", slot: only.slot }
+          : { status: "ok", kind: "block", slot: only.slot },
+      );
+      continue;
+    }
+    resolved.set(name, {
+      status: "collision",
+      kinds: [...new Set(claimants.map((claimant) => claimant.kind))].sort(),
+      pluginIds: [
+        ...new Set(claimants.map((claimant) => claimant.slot.pluginId)),
+      ].sort(),
+    });
   }
   return resolved;
 }

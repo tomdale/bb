@@ -17,6 +17,7 @@ import type {
   PluginHomepageSectionRegistration,
   PluginMessageActionRegistration,
   ExperimentalMessageMetadataRegistration,
+  ExperimentalMessageBlockRegistration,
   PluginMessageDirectiveRegistration,
   PluginNavPanelRegistration,
   PluginNewThreadPanelActionRegistration,
@@ -79,6 +80,7 @@ export interface PluginRegistrationSet {
   composers?: readonly ExperimentalComposerRegistration[];
   messageDirectives: readonly PluginMessageDirectiveRegistration[];
   codeFenceRenderers?: readonly ExperimentalCodeFenceRendererRegistration[];
+  messageBlocks?: readonly ExperimentalMessageBlockRegistration[];
   messageActions?: readonly PluginMessageActionRegistration[];
   messageMetadata?: readonly ExperimentalMessageMetadataRegistration[];
   commandPaletteActions?: readonly CollectedPluginCommandRegistration[];
@@ -167,6 +169,8 @@ export interface PluginMessageDirectiveSlot
   extends PluginMessageDirectiveRegistration, PluginSlotBase {}
 export interface PluginCodeFenceRendererSlot
   extends ExperimentalCodeFenceRendererRegistration, PluginSlotBase {}
+export interface PluginMessageBlockSlot
+  extends ExperimentalMessageBlockRegistration, PluginSlotBase {}
 export interface PluginMessageActionSlot
   extends PluginMessageActionRegistration, PluginSlotBase {}
 export interface PluginMessageMetadataSlot
@@ -212,6 +216,7 @@ export interface PluginSlotSnapshot {
   composers: readonly PluginComposerSlot[];
   messageDirectives: readonly PluginMessageDirectiveSlot[];
   codeFenceRenderers: readonly PluginCodeFenceRendererSlot[];
+  messageBlocks: readonly PluginMessageBlockSlot[];
   messageActions: readonly PluginMessageActionSlot[];
   messageMetadata: readonly PluginMessageMetadataSlot[];
   commandPaletteActions: readonly PluginCommandPaletteActionSlot[];
@@ -251,6 +256,7 @@ export const EMPTY_PLUGIN_SLOT_SNAPSHOT: PluginSlotSnapshot = {
   composers: [],
   messageDirectives: [],
   codeFenceRenderers: [],
+  messageBlocks: [],
   messageActions: [],
   messageMetadata: coreMessageMetadata,
   commandPaletteActions: [],
@@ -297,6 +303,7 @@ const SLOT_KINDS: readonly SlotKind[] = [
   "composers",
   "messageDirectives",
   "codeFenceRenderers",
+  "messageBlocks",
   "messageActions",
   "messageMetadata",
   "commandPaletteActions",
@@ -391,6 +398,7 @@ function flattenRegistrations(
     composers: stamp(set.composers),
     messageDirectives: stamp(set.messageDirectives),
     codeFenceRenderers: stamp(set.codeFenceRenderers),
+    messageBlocks: stamp(set.messageBlocks),
     messageActions: stamp(set.messageActions),
     messageMetadata: stamp(set.messageMetadata),
     commandPaletteActions: stamp(set.commandPaletteActions),
