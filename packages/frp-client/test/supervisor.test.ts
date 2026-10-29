@@ -12,6 +12,7 @@ import {
   type FrpcSupervisorStatus,
 } from "../src/index.js";
 import {
+  REAL_FRP_TESTS_ENABLED,
   installTestFrp,
   ownsSubdomain,
   startFrps,
@@ -122,33 +123,7 @@ function openStream(vhostPort: number, label: string) {
   };
 }
 
-beforeAll(async () => {
-  workDir = await fs.mkdtemp(path.join(os.tmpdir(), "frp-client-sup-"));
-  binaries = await installTestFrp(path.join(workDir, "bin"));
-  hooks = await startGateHooks(
-    () => CREDENTIAL,
-    (user, subdomain) =>
-      subdomain !== refusedSubdomain && ownsSubdomain(user, subdomain),
-  );
-  frps = await startFrps(binaries.frps, workDir, hooks.port);
-  main = await startOrigin();
-  devServer = await startDevServer();
-}, 180_000);
-
-afterAll(async () => {
-  await frps?.stop();
-  await hooks?.close();
-  await main?.close();
-  await devServer?.close();
-  await fs.rm(workDir, { recursive: true, force: true });
-});
-
 const supervisors: FrpcSupervisor[] = [];
-
-afterEach(async () => {
-  for (const supervisor of supervisors.splice(0)) await supervisor.stop();
-  refusedSubdomain = null;
-});
 
 function proxy(name: string, subdomain: string, port: number): FrpProxy {
   return {
@@ -233,7 +208,35 @@ describe("frpProxyDiff", () => {
   });
 });
 
-describe("FrpcSupervisor with real frpc and frps", () => {
+const describeRealFrp = describe.runIf(REAL_FRP_TESTS_ENABLED);
+
+describeRealFrp("FrpcSupervisor with real frpc and frps", () => {
+  beforeAll(async () => {
+    workDir = await fs.mkdtemp(path.join(os.tmpdir(), "frp-client-sup-"));
+    binaries = await installTestFrp(path.join(workDir, "bin"));
+    hooks = await startGateHooks(
+      () => CREDENTIAL,
+      (user, subdomain) =>
+        subdomain !== refusedSubdomain && ownsSubdomain(user, subdomain),
+    );
+    frps = await startFrps(binaries.frps, workDir, hooks.port);
+    main = await startOrigin();
+    devServer = await startDevServer();
+  }, 180_000);
+
+  afterAll(async () => {
+    await frps?.stop();
+    await hooks?.close();
+    await main?.close();
+    await devServer?.close();
+    await fs.rm(workDir, { recursive: true, force: true });
+  });
+
+  afterEach(async () => {
+    for (const supervisor of supervisors.splice(0)) await supervisor.stop();
+    refusedSubdomain = null;
+  });
+
   it("adds and removes a proxy by hot reload without dropping the main proxy's connection", async () => {
     const stream = await startStream();
     try {

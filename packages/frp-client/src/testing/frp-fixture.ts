@@ -28,6 +28,16 @@ export const FRP_CACHE_DIR =
   path.join(os.homedir(), ".cache", "bb-frp", FRP_VERSION);
 
 export const GATE_REFUSAL_REASON = FRP_LOGIN_REFUSED_REASON;
+
+export const REAL_FRP_TESTS_ENABLED = process.env.BB_RUN_REAL_FRP_TESTS === "1";
+
+function requireRealFrpTests(): void {
+  if (!REAL_FRP_TESTS_ENABLED) {
+    throw new Error(
+      "Real FRP tests require BB_RUN_REAL_FRP_TESTS=1 in an approved test environment.",
+    );
+  }
+}
 export const VHOST_DOMAIN = "next.test";
 
 async function fetchTestArchive(url: string): Promise<Uint8Array> {
@@ -75,6 +85,7 @@ export function cachedDownload(
   arch: string,
 ): DownloadArchive {
   return async (url) => {
+    requireRealFrpTests();
     const archive = frpArchiveFor(platform, arch);
     if (url !== archive.url) throw new Error(`unexpected download ${url}`);
     return cachedArchiveBytes(archive);
@@ -82,6 +93,7 @@ export function cachedDownload(
 }
 
 export async function installTestFrp(dir: string) {
+  requireRealFrpTests();
   const download = cachedDownload(process.platform, process.arch);
   const frpc = await installFrp({
     dir,
@@ -206,6 +218,7 @@ export async function startFrps(
   hookPort: number,
   ports?: { bindPort: number; vhostPort: number },
 ): Promise<RunningFrps> {
+  requireRealFrpTests();
   const bindPort = ports?.bindPort ?? (await freePort());
   const vhostPort = ports?.vhostPort ?? (await freePort());
   const config = path.join(dir, `frps-${bindPort}.toml`);
