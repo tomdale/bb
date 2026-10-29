@@ -27,12 +27,15 @@ import {
 import {
   MessageDirectiveMountsContext,
   type MessageDirectiveRegistry,
+  type MarkdownMessageDirectives,
 } from "./markdown-message-directives.js";
 import {
   useSlotPortals,
   type SlotPortalHost,
   type SlotPortalReconciliation,
 } from "./markdown-slot-portals.js";
+
+import { MessageMarkdownContext } from "./message-block-markdown.js";
 
 export const MESSAGE_BLOCK_FAILURE_NOTE = "Couldn't display this block";
 
@@ -297,12 +300,14 @@ interface MessageBlockHostProps {
   children: ReactNode;
   message: PluginMessageDirectiveMessage;
   textComplete: boolean;
+  messageDirectives?: MarkdownMessageDirectives;
 }
 
 export function MessageBlockHost({
   children,
   message,
   textComplete,
+  messageDirectives,
 }: MessageBlockHostProps) {
   const {
     entries,
@@ -312,6 +317,10 @@ export function MessageBlockHost({
   const host = useMemo(
     (): MessageBlockHostValue => ({ ...portals, textComplete }),
     [portals, textComplete],
+  );
+  const markdownContext = useMemo(
+    () => ({ directives: messageDirectives, message, textComplete }),
+    [messageDirectives, message, textComplete],
   );
   const indexes = new Map<string, number>();
   const mounts: ReactNode[] = [];
@@ -326,19 +335,21 @@ export function MessageBlockHost({
     mounts.push(
       createPortal(
         <MessageBlockOriginalContext.Provider value={block.original}>
-          <MessageBlockMount
-            index={index}
-            message={message}
-            mount={mount}
-            ordinal={mounts.length}
-            status={
-              mount.closed
-                ? "closed"
-                : block.complete
-                  ? "unclosed"
-                  : "streaming"
-            }
-          />
+          <MessageMarkdownContext.Provider value={markdownContext}>
+            <MessageBlockMount
+              index={index}
+              message={message}
+              mount={mount}
+              ordinal={mounts.length}
+              status={
+                mount.closed
+                  ? "closed"
+                  : block.complete
+                    ? "unclosed"
+                    : "streaming"
+              }
+            />
+          </MessageMarkdownContext.Provider>
         </MessageBlockOriginalContext.Provider>,
         entry.container,
         String(entry.offset),
