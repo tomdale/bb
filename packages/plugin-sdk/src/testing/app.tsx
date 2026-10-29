@@ -65,6 +65,7 @@ import {
   type ExperimentalMessageMetadataRegistration,
   type PluginMessageDirectiveRegistration,
   type ExperimentalCodeFenceRendererRegistration,
+  type ExperimentalMessageBlockRegistration,
   type PluginDiffRendererRegistration,
   type ExperimentalComposerRegistration,
   type ExperimentalComposerRendererApi,
@@ -2153,6 +2154,7 @@ export interface CapturedPluginApp {
   composers: ExperimentalComposerRegistration[];
   messageDirectives: PluginMessageDirectiveRegistration[];
   codeFenceRenderers: ExperimentalCodeFenceRendererRegistration[];
+  messageBlocks: ExperimentalMessageBlockRegistration[];
   messageActions: PluginMessageActionRegistration[];
   messageMetadata: ExperimentalMessageMetadataRegistration[];
   providerIcons: CollectedPluginProviderIconRegistration[];
