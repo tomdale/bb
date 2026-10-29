@@ -476,6 +476,7 @@ describe("ThreadTableOfContents", () => {
       text: "Latest agent answer",
       attachments: null,
       turnRequest: null,
+      textComplete: true,
     };
     const rows = [1, 2, 3].map(userConversationRow).concat(agentRow);
     scrollElement = createScrollElement({

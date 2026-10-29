@@ -58,6 +58,7 @@ function conversationRow({
     ...base,
     role: "assistant",
     turnRequest: null,
+    textComplete: true,
   };
 }
 

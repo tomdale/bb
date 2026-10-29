@@ -198,6 +198,7 @@ describe("resolveThreadTimelinePlaceholder", () => {
         createdAt: 1,
         attachments: null,
         turnRequest: null,
+        textComplete: true,
       },
     ]);
 
