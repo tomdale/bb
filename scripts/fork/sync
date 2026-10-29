@@ -193,6 +193,9 @@ if ((${#drift[@]} > 0)); then
 fi
 
 if ((verify)); then
+  run_logged node "$repo/scripts/fork/test-policy.mjs" "$worktree" "${new_ids[@]}" ||
+    fail "the rebased tree does not satisfy the test safety policy"
+  export BB_RUN_REAL_FRP_TESTS=0
   # pnpm asks before purging node_modules after a store or settings change,
   # and an unattended run has no one to answer.
   (cd "$worktree" && run_logged pnpm install --frozen-lockfile --config.confirmModulesPurge=false </dev/null) || fail "pnpm install failed"
@@ -217,8 +220,11 @@ if ((verify)); then
     ')
   )
   if ((${#filters[@]} > 0)); then
-    # One retry absorbs the timing-sensitive tests that fail under full load.
-    test_cmd=(pnpm exec turbo run test "${filters[@]}" --output-logs=errors-only)
+    # Several upstream suites have timing assertions that fail when packages run
+    # their tests at the same time, so packages run one after another, and one
+    # retry absorbs the remaining timing flakes. Turbo's cache limits the retry
+    # to the packages that failed.
+    test_cmd=(pnpm exec turbo run test "${filters[@]}" --concurrency=1 --continue --output-logs=errors-only)
     (cd "$worktree" && run_logged "${test_cmd[@]}") ||
       (cd "$worktree" && run_logged "${test_cmd[@]}") ||
       fail "tests failed twice for: ${filters[*]#--filter=}"
