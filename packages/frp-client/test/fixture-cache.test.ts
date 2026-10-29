@@ -21,6 +21,7 @@ let dir: string;
 beforeEach(async () => {
   dir = await fs.mkdtemp(path.join(os.tmpdir(), "frp-cache-race-"));
   vi.stubEnv("BB_FRP_CACHE_DIR", dir);
+  vi.stubEnv("BB_RUN_REAL_FRP_TESTS", "1");
   vi.resetModules();
   vi.mocked(frpArchiveFor).mockReturnValue({
     fileName: "fixture.zip",
