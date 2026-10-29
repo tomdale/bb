@@ -259,8 +259,8 @@ Check imports here, behavior in the Plugin Guide, and signatures in the installe
 - `PluginMessageDirectiveProps`
 - `ExperimentalCodeFenceRendererProps`
 - `PluginMessageDirectiveRegistration`
-- `ExperimentalCodeFenceRendererRegistration`
-- `ExperimentalCodeFenceStatus`
+- `ExperimentalCodeFenceRendererRegistration`, `ExperimentalCodeFenceStatus`
+- `ExperimentalMessageBlockRegistration`, `ExperimentalMessageBlockProps`, `ExperimentalMessageBlockStatus`, `ExperimentalMessageBlockCodec`, `ExperimentalMessageBlockInput`, `ExperimentalMessageBlockParseContext`, `ExperimentalMessageBlockParseResult`
 - `PluginNavPanelProps`
 - `PluginNavPanelRegistration`
 - `ExperimentalPageTitle`
