@@ -3673,6 +3673,54 @@ describe("acp bridge", () => {
     expect(notifications("session/replaced")).toHaveLength(0);
   });
 
+  it("ends the steered-away prompt's message before the steered reply", async () => {
+    const { providerThreadId } = await startThread();
+    await waitForResponse(
+      sendTurnRequest("turn/start", providerThreadId, {
+        input: [{ type: "text", text: "slow first", mentions: [] }],
+      }),
+    );
+    await waitFor(
+      () =>
+        agentMessageTexts().includes("echo:slow first") ? true : undefined,
+      "first prompt echo",
+    );
+    await waitForResponse(
+      sendTurnRequest("turn/steer", providerThreadId, {
+        expectedTurnId: "turn-1",
+        input: [{ type: "text", text: "steered", mentions: [] }],
+      }),
+    );
+
+    expect(await waitForTurnCompleted()).toMatchObject({ status: "completed" });
+    expect(agentMessageTexts()).toEqual(["echo:slow first", "echo:steered"]);
+  });
+
+  it("ends the prompt's message before the steered reply when the agent finished first", async () => {
+    const { providerThreadId } = await startThread({
+      envVars: { FAKE_ACP_IGNORE_CANCEL: "1" },
+    });
+    await waitForResponse(
+      sendTurnRequest("turn/start", providerThreadId, {
+        input: [{ type: "text", text: "slow first", mentions: [] }],
+      }),
+    );
+    await waitFor(
+      () =>
+        agentMessageTexts().includes("echo:slow first") ? true : undefined,
+      "first prompt echo",
+    );
+    await waitForResponse(
+      sendTurnRequest("turn/steer", providerThreadId, {
+        expectedTurnId: "turn-1",
+        input: [{ type: "text", text: "steered", mentions: [] }],
+      }),
+    );
+
+    expect(await waitForTurnCompleted()).toMatchObject({ status: "completed" });
+    expect(agentMessageTexts()).toEqual(["echo:slow first", "echo:steered"]);
+  });
+
   it.each(["0", "1"])(
     "rebuilds a stuck agent after a steer cancellation error (session/load=%s)",
     async (loadSession) => {

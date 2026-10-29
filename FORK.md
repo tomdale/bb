@@ -232,6 +232,23 @@ still wins over a leading heading in ordinary Markdown.
 - Upstream files: `plugins/push-notifications/notification-text.ts`.
 - Check: `pnpm exec turbo run typecheck lint test --filter=bb-plugin-push-notifications`.
 
+### acp-steer-message-break
+
+When a steer ends a running ACP prompt, the shared ACP bridge closes that
+prompt's open assistant and reasoning items before it sends the steer, so the
+steered reply starts a new message. Upstream closes only open tool calls, so
+the last text of the steered-away prompt and the next reply run together in
+one message (`…must satisfy.:::reply{…}`), and a reply block that should start
+on its own line does not render. The bridge marks the prompt boundary even
+when the agent finished before it saw the cancel request. Plugins that bundle
+the published SDK's bridge, such as fx, get this only once they build against
+an SDK that includes it.
+
+- Upstream status: candidate.
+- Upstream files: `packages/provider-bridge-acp/src/bridge/bridge.ts`,
+  `delta-translation.ts`, and their tests.
+- Check: `pnpm exec turbo run typecheck lint test --filter=@bb/provider-bridge-acp`.
+
 ## Syncing with upstream
 
 `scripts/fork/sync` runs the whole sync. It prints nothing when `personal`

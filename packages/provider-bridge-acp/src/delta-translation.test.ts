@@ -8,6 +8,7 @@ import {
   ACP_COMPACTION_COMPLETED_METHOD,
   ACP_COMPACTION_STARTED_METHOD,
   ACP_FS_WRITE_METHOD,
+  ACP_PROMPT_INTERRUPTED_METHOD,
   ACP_TURN_COMPLETED_METHOD,
   ACP_TURN_STARTED_METHOD,
   ACP_UPDATE_METHOD,
@@ -289,6 +290,44 @@ describe("acp delta translation (bridge-shared invariants)", () => {
       );
     }
     expect(harness.openTurnId()).toBe("");
+  });
+
+  it("keeps the text before and after a steered prompt boundary as separate messages", () => {
+    const harness = createHarness();
+    harness.translate(turnStartedEvent());
+    const messageChunk = (text: string): ProviderRuntimeEvent =>
+      updateEvent({
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text },
+      });
+    harness.translate(messageChunk("I'll check the tool maps."));
+
+    const boundary = harness.translate({
+      jsonrpc: "2.0",
+      method: ACP_PROMPT_INTERRUPTED_METHOD,
+      params: { threadId: THREAD_ID },
+    });
+    expect(boundary).toEqual([
+      expect.objectContaining({
+        type: "item/completed",
+        item: expect.objectContaining({
+          type: "agentMessage",
+          text: "I'll check the tool maps.",
+        }),
+      }),
+    ]);
+
+    harness.translate(messageChunk(':::reply{state="review"}\n# Plan ready'));
+    const completed = harness.translate(turnCompletedEvent("end_turn"));
+    expect(completed).toContainEqual(
+      expect.objectContaining({
+        type: "item/completed",
+        item: expect.objectContaining({
+          type: "agentMessage",
+          text: ':::reply{state="review"}\n# Plan ready',
+        }),
+      }),
+    );
   });
 
   it("settles both items when a terminal tool_call_update changes the item type", () => {

@@ -3188,11 +3188,9 @@ function runTurn(
       if (!session.stopping) {
         const next = session.queuedInputs.shift();
         if (next) {
-          if (stopReason === "cancelled") {
-            emitForSession(session, ACP_PROMPT_INTERRUPTED_METHOD, {
-              threadId: session.bbThreadId,
-            });
-          }
+          emitForSession(session, ACP_PROMPT_INTERRUPTED_METHOD, {
+            threadId: session.bbThreadId,
+          });
           pending = next;
           continue;
         }
