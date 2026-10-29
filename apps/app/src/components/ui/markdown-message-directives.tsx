@@ -4,6 +4,7 @@ import type {} from "mdast-util-to-hast";
 import type { PluginMessageDirectiveProps } from "@get-bb/plugin-sdk";
 import { SKIP, visit } from "unist-util-visit";
 import type {} from "remark-parse";
+import type {} from "remark-directive";
 import { directive as directiveSyntax } from "micromark-extension-directive";
 import type { Extension } from "micromark-util-types";
 import type { Processor } from "unified";
@@ -51,6 +52,24 @@ interface DirectiveNode {
     end?: { offset?: number | undefined };
   };
 }
+
+type ContainerDirectiveNode = Extract<
+  RootContent,
+  { type: "containerDirective" }
+>;
+
+export interface ContainerDirectiveParts {
+  closed: boolean;
+  closer: string | null;
+  content: RootContent[];
+  innerEnd: number;
+  innerStart: number;
+  opener: string;
+  source: string;
+}
+
+const CONTAINER_OPEN_SEQUENCE_PATTERN = /^[ \t]*(:{3,})/u;
+const CONTAINER_CLOSE_LINE_PATTERN = /^[ \t]*(:{3,})[ \t]*$/u;
 
 const DIRECTIVE_MARKERS: Record<DirectiveNodeType, string> = {
   textDirective: ":",
@@ -142,6 +161,84 @@ function directiveSourceFromNode(
     return markdownSource.slice(start, end);
   }
   return reconstructDirectiveSource(name, attributes, marker);
+}
+
+function trimCarriageReturn(line: string): string {
+  return line.endsWith("\r") ? line.slice(0, -1) : line;
+}
+
+export function containerDirectiveParts(
+  node: ContainerDirectiveNode,
+  markdownSource: string,
+): ContainerDirectiveParts {
+  const content = node.children.filter(
+    (child) =>
+      child.type !== "paragraph" || child.data?.directiveLabel !== true,
+  );
+  const start = node.position?.start.offset;
+  const end = node.position?.end.offset;
+  if (
+    typeof start !== "number" ||
+    typeof end !== "number" ||
+    start < 0 ||
+    end < start ||
+    end > markdownSource.length
+  ) {
+    const opener = reconstructDirectiveSource(
+      node.name,
+      normalizeDirectiveAttributes(node.attributes),
+      ":::",
+    );
+    return {
+      closed: false,
+      closer: null,
+      content,
+      innerEnd: 0,
+      innerStart: 0,
+      opener,
+      source: opener,
+    };
+  }
+  const source = markdownSource.slice(start, end);
+  const openerEnd = source.indexOf("\n");
+  const opener = trimCarriageReturn(
+    openerEnd === -1 ? source : source.slice(0, openerEnd),
+  );
+  const innerStart = openerEnd === -1 ? end : start + openerEnd + 1;
+  const lastLineStart = source.lastIndexOf("\n") + 1;
+  const lastLine = trimCarriageReturn(source.slice(lastLineStart));
+  const openSize = CONTAINER_OPEN_SEQUENCE_PATTERN.exec(opener)?.[1]?.length;
+  const closeSize = CONTAINER_CLOSE_LINE_PATTERN.exec(lastLine)?.[1]?.length;
+  const lastContentEnd = content.at(-1)?.position?.end.offset ?? innerStart;
+  const closed =
+    openerEnd !== -1 &&
+    openSize !== undefined &&
+    closeSize !== undefined &&
+    closeSize >= openSize &&
+    lastContentEnd <= start + lastLineStart;
+  return {
+    closed,
+    closer: closed ? lastLine.trim() : null,
+    content,
+    innerEnd: closed ? start + lastLineStart : end,
+    innerStart,
+    opener,
+    source,
+  };
+}
+
+function literalParagraph(value: string): RootContent {
+  return { type: "paragraph", children: [{ type: "text", value }] };
+}
+
+export function literalContainerDirectiveChildren(
+  parts: ContainerDirectiveParts,
+): RootContent[] {
+  return [
+    literalParagraph(parts.opener),
+    ...parts.content,
+    ...(parts.closer === null ? [] : [literalParagraph(parts.closer)]),
+  ];
 }
 
 function messageDirectiveMountNode(index: number): RootContent {
@@ -278,6 +375,16 @@ export function remarkMessageDirectives(
     mounts.length = 0;
     visit(tree, (node, index, parent: Parent | undefined) => {
       if (parent === undefined || index === undefined) return;
+      if (node.type === "containerDirective") {
+        parent.children.splice(
+          index,
+          1,
+          ...literalContainerDirectiveChildren(
+            containerDirectiveParts(node, markdownSource),
+          ),
+        );
+        return [SKIP, index];
+      }
       const paragraph = node.type === "paragraph" ? node : null;
       const leadingDirective = asDirectiveNode(paragraph?.children[0]);
       const isGlued =
