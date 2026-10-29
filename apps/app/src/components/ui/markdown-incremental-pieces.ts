@@ -13,6 +13,13 @@ import ReactMarkdown, {
 import type { Nodes, Root } from "mdast";
 import { EXIT, visit } from "unist-util-visit";
 import {
+  closesMarkdownContainer,
+  findMarkdownContainerExtent,
+  parseMarkdownContainerOpen,
+  type MarkdownContainerFence,
+} from "./markdown-container-fences.js";
+import {
+  containerDirectiveParts,
   EMPTY_MOUNTED_MESSAGE_DIRECTIVES,
   MESSAGE_DIRECTIVE_MOUNT_LIMIT,
   remarkMessageDirectives,
@@ -54,6 +61,7 @@ interface MarkdownPieceSummary {
   endsWithIndentedCode: boolean;
   hasGlobalConstructs: boolean;
   lastTopLevelType: string | null;
+  topLevelCount: number;
 }
 
 interface ResolvedMarkdownPieces {
@@ -68,10 +76,24 @@ interface MarkdownElementProps {
 
 interface MarkdownPieceEntry {
   children: readonly ReactNode[];
+  container: MarkdownContainerPiece | null;
   mounts: readonly MountedMessageDirective[];
   source: string;
   summary: MarkdownPieceSummary;
   tagCounts: ReadonlyMap<string, number>;
+}
+
+interface MarkdownContainerPiece {
+  closer: MarkdownPieceEntry | null;
+  inner: readonly MarkdownPieceEntry[];
+  opener: MarkdownPieceEntry;
+}
+
+interface MarkdownPieceScope {
+  mountBase: number;
+  offsets: ReadonlyMap<string, number>;
+  sourceOffset: number;
+  topLevel: boolean;
 }
 
 export interface MarkdownPieceCache {
@@ -123,11 +145,24 @@ const EMPTY_MARKDOWN_PIECE_SUMMARY: MarkdownPieceSummary = {
   endsWithIndentedCode: false,
   hasGlobalConstructs: false,
   lastTopLevelType: null,
+  topLevelCount: 0,
+};
+const CONTAINER_MARKDOWN_PIECE_SUMMARY: MarkdownPieceSummary = {
+  ...EMPTY_MARKDOWN_PIECE_SUMMARY,
+  lastTopLevelType: "containerDirective",
+  topLevelCount: 1,
+};
+const TOP_LEVEL_MARKDOWN_PIECE_SCOPE: MarkdownPieceScope = {
+  mountBase: 0,
+  offsets: EMPTY_MARKDOWN_TAG_COUNTS,
+  sourceOffset: 0,
+  topLevel: true,
 };
 
 export function findMarkdownPieceCandidates(body: string): readonly number[] {
   const candidates: number[] = [];
   let fence: MarkdownFence | null = null;
+  let container: MarkdownContainerFence | null = null;
   let mathOpen = false;
   let previousLineBlank = false;
   let lastNonBlankLine: string | null = null;
@@ -137,7 +172,11 @@ export function findMarkdownPieceCandidates(body: string): readonly number[] {
     const lineEnd = newline === -1 ? body.length : newline;
     const line = trimMarkdownLineCarriageReturn(body.slice(lineStart, lineEnd));
     const blank = MARKDOWN_BLANK_LINE_PATTERN.test(line);
-    if (fence !== null) {
+    if (container !== null) {
+      if (closesMarkdownContainer(line, container)) {
+        container = null;
+      }
+    } else if (fence !== null) {
       if (closesAnyIndentMarkdownFence(line, fence)) {
         fence = null;
       }
@@ -157,8 +196,14 @@ export function findMarkdownPieceCandidates(body: string): readonly number[] {
       ) {
         candidates.push(lineStart);
       }
-      fence = parseAnyIndentMarkdownFenceStart(line);
-      if (fence === null && MARKDOWN_MATH_FLOW_OPEN_PATTERN.test(line)) {
+      container = parseMarkdownContainerOpen(line);
+      fence =
+        container === null ? parseAnyIndentMarkdownFenceStart(line) : null;
+      if (
+        container === null &&
+        fence === null &&
+        MARKDOWN_MATH_FLOW_OPEN_PATTERN.test(line)
+      ) {
         mathOpen = true;
       }
     }
@@ -229,21 +274,20 @@ function isMarkdownHtmlOpen(value: string): boolean {
 }
 
 function isMarkdownNodeOpen(node: Nodes, source: string): boolean {
-  const type: string = node.type;
-  if (type === "containerDirective") {
-    return true;
+  if (node.type === "containerDirective") {
+    return !containerDirectiveParts(node, source).closed;
   }
   if (node.type === "html") {
     return isMarkdownHtmlOpen(node.value);
   }
-  if (type !== "code" && type !== "math") {
+  if (node.type !== "code" && node.type !== "math") {
     return false;
   }
   const slice = markdownNodeSource(node, source);
   if (slice === null) {
     return true;
   }
-  return type === "code"
+  return node.type === "code"
     ? isMarkdownCodeOpen(slice)
     : isMarkdownMathOpen(slice);
 }
@@ -294,6 +338,7 @@ function remarkMarkdownPieceSummary(target: MarkdownPieceSummaryTarget) {
         (source.includes("]:") || source.includes("[^")) &&
         markdownTreeHasGlobalConstructs(tree),
       lastTopLevelType: tree.children[tree.children.length - 1]?.type ?? null,
+      topLevelCount: tree.children.length,
     };
   };
 }
@@ -403,6 +448,7 @@ function parseMarkdownPiece({
   );
   return {
     children,
+    container: null,
     mounts: mounts.length === 0 ? EMPTY_MOUNTED_MESSAGE_DIRECTIVES : mounts,
     source,
     summary: summaryTarget.summary,
@@ -428,15 +474,131 @@ function markdownPieceNeedsMerge(
   return MARKDOWN_PIECE_LIST_MARKER_PATTERN.test(body);
 }
 
+function addMarkdownTagCounts(
+  target: Map<string, number>,
+  tagCounts: ReadonlyMap<string, number>,
+): void {
+  for (const [name, count] of tagCounts) {
+    target.set(name, (target.get(name) ?? 0) + count);
+  }
+}
+
+interface ResolveMarkdownContainerPieceArgs {
+  body: string;
+  config: MarkdownPieceRenderConfig;
+  mountBase: number;
+  offsets: ReadonlyMap<string, number>;
+  previous: MarkdownPieceEntry | undefined;
+  sourceOffset: number;
+  start: number;
+}
+
+function resolveMarkdownContainerPiece({
+  body,
+  config,
+  mountBase,
+  offsets,
+  previous,
+  sourceOffset,
+  start,
+}: ResolveMarkdownContainerPieceArgs): MarkdownPieceEntry | null {
+  const extent = findMarkdownContainerExtent(body, start);
+  if (extent === null) {
+    return null;
+  }
+  const source = body.slice(start, extent.end);
+  const previousContainer = previous?.container ?? null;
+  if (previous !== undefined && previousContainer !== null) {
+    if (previous.source === source) {
+      return previous;
+    }
+  }
+  const reusesOpener = previousContainer?.opener.source === extent.opener;
+  const opener =
+    reusesOpener && previousContainer !== null
+      ? previousContainer.opener
+      : parseMarkdownPiece({
+          config,
+          indexBase: mountBase,
+          offsets,
+          source: extent.opener,
+          sourceOffset,
+        });
+  if (
+    opener.summary.topLevelCount !== 1 ||
+    opener.summary.lastTopLevelType !== "containerDirective"
+  ) {
+    return null;
+  }
+  const partOffsets = new Map(offsets);
+  addMarkdownTagCounts(partOffsets, opener.tagCounts);
+  const inner = resolveIncrementalMarkdownPieceEntries(
+    config,
+    body.slice(extent.innerStart, extent.innerEnd),
+    reusesOpener && previousContainer !== null ? previousContainer.inner : [],
+    {
+      mountBase: mountBase + opener.mounts.length,
+      offsets: partOffsets,
+      sourceOffset: sourceOffset + extent.innerStart - start,
+      topLevel: false,
+    },
+  );
+  if (inner === null) {
+    return {
+      children: [],
+      container: null,
+      mounts: EMPTY_MOUNTED_MESSAGE_DIRECTIVES,
+      source,
+      summary: {
+        ...CONTAINER_MARKDOWN_PIECE_SUMMARY,
+        hasGlobalConstructs: true,
+      },
+      tagCounts: EMPTY_MARKDOWN_TAG_COUNTS,
+    };
+  }
+  let closerMountBase = mountBase + opener.mounts.length;
+  for (const entry of inner) {
+    addMarkdownTagCounts(partOffsets, entry.tagCounts);
+    closerMountBase += entry.mounts.length;
+  }
+  const closer =
+    extent.closer === null
+      ? null
+      : parseMarkdownPiece({
+          config,
+          indexBase: closerMountBase,
+          offsets: partOffsets,
+          source: extent.closer,
+          sourceOffset: sourceOffset + extent.innerEnd - start,
+        });
+  const parts =
+    closer === null ? [opener, ...inner] : [opener, ...inner, closer];
+  const reusedParts = new Set<MarkdownPieceEntry>(
+    previousContainer === null
+      ? []
+      : [previousContainer.opener, ...previousContainer.inner],
+  );
+  const joined = joinMarkdownPieceEntries(parts, reusedParts);
+  return {
+    children: joined.children,
+    container: { closer, inner, opener },
+    mounts: joined.mounts,
+    source,
+    summary: CONTAINER_MARKDOWN_PIECE_SUMMARY,
+    tagCounts: joined.tagCounts,
+  };
+}
+
 function resolveIncrementalMarkdownPieceEntries(
   config: MarkdownPieceRenderConfig,
   body: string,
   previousEntries: readonly MarkdownPieceEntry[],
+  scope: MarkdownPieceScope,
 ): readonly MarkdownPieceEntry[] | null {
   const candidates = findMarkdownPieceCandidates(body);
   const entries: MarkdownPieceEntry[] = [];
-  const offsets = new Map<string, number>();
-  let mountCount = 0;
+  const offsets = new Map(scope.offsets);
+  let mountCount = scope.mountBase;
   let reusingPreviousEntries = true;
   let start = 0;
   let endIndex = 0;
@@ -447,50 +609,63 @@ function resolveIncrementalMarkdownPieceEntries(
     const previous = reusingPreviousEntries
       ? previousEntries[entries.length]
       : undefined;
-    const previousMatches =
-      previous !== undefined && body.startsWith(previous.source, start);
-    if (previousMatches) {
-      const previousEnd = start + previous.source.length;
-      let previousEndIndex = endIndex;
+    let entry = scope.topLevel
+      ? resolveMarkdownContainerPiece({
+          body,
+          config,
+          mountBase: mountCount,
+          offsets,
+          previous,
+          sourceOffset: scope.sourceOffset + start,
+          start,
+        })
+      : null;
+    if (entry === null) {
+      const previousMatches =
+        previous !== undefined && body.startsWith(previous.source, start);
+      if (previousMatches) {
+        const previousEnd = start + previous.source.length;
+        let previousEndIndex = endIndex;
+        while (
+          previousEndIndex < candidates.length &&
+          candidates[previousEndIndex]! < previousEnd
+        ) {
+          previousEndIndex += 1;
+        }
+        if ((candidates[previousEndIndex] ?? body.length) === previousEnd) {
+          endIndex = previousEndIndex;
+        } else if (previous.summary.endsOpen) {
+          endIndex = candidates.length;
+        }
+      }
+      let end = candidates[endIndex] ?? body.length;
+      entry =
+        previousMatches && start + previous.source.length === end
+          ? previous
+          : parseMarkdownPiece({
+              config,
+              indexBase: mountCount,
+              offsets,
+              source: body.slice(start, end),
+              sourceOffset: scope.sourceOffset + start,
+            });
+      let merges = 0;
       while (
-        previousEndIndex < candidates.length &&
-        candidates[previousEndIndex]! < previousEnd
+        !entry.summary.hasGlobalConstructs &&
+        end < body.length &&
+        markdownPieceNeedsMerge(entry.summary, body, end)
       ) {
-        previousEndIndex += 1;
+        merges += 1;
+        endIndex = merges === 1 ? endIndex + 1 : candidates.length;
+        end = candidates[endIndex] ?? body.length;
+        entry = parseMarkdownPiece({
+          config,
+          indexBase: mountCount,
+          offsets,
+          source: body.slice(start, end),
+          sourceOffset: scope.sourceOffset + start,
+        });
       }
-      if ((candidates[previousEndIndex] ?? body.length) === previousEnd) {
-        endIndex = previousEndIndex;
-      } else if (previous.summary.endsOpen) {
-        endIndex = candidates.length;
-      }
-    }
-    let end = candidates[endIndex] ?? body.length;
-    let entry =
-      previousMatches && start + previous.source.length === end
-        ? previous
-        : parseMarkdownPiece({
-            config,
-            indexBase: mountCount,
-            offsets,
-            source: body.slice(start, end),
-            sourceOffset: start,
-          });
-    let merges = 0;
-    while (
-      !entry.summary.hasGlobalConstructs &&
-      end < body.length &&
-      markdownPieceNeedsMerge(entry.summary, body, end)
-    ) {
-      merges += 1;
-      endIndex = merges === 1 ? endIndex + 1 : candidates.length;
-      end = candidates[endIndex] ?? body.length;
-      entry = parseMarkdownPiece({
-        config,
-        indexBase: mountCount,
-        offsets,
-        source: body.slice(start, end),
-        sourceOffset: start,
-      });
     }
     if (entry.summary.hasGlobalConstructs) {
       return null;
@@ -499,11 +674,9 @@ function resolveIncrementalMarkdownPieceEntries(
       reusingPreviousEntries = false;
     }
     entries.push(entry);
-    for (const [name, count] of entry.tagCounts) {
-      offsets.set(name, (offsets.get(name) ?? 0) + count);
-    }
+    addMarkdownTagCounts(offsets, entry.tagCounts);
     mountCount += entry.mounts.length;
-    start = end;
+    start += entry.source.length;
   }
   return entries;
 }
@@ -530,13 +703,19 @@ function refreshMarkdownElementTree(child: ReactNode): ReactNode {
   return cloneElement(child, props, refreshMarkdownElementTree(children));
 }
 
-function buildResolvedMarkdownPieces(
+interface JoinedMarkdownPieceEntries {
+  children: readonly ReactNode[];
+  mounts: readonly MountedMessageDirective[];
+  tagCounts: ReadonlyMap<string, number>;
+}
+
+function joinMarkdownPieceEntries(
   entries: readonly MarkdownPieceEntry[],
-  previousEntries: readonly MarkdownPieceEntry[],
-): ResolvedMarkdownPieces {
-  const reusedEntries = new Set(previousEntries);
+  reusedEntries: ReadonlySet<MarkdownPieceEntry>,
+): JoinedMarkdownPieceEntries {
   const children: ReactNode[] = [];
   const mounts: MountedMessageDirective[] = [];
+  const tagCounts = new Map<string, number>();
   for (const entry of entries) {
     const reused = reusedEntries.has(entry);
     if (entry.children.length > 0) {
@@ -552,11 +731,24 @@ function buildResolvedMarkdownPieces(
         reused ? { ...mount, attributes: { ...mount.attributes } } : mount,
       );
     }
+    addMarkdownTagCounts(tagCounts, entry.tagCounts);
   }
   return {
     children,
     mounts: mounts.length === 0 ? EMPTY_MOUNTED_MESSAGE_DIRECTIVES : mounts,
+    tagCounts,
   };
+}
+
+function buildResolvedMarkdownPieces(
+  entries: readonly MarkdownPieceEntry[],
+  previousEntries: readonly MarkdownPieceEntry[],
+): ResolvedMarkdownPieces {
+  const { children, mounts } = joinMarkdownPieceEntries(
+    entries,
+    new Set(previousEntries),
+  );
+  return { children, mounts };
 }
 
 export function createMarkdownPieceCache(): MarkdownPieceCache {
@@ -588,7 +780,12 @@ export function resolveMarkdownPieces(
     latchedPrefix !== null && body.startsWith(latchedPrefix);
   const attemptsPieces = previousEntries.length > 0 && !keepsLatchedPrefix;
   let entries = attemptsPieces
-    ? resolveIncrementalMarkdownPieceEntries(config, body, previousEntries)
+    ? resolveIncrementalMarkdownPieceEntries(
+        config,
+        body,
+        previousEntries,
+        TOP_LEVEL_MARKDOWN_PIECE_SCOPE,
+      )
     : null;
   if (entries === null) {
     const entry = parseMarkdownPiece({

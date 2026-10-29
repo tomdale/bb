@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  repairStreamingMarkdownTail,
   resolveStreamingMarkdown,
   splitStreamingMarkdown,
 } from "./streaming-markdown-split";
@@ -113,6 +114,51 @@ describe("splitStreamingMarkdown", () => {
       "Intro text.\n\n## Section\n\nBody paragraph.\n\nMore",
       "Intro text.\n\n## Section\n\n",
     );
+  });
+
+  it("does not split inside an open container directive", () => {
+    const text = 'Intro.\n\n:::reply{v="1"}\n### Done\n\nA.\n\n### Next\nB';
+    expectSplit(text, "Intro.\n\n");
+    expect(splitStreamingMarkdown(':::reply{v="1"}\nA.\n\nB.\n\nC')).toBeNull();
+  });
+
+  it("splits after a closed container once a blank line follows it", () => {
+    expectSplit(
+      "Intro.\n\n:::reply\nA.\n\nB.\n:::\n\nOutro.\n\nMore\nend",
+      "Intro.\n\n:::reply\nA.\n\nB.\n:::\n\nOutro.\n\n",
+    );
+  });
+
+  it("closes a container on its closer line even inside an unclosed fence", () => {
+    expectSplit(
+      ":::reply\n```\ncode\n\n:::\n\nAfter.\n\nTail\nend",
+      ":::reply\n```\ncode\n\n:::\n\nAfter.\n\n",
+    );
+  });
+
+  it("ignores container openers inside a closed fence before the container", () => {
+    expectSplit(
+      "```\n:::reply\n```\n\nOne.\n\nTwo\nend",
+      "```\n:::reply\n```\n\nOne.\n\n",
+    );
+  });
+
+  it("needs a closer with at least as many colons as the opener", () => {
+    const nested =
+      "::::outer\n:::inner\nA.\n\nB.\n:::\n\nC.\n::::\n\nD.\n\nE\nend";
+    expectSplit(nested, nested.slice(0, nested.indexOf("E")));
+    expect(
+      splitStreamingMarkdown("::::outer\n:::inner\nA.\n:::\n\nB.\n\nC"),
+    ).toBeNull();
+  });
+
+  it("treats text that only resembles an opener as prose", () => {
+    expectSplit("::: reply\nA.\n\nB.\n\nC\nend", "::: reply\nA.\n\nB.\n\n");
+  });
+
+  it("leaves a streaming container tail unrepaired so the block keeps its raw text", () => {
+    const tail = ':::reply{v="1"}\nSome **bold';
+    expect(repairStreamingMarkdownTail(tail)).toBe(tail);
   });
 });
 

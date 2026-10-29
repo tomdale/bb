@@ -133,6 +133,21 @@ markers and renders the contents in a bare `<div>`.
 - Check: `pnpm exec turbo run typecheck --filter=@bb/app`, then
   `pnpm exec turbo run test --filter=@bb/app -- src/components/ui/markdown-message-directives`.
 
+### container-streaming
+
+While a reply streams, the split between its settled part and its tail never
+falls inside an open `:::name` container, and the incremental renderer caches
+a top-level container's opener, closer, and inner pieces separately, so each
+update re-parses only the last inner piece. Depends on container-literal.
+
+- Upstream status: candidate.
+- Owned files: `apps/app/src/components/ui/markdown-container-fences.ts`.
+- Upstream files:
+  `apps/app/src/components/thread/timeline/streaming-markdown-split.ts`,
+  `apps/app/src/components/ui/markdown-incremental-pieces.ts`, and their tests.
+- Check: `pnpm exec turbo run typecheck --filter=@bb/app`, then
+  `pnpm exec turbo run test --filter=@bb/app -- src/components/ui/markdown src/components/thread/timeline/streaming-markdown-split`.
+
 ## Syncing with upstream
 
 `scripts/fork/sync` runs the whole sync. It prints nothing when `personal`

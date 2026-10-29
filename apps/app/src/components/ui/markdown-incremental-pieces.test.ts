@@ -234,6 +234,22 @@ const CURATED_DOCUMENTS: ReadonlyArray<readonly [string, string]> = [
     ':::note\nhello **world**\n\n::inline-vis{file="demo.html"}\n:::\n\nAfter.',
   ],
   [
+    "container with blank lines and a trailing paragraph",
+    ':::reply{v="1"}\n### Done\n\nA *b*.\n\n- one\n- two\n\n### Next\nC.\n:::\nAfter without a blank line.\n\nMore.',
+  ],
+  [
+    "container closed inside an unclosed fence",
+    ":::note\n```\ncode\n\n:::\n\nAfter the container.",
+  ],
+  [
+    "nested containers by colon count",
+    "::::outer\n:::inner\nA.\n\nB.\n:::\n\nC.\n::::\n\nD.",
+  ],
+  [
+    "container with a label and an invalid attribute list",
+    ":::note[Label]\nA.\n\n:::\n\n:::bad{a=}\nB.\n\nC.\n:::\n\nEnd.",
+  ],
+  [
     "glued math closer (#1778)",
     "Before the formula.\n\n$$T_{a}\n\\approx73$$\n\n## After\n\n- item\n- [link](https://example.com)",
   ],
@@ -300,6 +316,7 @@ const FUZZ_BLOCKS: readonly string[] = [
   "<pre>\npre\n\nblock</pre>",
   "<!-- comment\n\nstill comment -->",
   ":::note\nunclosed container",
+  ":::note\nclosed\n\ncontainer\n:::",
   '::inline-vis{file="a.html"}',
   "[ref]: https://example.com",
   "Use [ref] here.",
@@ -320,6 +337,15 @@ describe("findMarkdownPieceCandidates", () => {
       findMarkdownPieceCandidates("```\na\n\nb\n```\n\nc\n\n~~~\nd\n\ne"),
     ).toEqual([14, 17]);
     expect(findMarkdownPieceCandidates("$$\nx\n\ny\n$$\n\nz")).toEqual([12]);
+  });
+
+  it("does not start pieces inside a container directive", () => {
+    expect(
+      findMarkdownPieceCandidates(
+        ":::note\na\n\nb\n:::\n\nc\n\n```\n:::x\n\n```",
+      ),
+    ).toEqual([18, 21]);
+    expect(findMarkdownPieceCandidates(":::note\n```\n:::\n\nc")).toEqual([17]);
   });
 
   it("keeps loose list items together and treats only spaces and tabs as blank", () => {
@@ -390,7 +416,7 @@ describe("resolveMarkdownPieces", () => {
     }
   });
 
-  it("re-parses a growing unclosed construct from its start once per update", () => {
+  it("re-parses only the last piece of a growing unclosed container", () => {
     const recorded: string[] = [];
     const recordingConfig = createRecordingConfig(recorded);
     const cache = createMarkdownPieceCache();
@@ -401,7 +427,45 @@ describe("resolveMarkdownPieces", () => {
     expect(renderPieces(cache, grown, recordingConfig)).toEqual(
       renderWholeDocument(grown),
     );
-    expect(recorded).toEqual([":::note\nA\n\nB\n\nC"]);
+    expect(recorded).toEqual(["B\n\n", "C"]);
+  });
+
+  it("re-parses only the tail of a long container while it streams token by token", () => {
+    const sections = Array.from(
+      { length: 60 },
+      (_, index) =>
+        `### Section ${index}\n\n${"word ".repeat(30)}${index}.\n\n- item ${index}\n`,
+    ).join("\n");
+    const document = `Intro.\n\n:::reply{v="1"}\n${sections}:::\n\nOutro.`;
+    const recorded: string[] = [];
+    const recordingConfig = createRecordingConfig(recorded);
+    const cache = createMarkdownPieceCache();
+    resolveMarkdownPieces(cache, recordingConfig, "Intro.\n\n");
+    recorded.length = 0;
+    for (let end = 10; end < document.length; end += 10) {
+      resolveMarkdownPieces(cache, recordingConfig, document.slice(0, end));
+    }
+    const final = renderPieces(cache, document, recordingConfig);
+    expect(final).toEqual(renderWholeDocument(document));
+    expect(parsedLength(recorded)).toBeLessThan(document.length * 12);
+    expect(Math.max(...recorded.map((source) => source.length))).toBeLessThan(
+      400,
+    );
+  });
+
+  it("reuses a closed container unchanged while later text streams", () => {
+    const recorded: string[] = [];
+    const recordingConfig = createRecordingConfig(recorded);
+    const cache = createMarkdownPieceCache();
+    const block = ":::note\nA.\n\nB.\n:::\n";
+    resolveMarkdownPieces(cache, recordingConfig, "Intro.\n\n");
+    resolveMarkdownPieces(cache, recordingConfig, `Intro.\n\n${block}After`);
+    recorded.length = 0;
+    const grown = `Intro.\n\n${block}After more.`;
+    expect(renderPieces(cache, grown, recordingConfig)).toEqual(
+      renderWholeDocument(grown),
+    );
+    expect(recorded).toEqual(["After more."]);
   });
 
   it("splits a previous piece that ended mid-block at its internal boundaries", () => {
