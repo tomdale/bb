@@ -208,6 +208,65 @@ message, Original }` — render fenced code blocks of chosen languages in
   independently. Text streaming does not update this context, and windowed-out
   rows unmount the component. See the Plugin Guide message metadata card for the
   public contract and examples.
+- `experimental_messageBlock` → `{ data, error, status, source, index,
+message, Original }` — claim a container block in assistant-message
+  Markdown and draw a component in its place. Registration:
+  `{ name, versions, parse, toText, component }`. `name` follows the
+  directive rule (lowercase kebab-case beginning with a letter) and shares
+  one namespace with directive ids across all plugins: `reply` claims a
+  `:::reply{v="1"}` line, the block's Markdown, and a closing `:::` line.
+  Agents must write the exact syntax: no space after the colons, none before
+  the attributes, and a closer with at least as many colons as the opener.
+  The contents are ordinary Markdown, so a three-backtick code fence works
+  inside a block; a line holding only `:::` ends the block even inside such
+  a fence, so a block that must contain one uses a longer marker
+  (`::::reply` … `::::`). `versions` lists the `v` attribute values the
+  plugin renders; a missing `v` means `1`.
+  `parse(input, context)` must be pure and deterministic; the host may call
+  it repeatedly. `input` is `{ attributes, source, tree }`: untrusted string
+  attributes, the raw text between the marker lines, and bb's own mdast tree
+  of that text with positions relative to `source` (so
+  `source.slice(start.offset, end.offset)` recovers one node's Markdown for
+  `<Markdown>`). The tree includes GFM, `$$` math, directives, fenced code as
+  `code` nodes, and thread mentions as `text` nodes with
+  `data.hName === "bb-thread-mention"`; raw HTML stays as `html` string
+  nodes. Treat it as read-only. `context` is `{ version, status }`. Return
+  `{ ok: true, data }` (any `JsonValue`) or `{ ok: false, error }`.
+  `toText(data)` returns plain text for surfaces that cannot draw the
+  component; bb does not call it.
+  Props: `data` and `error` are the parse result; `status` uses the
+  `experimental_codeFenceRenderer` values: `"streaming"` (opener seen,
+  closer not yet, reply still streaming), `"closed"`, or `"unclosed"` (the
+  reply ended without a closer); `source` is the full original text
+  including the marker lines; `index` is the zero-based ordinal among blocks
+  of the same name in the message; `message` matches `messageDirective`'s;
+  `Original` renders BB's literal block (marker lines and the contents as
+  ordinary Markdown). As with code fences, BB mounts the component once per
+  block and keeps that instance while the message stays on screen, through
+  the closer arriving and the reply finishing; state that must outlive it
+  belongs under `${message.id}#${name}#${index}`. `data` is model output, so
+  validate it in the component.
+  **Host behavior / fallbacks:** only top-level blocks in assistant and
+  nested agent Markdown activate; blocks inside lists, quotes, inline code,
+  fenced code, or other containers, and every block in a user message, stay
+  literal. A streaming reply keeps an open block in one piece, and `parse`
+  runs on every update with status `"streaming"`; a failed streaming parse
+  still mounts the component with `data: null` so it can show a placeholder.
+  Anything the host cannot draw renders as `Original`. When the name belongs
+  to a registered block plugin, the host also adds a muted "Couldn't display
+  this block" line once the block is closed or unclosed and logs the reason
+  to the console: a failed or throwing final `parse`, a final `parse` over
+  4 ms, an unlisted version, more than 8 blocks in the message, contents
+  (`input.source`, without the marker lines) over 64 KiB, a crashed component (isolated to that block, retried
+  when its text or status changes), or a name claimed by more than one
+  plugin (every claimant is dropped). Names nobody registered, including a
+  disabled plugin's, show only the literal text. The raw text stays in the
+  message, so `bb thread output` and transcripts show it unchanged. Use this
+  slot for prose the agent writes in Markdown; use
+  `experimental_codeFenceRenderer` for a raw payload (JSON, HTML, a DSL)
+  whose fallback should be a code block. Reference implementation:
+  `plugins/message-block-demo`.
+  Experimental: see `docs/api_to_audit.md`.
 - `messageAction` → an action on chat messages: an icon button in the
   per-message action bar (user and assistant messages) and an entry in the
   assistant-message text-selection menu. Slot actions are limited to the main
