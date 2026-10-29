@@ -651,7 +651,11 @@ function AssistantConversationMessage({
     </>
   );
   const markdown = hasMessageBlocks ? (
-    <MessageBlockHost message={codeFenceMessage} textComplete={textComplete}>
+    <MessageBlockHost
+      message={codeFenceMessage}
+      textComplete={textComplete}
+      messageDirectives={messageDirectives}
+    >
       {previews}
     </MessageBlockHost>
   ) : (

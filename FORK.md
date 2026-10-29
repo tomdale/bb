@@ -254,7 +254,7 @@ an SDK that includes it.
 Sets `@get-bb/plugin-sdk` one patch above upstream's version, the next version
 not on npm, so plugins that use the fork's SDK additions (message-blocks) can
 require a host that has them; the reference plugin requires it. Kept as its
-own last change because every upstream SDK bump changes the same two lines.
+own change because every upstream SDK bump changes the same two lines.
 When a sync reports line drift here, rebase with upstream's version, run
 `node scripts/bump-plugin-sdk.mjs --patch` (check that the result is not on
 npm), and update `engines.bbPluginSdk` in this change and in Workstreams
@@ -267,6 +267,26 @@ npm), and update `engines.bbPluginSdk` in this change and in Workstreams
 - Check: `node .github/workflows/check-plugin-sdk-version.mjs`,
   `node packages/plugin-sdk/scripts/check-npm-version-guard.mjs`, and
   `pnpm exec turbo run test --filter=@bb/domain --filter=@get-bb/plugin-sdk`.
+
+### message-block-markdown
+
+SDK `Markdown` inside a message block renders registered inline and leaf
+message directives with the original message identity and workspace-file
+opener. Embedded visualizations can resolve thread-storage files from the
+message's thread. Each Markdown fragment has its own code-fence host, so
+registered fences in different sections cannot replace one another when their
+source offsets coincide. Fence status follows the original message's text
+completion. Standalone and document Markdown stay literal; nested message
+blocks and a directive renderer's own Markdown do not inherit directive
+rendering, preventing recursive interpretation of source previews.
+
+- Upstream status: fork-only; depends on message-blocks.
+- Owned files: `apps/app/src/components/ui/message-block-markdown.tsx`.
+- Upstream files: `apps/app/src/components/plugin/PluginMarkdown.tsx`,
+  `ConversationMessageContent.tsx`; also `markdown-message-blocks.tsx` and its
+  tests, owned by message-blocks.
+- Check: `pnpm exec turbo run typecheck build --filter=@bb/app` and
+  `pnpm exec turbo run test --filter=@bb/app -- src/components/ui src/components/thread/timeline src/components/plugin`.
 
 ## Syncing with upstream
 

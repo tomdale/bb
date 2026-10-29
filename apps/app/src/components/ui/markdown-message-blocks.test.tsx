@@ -15,9 +15,11 @@ import type {
   ExperimentalCodeFenceRendererProps,
   ExperimentalMessageBlockProps,
   ExperimentalMessageBlockRegistration,
+  PluginMessageDirectiveProps,
   JsonValue,
 } from "@get-bb/plugin-sdk";
 import { resetAllCrashedPluginSlotsForTest } from "@/components/plugin/PluginSlotMount";
+import { PluginMarkdown } from "@/components/plugin/PluginMarkdown";
 import { ConversationMessageContent } from "@/components/thread/timeline/ConversationMessageContent";
 import { ThreadTimelineRows } from "@/components/thread/timeline/ThreadTimelineRows";
 import { RouteNavigationProvider } from "@/components/ui/app-route-anchor";
@@ -758,6 +760,208 @@ describe("message blocks in conversation messages", () => {
         .querySelector('[data-testid="ui-fence"]')
         ?.getAttribute("data-code"),
     ).toBe("{ inner }");
+  });
+
+  it("renders embedded directives through SDK Markdown with the original message identity", () => {
+    const received = vi.fn();
+    function EmbeddedDirective(props: PluginMessageDirectiveProps) {
+      received(props);
+      return (
+        <div data-testid="catalog">
+          <PluginMarkdown content={props.source} />
+        </div>
+      );
+    }
+    function MarkdownCard({ data }: ExperimentalMessageBlockProps) {
+      return <PluginMarkdown content={typeof data === "string" ? data : ""} />;
+    }
+    const registry = buildMessageDirectiveRegistry(
+      [
+        {
+          id: "inline-vis",
+          pluginId: "vis",
+          generation: 1,
+          component: EmbeddedDirective,
+        },
+      ],
+      {
+        blocks: [
+          blockSlot({
+            component: MarkdownCard,
+            parse: ({ source }) => ({ ok: true, data: source }),
+          }),
+        ],
+      },
+    );
+    const directive =
+      '::inline-vis{source="thread-storage" file="catalog.html" height="1200"}';
+    const { container } = render(
+      messageElement(
+        registry,
+        "assistant",
+        `:::card\n### Examples\n\n${directive}\n\n\`\`\`text\n${directive}\n\`\`\`\n\n::unknown{file="other.html"}\n:::`,
+        false,
+      ),
+    );
+    expect(screen.getAllByTestId("catalog")).toHaveLength(1);
+    expect(received.mock.lastCall?.[0]).toMatchObject({
+      attributes: {
+        source: "thread-storage",
+        file: "catalog.html",
+        height: "1200",
+      },
+      message: {
+        id: "msg_a",
+        threadId: "thr_a",
+        turnId: "turn_a",
+        projectId: "proj_a",
+      },
+      source: directive,
+    });
+    expect(screen.getByTestId("catalog").textContent).toBe(directive);
+    expect(container.querySelector("pre")?.textContent).toContain(directive);
+    expect(container.textContent).toContain('::unknown{file="other.html"}');
+  });
+
+  it("isolates registered fences in separate SDK Markdown fragments from each other and Original", () => {
+    function MarkdownCard() {
+      return (
+        <>
+          <PluginMarkdown content={"```ui\nfirst\n```"} />
+          <PluginMarkdown content={"```ui\nsecond\n```"} />
+        </>
+      );
+    }
+    function UiFence(props: ExperimentalCodeFenceRendererProps) {
+      return (
+        <div
+          data-testid="ui-fence"
+          data-code={props.code}
+          data-status={props.status}
+          data-message={props.message.id}
+        />
+      );
+    }
+    const fenceRegistry = buildCodeFenceRendererRegistry([
+      {
+        id: "ui",
+        pluginId: "fences",
+        generation: 1,
+        languages: ["ui"],
+        component: UiFence,
+      },
+    ]);
+    const registry = buildMessageDirectiveRegistry([], {
+      blocks: [blockSlot({ component: MarkdownCard })],
+    });
+    render(
+      <CodeFenceRendererRegistryProvider registry={fenceRegistry}>
+        {messageElement(
+          registry,
+          "assistant",
+          ":::card\n```ui\noriginal\n```\n:::",
+          false,
+        )}
+      </CodeFenceRendererRegistryProvider>,
+    );
+    expect(
+      screen.getAllByTestId("ui-fence").map((fence) => ({
+        code: fence.getAttribute("data-code"),
+        status: fence.getAttribute("data-status"),
+        message: fence.getAttribute("data-message"),
+      })),
+    ).toEqual([
+      { code: "first", status: "closed", message: "msg_a" },
+      { code: "second", status: "closed", message: "msg_a" },
+    ]);
+  });
+
+  it("updates an unfinished embedded fence when its message text completes", () => {
+    function MarkdownCard() {
+      return <PluginMarkdown content={"```ui\nunfinished"} />;
+    }
+    function UiFence(props: ExperimentalCodeFenceRendererProps) {
+      return <div data-testid="ui-fence" data-status={props.status} />;
+    }
+    const fenceRegistry = buildCodeFenceRendererRegistry([
+      {
+        id: "ui",
+        pluginId: "fences",
+        generation: 1,
+        languages: ["ui"],
+        component: UiFence,
+      },
+    ]);
+    const registry = buildMessageDirectiveRegistry([], {
+      blocks: [blockSlot({ component: MarkdownCard })],
+    });
+    const element = (streaming: boolean) => (
+      <CodeFenceRendererRegistryProvider registry={fenceRegistry}>
+        {messageElement(
+          registry,
+          "assistant",
+          ":::card\n### Examples\n:::",
+          streaming,
+        )}
+      </CodeFenceRendererRegistryProvider>
+    );
+    const view = render(element(true));
+    expect(screen.getByTestId("ui-fence").getAttribute("data-status")).toBe(
+      "streaming",
+    );
+    view.rerender(element(false));
+    expect(screen.getByTestId("ui-fence").getAttribute("data-status")).toBe(
+      "unclosed",
+    );
+  });
+
+  it("does not interpret directives in document Markdown inside a message block", () => {
+    const directive = '::inline-vis{file="catalog.html"}';
+    const mount = vi.fn(() => <div data-testid="catalog" />);
+    function MarkdownCard() {
+      return (
+        <PluginMarkdown
+          content={directive}
+          experimental_document={{
+            threadId: "document-thread",
+            rootPath: "/workspace",
+            target: {
+              kind: "workspace",
+              environmentId: "env",
+              path: "/workspace/readme.md",
+            },
+          }}
+        />
+      );
+    }
+    const registry = buildMessageDirectiveRegistry(
+      [{ id: "inline-vis", pluginId: "vis", generation: 1, component: mount }],
+      { blocks: [blockSlot({ component: MarkdownCard })] },
+    );
+    render(
+      messageElement(
+        registry,
+        "assistant",
+        ":::card\n### Document\n:::",
+        false,
+      ),
+    );
+    expect(mount).not.toHaveBeenCalled();
+    expect(screen.getByText(directive)).toBeTruthy();
+  });
+
+  it("keeps standalone SDK Markdown literal even when a directive is registered", () => {
+    const mount = vi.fn(() => <div data-testid="catalog" />);
+    const registry = buildMessageDirectiveRegistry([
+      { id: "inline-vis", pluginId: "vis", generation: 1, component: mount },
+    ]);
+    render(
+      <MessageDirectiveRegistryProvider registry={registry}>
+        <PluginMarkdown content={'::inline-vis{file="catalog.html"}'} />
+      </MessageDirectiveRegistryProvider>,
+    );
+    expect(mount).not.toHaveBeenCalled();
+    expect(screen.getByText('::inline-vis{file="catalog.html"}')).toBeTruthy();
   });
 
   it("counts index per block name, not per plugin", () => {

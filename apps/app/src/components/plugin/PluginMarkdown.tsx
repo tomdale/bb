@@ -10,6 +10,7 @@ import { buildMarkdownMessageLinkRouting } from "@/components/ui/markdown-messag
 import type { MarkdownPreviewLinkHandler } from "@/components/ui/markdown-link";
 import { useThreadTimelineNavigation } from "@/components/thread/timeline/ThreadTimelineNavigationContext";
 import { useAppNavigationHost } from "@/lib/app-navigation-host";
+import { MessageBlockMarkdown } from "@/components/ui/message-block-markdown";
 
 const PLUGIN_MARKDOWN_THREAD_MENTIONS: MarkdownThreadMentions = {
   mentions: [],
@@ -54,12 +55,17 @@ export function PluginMarkdown({
   ]);
 
   return (
-    <MarkdownPreview
-      allowHtml
-      content={content}
-      className={className}
-      linkRouting={linkRouting}
-      threadMentions={PLUGIN_MARKDOWN_THREAD_MENTIONS}
-    />
+    <MessageBlockMarkdown inheritMessage={experimental_document === undefined}>
+      {(messageDirectives) => (
+        <MarkdownPreview
+          allowHtml
+          content={content}
+          className={className}
+          linkRouting={linkRouting}
+          messageDirectives={messageDirectives}
+          threadMentions={PLUGIN_MARKDOWN_THREAD_MENTIONS}
+        />
+      )}
+    </MessageBlockMarkdown>
   );
 }
