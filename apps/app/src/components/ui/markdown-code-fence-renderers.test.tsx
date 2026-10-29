@@ -91,6 +91,7 @@ function assistantMessage(
             threadId="thr_a"
             turnId="turn_a"
             streaming={streaming}
+            textComplete={!streaming}
             showActions={false}
             mobileActionDisplay="inline"
             text={text}
@@ -112,7 +113,7 @@ function hostedMarkdown(
     <CodeFenceRendererHost
       registry={registry}
       message={MESSAGE}
-      streaming={streaming}
+      textComplete={!streaming}
     >
       <MarkdownPreview content={content} />
     </CodeFenceRendererHost>
