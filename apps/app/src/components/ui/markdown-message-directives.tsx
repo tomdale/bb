@@ -13,7 +13,20 @@ import {
   resolveMessageDirectiveRegistry,
   type ResolvedMessageDirective,
 } from "@/lib/plugin-slot-resolvers.js";
-import type { PluginMessageDirectiveSlot } from "@/lib/plugin-slots.js";
+import type {
+  PluginMessageBlockSlot,
+  PluginMessageDirectiveSlot,
+} from "@/lib/plugin-slots.js";
+import {
+  claimMessageBlock,
+  containerDirectiveParts,
+  literalContainerDirectiveChildren,
+  MESSAGE_BLOCK_HAST_NAME,
+  MESSAGE_BLOCK_OFFSET_PROPERTY,
+  messageBlockFromContainerNode,
+  normalizeDirectiveAttributes,
+  type MountedMessageBlock,
+} from "./markdown-message-block-parts.js";
 
 export const MESSAGE_DIRECTIVE_MOUNT_LIMIT = 32;
 
@@ -53,24 +66,6 @@ interface DirectiveNode {
   };
 }
 
-type ContainerDirectiveNode = Extract<
-  RootContent,
-  { type: "containerDirective" }
->;
-
-export interface ContainerDirectiveParts {
-  closed: boolean;
-  closer: string | null;
-  content: RootContent[];
-  innerEnd: number;
-  innerStart: number;
-  opener: string;
-  source: string;
-}
-
-const CONTAINER_OPEN_SEQUENCE_PATTERN = /^[ \t]*(:{3,})/u;
-const CONTAINER_CLOSE_LINE_PATTERN = /^[ \t]*(:{3,})[ \t]*$/u;
-
 const DIRECTIVE_MARKERS: Record<DirectiveNodeType, string> = {
   textDirective: ":",
   leafDirective: "::",
@@ -94,14 +89,20 @@ declare module "react" {
 
 export function buildMessageDirectiveRegistry(
   slots: readonly PluginMessageDirectiveSlot[],
-  options?: { warn?: (message: string) => void },
+  options?: {
+    blocks?: readonly PluginMessageBlockSlot[];
+    warn?: (message: string) => void;
+  },
 ): MessageDirectiveRegistry {
   const warn = options?.warn ?? defaultCollisionWarn;
-  const registry = resolveMessageDirectiveRegistry(slots);
+  const registry = resolveMessageDirectiveRegistry(slots, options?.blocks);
   for (const [id, directive] of registry) {
     if (directive.status === "collision") {
+      const kind = directive.kinds.includes("block")
+        ? "message block"
+        : "message directive";
       warn(
-        `[plugin] message directive "${id}" claimed by multiple plugins (${directive.pluginIds.join(", ")}); rendering as literal text`,
+        `[plugin] ${kind} "${id}" claimed by multiple plugins (${directive.pluginIds.join(", ")}); rendering as literal text`,
       );
     }
   }
@@ -110,21 +111,6 @@ export function buildMessageDirectiveRegistry(
 
 function defaultCollisionWarn(message: string): void {
   console.warn(message);
-}
-
-export function normalizeDirectiveAttributes(
-  attributes: Record<string, string | null | undefined> | null | undefined,
-): Record<string, string> {
-  if (attributes === null || attributes === undefined) {
-    return {};
-  }
-  const normalized: Record<string, string> = {};
-  for (const [key, value] of Object.entries(attributes)) {
-    if (typeof value === "string") {
-      normalized[key] = value;
-    }
-  }
-  return normalized;
 }
 
 export function reconstructDirectiveSource(
@@ -161,84 +147,6 @@ function directiveSourceFromNode(
     return markdownSource.slice(start, end);
   }
   return reconstructDirectiveSource(name, attributes, marker);
-}
-
-function trimCarriageReturn(line: string): string {
-  return line.endsWith("\r") ? line.slice(0, -1) : line;
-}
-
-export function containerDirectiveParts(
-  node: ContainerDirectiveNode,
-  markdownSource: string,
-): ContainerDirectiveParts {
-  const content = node.children.filter(
-    (child) =>
-      child.type !== "paragraph" || child.data?.directiveLabel !== true,
-  );
-  const start = node.position?.start.offset;
-  const end = node.position?.end.offset;
-  if (
-    typeof start !== "number" ||
-    typeof end !== "number" ||
-    start < 0 ||
-    end < start ||
-    end > markdownSource.length
-  ) {
-    const opener = reconstructDirectiveSource(
-      node.name,
-      normalizeDirectiveAttributes(node.attributes),
-      ":::",
-    );
-    return {
-      closed: false,
-      closer: null,
-      content,
-      innerEnd: 0,
-      innerStart: 0,
-      opener,
-      source: opener,
-    };
-  }
-  const source = markdownSource.slice(start, end);
-  const openerEnd = source.indexOf("\n");
-  const opener = trimCarriageReturn(
-    openerEnd === -1 ? source : source.slice(0, openerEnd),
-  );
-  const innerStart = openerEnd === -1 ? end : start + openerEnd + 1;
-  const lastLineStart = source.lastIndexOf("\n") + 1;
-  const lastLine = trimCarriageReturn(source.slice(lastLineStart));
-  const openSize = CONTAINER_OPEN_SEQUENCE_PATTERN.exec(opener)?.[1]?.length;
-  const closeSize = CONTAINER_CLOSE_LINE_PATTERN.exec(lastLine)?.[1]?.length;
-  const lastContentEnd = content.at(-1)?.position?.end.offset ?? innerStart;
-  const closed =
-    openerEnd !== -1 &&
-    openSize !== undefined &&
-    closeSize !== undefined &&
-    closeSize >= openSize &&
-    lastContentEnd <= start + lastLineStart;
-  return {
-    closed,
-    closer: closed ? lastLine.trim() : null,
-    content,
-    innerEnd: closed ? start + lastLineStart : end,
-    innerStart,
-    opener,
-    source,
-  };
-}
-
-function literalParagraph(value: string): RootContent {
-  return { type: "paragraph", children: [{ type: "text", value }] };
-}
-
-export function literalContainerDirectiveChildren(
-  parts: ContainerDirectiveParts,
-): RootContent[] {
-  return [
-    literalParagraph(parts.opener),
-    ...parts.content,
-    ...(parts.closer === null ? [] : [literalParagraph(parts.closer)]),
-  ];
 }
 
 function messageDirectiveMountNode(index: number): RootContent {
@@ -331,7 +239,9 @@ function gluedDirectiveSyntax(registry: MessageDirectiveRegistry): Extension {
                 }
               }
               const entry = registry.get(name);
-              return hasAttributes && entry?.status === "ok"
+              return hasAttributes &&
+                entry?.status === "ok" &&
+                entry.kind === "directive"
                 ? ok(code)
                 : nok(code);
             },
@@ -358,13 +268,24 @@ function gluedDirectiveSyntax(registry: MessageDirectiveRegistry): Extension {
 export function remarkMessageDirectives(
   this: Processor,
   args: {
+    blockMounts: MountedMessageBlock[];
     indexBase: number;
     limit: number;
     mounts: MountedMessageDirective[];
     registry: MessageDirectiveRegistry;
+    sourceOffset: number;
+    topLevel: boolean;
   },
 ) {
-  const { indexBase, limit, mounts, registry } = args;
+  const {
+    blockMounts,
+    indexBase,
+    limit,
+    mounts,
+    registry,
+    sourceOffset,
+    topLevel,
+  } = args;
   const data = this.data();
   const extensions =
     data.micromarkExtensions ?? (data.micromarkExtensions = []);
@@ -373,17 +294,42 @@ export function remarkMessageDirectives(
     const markdownSource =
       typeof file.value === "string" ? file.value : String(file.value ?? "");
     mounts.length = 0;
+    blockMounts.length = 0;
     visit(tree, (node, index, parent: Parent | undefined) => {
       if (parent === undefined || index === undefined) return;
       if (node.type === "containerDirective") {
-        parent.children.splice(
-          index,
-          1,
-          ...literalContainerDirectiveChildren(
-            containerDirectiveParts(node, markdownSource),
-          ),
+        const parts = containerDirectiveParts(node, markdownSource);
+        const claim =
+          topLevel && parent.type === "root"
+            ? claimMessageBlock(registry.get(node.name))
+            : null;
+        const offset = node.position?.start.offset;
+        if (claim === null || offset === undefined) {
+          parent.children.splice(
+            index,
+            1,
+            ...literalContainerDirectiveChildren(parts),
+          );
+          return [SKIP, index];
+        }
+        blockMounts.push(
+          messageBlockFromContainerNode({
+            claim,
+            markdownSource,
+            node,
+            offset: sourceOffset + offset,
+            parts,
+          }),
         );
-        return [SKIP, index];
+        node.children = literalContainerDirectiveChildren(parts);
+        node.data = {
+          ...node.data,
+          hName: MESSAGE_BLOCK_HAST_NAME,
+          hProperties: {
+            [MESSAGE_BLOCK_OFFSET_PROPERTY]: String(sourceOffset + offset),
+          },
+        };
+        return;
       }
       const paragraph = node.type === "paragraph" ? node : null;
       const leadingDirective = asDirectiveNode(paragraph?.children[0]);
@@ -412,6 +358,7 @@ export function remarkMessageDirectives(
         name.length === 0 ||
         entry === undefined ||
         entry.status === "collision" ||
+        entry.kind !== "directive" ||
         mounts.length >= limit
       ) {
         if (isGlued) return;
