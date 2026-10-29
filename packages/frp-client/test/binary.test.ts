@@ -10,7 +10,13 @@ import {
   installFrp,
   resolveFrpc,
 } from "../src/binary.js";
-import { cachedDownload } from "../src/testing/frp-fixture.js";
+import {
+  REAL_FRP_TESTS_ENABLED,
+  cachedDownload,
+} from "../src/testing/frp-fixture.js";
+
+const describeRealFrp = describe.runIf(REAL_FRP_TESTS_ENABLED);
+const itRealFrp = it.runIf(REAL_FRP_TESTS_ENABLED);
 
 let dir: string;
 
@@ -48,7 +54,7 @@ describe("frpArchiveFor", () => {
   });
 });
 
-describe("installFrp with the real release archives", () => {
+describeRealFrp("installFrp with the real release archives", () => {
   it("verifies, extracts and installs frpc for this machine", async () => {
     const target = path.join(dir, "native");
     const binary = await installFrp({
@@ -119,13 +125,17 @@ describe("resolveFrpc", () => {
     ).rejects.toThrow(/BB_CONNECT_FRPC names/u);
   });
 
-  it("installs into <data dir>/frp/<version>", async () => {
-    const dataDir = path.join(dir, "data");
-    const binary = await resolveFrpc({
-      dataDir,
-      env: {},
-      download: cachedDownload(process.platform, process.arch),
-    });
-    expect(path.dirname(binary)).toBe(path.join(dataDir, "frp", FRP_VERSION));
-  }, 180_000);
+  itRealFrp(
+    "installs into <data dir>/frp/<version>",
+    async () => {
+      const dataDir = path.join(dir, "data");
+      const binary = await resolveFrpc({
+        dataDir,
+        env: {},
+        download: cachedDownload(process.platform, process.arch),
+      });
+      expect(path.dirname(binary)).toBe(path.join(dataDir, "frp", FRP_VERSION));
+    },
+    180_000,
+  );
 });
