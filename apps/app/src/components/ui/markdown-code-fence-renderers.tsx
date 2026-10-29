@@ -5,7 +5,6 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
-  useState,
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
@@ -19,6 +18,11 @@ import { visit } from "unist-util-visit";
 import { PluginSlotMount } from "@/components/plugin/PluginSlotMount.js";
 import { resolveCodeFenceRendererRegistry } from "@/lib/plugin-slot-resolvers.js";
 import type { PluginCodeFenceRendererSlot } from "@/lib/plugin-slots.js";
+import {
+  useSlotPortals,
+  type SlotPortalHost,
+  type SlotPortalReconciliation,
+} from "./markdown-slot-portals.js";
 import {
   closesAnyIndentMarkdownFence,
   parseMarkdownFenceStart,
@@ -118,18 +122,22 @@ interface CodeFenceBlock {
   original: ReactNode;
 }
 
-interface CodeFenceEntry {
-  block: CodeFenceBlock | null;
-  container: HTMLDivElement;
-  offset: number;
-  placeholder: HTMLElement | null;
+interface CodeFenceHost extends SlotPortalHost<CodeFenceBlock> {
+  registry: CodeFenceRendererRegistry;
 }
 
-interface CodeFenceHost {
-  registry: CodeFenceRendererRegistry;
-  attach: (offset: number, placeholder: HTMLElement) => void;
-  detach: (offset: number, placeholder: HTMLElement) => void;
-  update: (offset: number, block: CodeFenceBlock) => void;
+function reconcileCodeFenceBlock(
+  previous: CodeFenceBlock | null,
+  next: CodeFenceBlock,
+): SlotPortalReconciliation<CodeFenceBlock> {
+  return {
+    block: next,
+    changed:
+      previous === null ||
+      previous.code !== next.code ||
+      previous.closed !== next.closed ||
+      previous.language !== next.language,
+  };
 }
 
 const CodeFenceHostContext = createContext<CodeFenceHost | null>(null);
@@ -152,29 +160,6 @@ function CodeFenceOriginal() {
   return <>{useContext(CodeFenceOriginalContext)}</>;
 }
 
-function placeCodeFenceContainer(
-  parent: HTMLElement,
-  container: HTMLDivElement,
-): void {
-  if (container.parentNode === parent) {
-    return;
-  }
-  if (
-    container.isConnected &&
-    parent.isConnected &&
-    typeof parent.moveBefore === "function"
-  ) {
-    try {
-      parent.moveBefore(container, null);
-      return;
-    } catch {
-      parent.appendChild(container);
-      return;
-    }
-  }
-  parent.appendChild(container);
-}
-
 export function useCodeFenceLanguages(): CodeFenceRendererRegistry | null {
   const registry = useContext(CodeFenceHostContext)?.registry;
   return registry === undefined || registry.size === 0 ? null : registry;
@@ -187,79 +172,22 @@ interface CodeFenceRendererHostProps {
   streaming: boolean;
 }
 
-function orderCodeFenceEntries(
-  entries: ReadonlyMap<number, CodeFenceEntry>,
-): CodeFenceEntry[] {
-  return [...entries.values()].sort(
-    (left, right) => left.offset - right.offset,
-  );
-}
-
 export function CodeFenceRendererHost({
   children,
   message,
   registry,
   streaming,
 }: CodeFenceRendererHostProps) {
-  const [entries] = useState(() => new Map<number, CodeFenceEntry>());
-  const parkingRef = useRef<HTMLDivElement>(null);
-  const [ordered, setOrdered] = useState<readonly CodeFenceEntry[]>([]);
+  const {
+    entries: ordered,
+    host: portals,
+    parkingRef,
+  } = useSlotPortals(reconcileCodeFenceBlock);
 
-  const host = useMemo((): CodeFenceHost => {
-    const rerender = () => setOrdered(orderCodeFenceEntries(entries));
-    return {
-      registry,
-      attach(offset, placeholder) {
-        let entry = entries.get(offset);
-        if (entry === undefined) {
-          entry = {
-            block: null,
-            container: document.createElement("div"),
-            offset,
-            placeholder,
-          };
-          entries.set(offset, entry);
-        } else {
-          entry.placeholder = placeholder;
-        }
-        placeCodeFenceContainer(placeholder, entry.container);
-      },
-      detach(offset, placeholder) {
-        const entry = entries.get(offset);
-        if (entry === undefined || entry.placeholder !== placeholder) {
-          return;
-        }
-        entry.placeholder = null;
-        if (parkingRef.current !== null) {
-          placeCodeFenceContainer(parkingRef.current, entry.container);
-        }
-        queueMicrotask(() => {
-          if (entry.placeholder !== null || entries.get(offset) !== entry) {
-            return;
-          }
-          entry.container.remove();
-          entries.delete(offset);
-          rerender();
-        });
-      },
-      update(offset, block) {
-        const entry = entries.get(offset);
-        if (entry === undefined) {
-          return;
-        }
-        const previous = entry.block;
-        entry.block = block;
-        if (
-          previous === null ||
-          previous.code !== block.code ||
-          previous.closed !== block.closed ||
-          previous.language !== block.language
-        ) {
-          rerender();
-        }
-      },
-    };
-  }, [entries, registry]);
+  const host = useMemo(
+    (): CodeFenceHost => ({ ...portals, registry }),
+    [portals, registry],
+  );
 
   const ordinals = new Map<string, number>();
   const mounts: ReactNode[] = [];
