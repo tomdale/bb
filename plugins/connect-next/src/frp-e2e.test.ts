@@ -12,6 +12,7 @@ import { FRP_CREDENTIAL_META } from "@bb/tunnel-contract/next";
 import { createConnectNextPlugin } from "./plugin.js";
 import { FakeAccount } from "./testing/fake-account.js";
 import {
+  REAL_FRP_TESTS_ENABLED,
   GATE_REFUSAL_REASON,
   PROXY_REFUSAL_REASON,
   installTestFrp,
@@ -188,7 +189,9 @@ async function startDevServer() {
   };
 }
 
-describe("connect next with real frpc and frps", () => {
+const describeRealFrp = describe.runIf(REAL_FRP_TESTS_ENABLED);
+
+describeRealFrp("connect next with real frpc and frps", () => {
   it("reaches the origin through frps's vhost with the server's label and credential", async () => {
     const current = await load({ server: localServer() });
     current.account.signIn({
@@ -538,7 +541,7 @@ describe("connect next with real frpc and frps", () => {
   }, 60_000);
 });
 
-describe.runIf(await opensslAvailable())(
+describe.runIf(REAL_FRP_TESTS_ENABLED && (await opensslAvailable()))(
   "connect next over wss with real frpc",
   () => {
     it("verifies the gate's certificate", async () => {

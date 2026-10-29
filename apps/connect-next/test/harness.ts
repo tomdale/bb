@@ -553,6 +553,11 @@ export interface FrpcProcess {
 }
 
 export async function startFrpc(options: FrpcOptions): Promise<FrpcProcess> {
+  if (process.env.BB_RUN_REAL_FRP_TESTS !== "1") {
+    throw new Error(
+      "Real FRP tests require BB_RUN_REAL_FRP_TESTS=1 in an approved test environment.",
+    );
+  }
   const dir = await mkdtemp(join(tmpdir(), "bb-frpc-test-"));
   const config = {
     serverAddr: `tunnel.${BASE_DOMAIN}`,
