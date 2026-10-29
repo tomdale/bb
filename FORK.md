@@ -84,6 +84,29 @@ automation runs it from the `personal` checkout.
 - Check: `scripts/fork/sync --onto <ref> --no-verify` against a test commit on
   top of `upstream/main`.
 
+### real-frp-tests
+
+Real FRP tests are disabled by default across the client, host daemon, server,
+Connect Next gateway, and Connect Next plugin. They require
+`BB_RUN_REAL_FRP_TESTS=1` in an approved test environment. Routine tests retain
+unit coverage and report the binary-backed cases as skipped. The fixture
+helpers reject download, installation, and launch before side effects when
+opt-in is absent. Cached archives and binaries do not bypass the guard.
+
+Turbo declares the variable for every affected test task and includes it in
+the cache key.
+
+- Upstream status: candidate.
+- Upstream files: `packages/frp-client/src/testing/frp-fixture.ts`, its binary,
+  cache, and supervisor tests; the host-daemon Connect Next test; the server
+  tunnel-ingress test; the Connect Next plugin FRP test; the Connect Next
+  gateway binary fixture and harness; `turbo.json`.
+- Owned files: `packages/frp-client/test/fixture-safety.test.ts` and
+  `apps/connect-next/test/frp-binaries.test.ts`.
+- Check: `pnpm exec turbo run typecheck test --filter=@bb/frp-client --filter=@bb/connect-next --filter=bb-plugin-bb--connect-next --filter=@bb/host-daemon --filter=@bb/server`.
+  Leave `BB_RUN_REAL_FRP_TESTS` unset for routine verification. Guard regression
+  tests use mocked effects and do not unpack or run FRP.
+
 ## Syncing with upstream
 
 `scripts/fork/sync` runs the whole sync. It prints nothing when `personal`

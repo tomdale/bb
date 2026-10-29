@@ -22,6 +22,7 @@ import {
 } from "@bb/tunnel-contract/next";
 import { serverTunnelIngress } from "bb-plugin-bb--connect-next/src/ingress.js";
 import {
+  REAL_FRP_TESTS_ENABLED,
   VHOST_DOMAIN,
   installTestFrp,
   startFrps,
@@ -221,6 +222,8 @@ function closeSocket(socket: WebSocket): Promise<void> {
     socket.close();
   });
 }
+
+const itRealFrp = it.runIf(REAL_FRP_TESTS_ENABLED);
 
 describe("bb connect next tunnel ingress", () => {
   let nowMs: number;
@@ -769,7 +772,7 @@ describe("bb connect next tunnel ingress", () => {
     expect(await canBind(port)).toBe(true);
   });
 
-  it("carries gate-signed requests through real frps and the connect-next plugin's frpc", async () => {
+  itRealFrp("carries gate-signed requests through real frps and the connect-next plugin's frpc", async () => {
     setExperiments(server.db, { websocketCompression: true });
     const binaries = await installTestFrp(join(workDir, "bin"));
     const hooks = await startGateHooks(() => "bbcred_ingress");
