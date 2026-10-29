@@ -95,6 +95,20 @@ function loadSdkTypes() {
     return [...new Set(members(type).map((member) => member.name))];
   }
 
+  function hasFields(type: ts.Type): boolean {
+    const primitive =
+      ts.TypeFlags.StringLike |
+      ts.TypeFlags.NumberLike |
+      ts.TypeFlags.BigIntLike |
+      ts.TypeFlags.BooleanLike |
+      ts.TypeFlags.ESSymbolLike |
+      ts.TypeFlags.VoidLike |
+      ts.TypeFlags.Null;
+    return (
+      (type.flags & primitive) === 0 && type.getNumberIndexType() === undefined
+    );
+  }
+
   function receivedFields(member: ts.Symbol): string[] {
     const received = parts(
       checker.getNonNullableType(checker.getTypeOfSymbol(member)),
@@ -104,7 +118,10 @@ function loadSdkTypes() {
         ...part.getConstructSignatures(),
       ])
       .flatMap((signature) => signature.getParameters().slice(0, 1))
-      .flatMap((parameter) => fields(checker.getTypeOfSymbol(parameter)));
+      .flatMap((parameter) =>
+        parts(checker.getTypeOfSymbol(parameter)).filter(hasFields),
+      )
+      .flatMap((part) => fields(part));
     return [...new Set(received)];
   }
 

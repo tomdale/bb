@@ -2343,12 +2343,16 @@ function ThreadTimelineRowsForTimelineView(props: ThreadTimelineRowsProps) {
   );
   const projectId = props.projectId;
   const messageDirectiveSlots = usePluginSlotKind("messageDirectives");
+  const messageBlockSlots = usePluginSlotKind("messageBlocks");
   const codeFenceRendererSlots = usePluginSlotKind("codeFenceRenderers");
   const messageActionSlots = usePluginSlotKind("messageActions");
   const messageMetadataSlots = usePluginSlotKind("messageMetadata");
   const messageDirectiveRegistry = useMemo(
-    () => buildMessageDirectiveRegistry(messageDirectiveSlots),
-    [messageDirectiveSlots],
+    () =>
+      buildMessageDirectiveRegistry(messageDirectiveSlots, {
+        blocks: messageBlockSlots,
+      }),
+    [messageDirectiveSlots, messageBlockSlots],
   );
   const codeFenceRendererRegistry = useMemo(
     () => buildCodeFenceRendererRegistry(codeFenceRendererSlots),

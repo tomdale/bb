@@ -25,8 +25,10 @@ import {
   type MountedMessageDirective,
 } from "./markdown-message-directives";
 import { remarkThreadMentions } from "./markdown-thread-mentions";
+import type { MountedMessageBlock } from "./markdown-message-block-parts";
 
 interface RenderedMarkdownDocument {
+  blocks: readonly string[];
   html: string;
   keys: readonly string[];
   mounts: readonly string[];
@@ -54,8 +56,22 @@ export const config: MarkdownPieceRenderConfig = {
 export function describeMarkdownChildren(
   children: readonly ReactNode[],
   mounts: readonly MountedMessageDirective[],
+  blockMounts: readonly MountedMessageBlock[] = [],
 ): RenderedMarkdownDocument {
   return {
+    blocks: blockMounts.map((mount) =>
+      JSON.stringify({
+        attributes: mount.attributes,
+        closed: mount.closed,
+        inner: mount.inner,
+        name: mount.name,
+        offset: mount.offset,
+        oversized: mount.oversized,
+        plugin: mount.slot?.pluginId ?? null,
+        source: mount.source,
+        tree: mount.tree,
+      }),
+    ),
     html: renderToStaticMarkup(createElement(Fragment, null, ...children)),
     keys: children.map((child) =>
       isValidElement(child) ? `key:${String(child.key)}` : "text",
@@ -71,6 +87,7 @@ export function renderWholeDocument(
   renderConfig: MarkdownPieceRenderConfig = config,
 ): RenderedMarkdownDocument {
   const mounts: MountedMessageDirective[] = [];
+  const blockMounts: MountedMessageBlock[] = [];
   const element = ReactMarkdown({
     children: body,
     components: renderConfig.components,
@@ -80,10 +97,13 @@ export function renderWholeDocument(
       [
         remarkMessageDirectives,
         {
+          blockMounts,
           indexBase: 0,
           limit: MESSAGE_DIRECTIVE_MOUNT_LIMIT,
           mounts,
-          registry,
+          registry: renderConfig.messageDirectiveRegistry ?? registry,
+          sourceOffset: 0,
+          topLevel: true,
         },
       ],
     ],
@@ -97,6 +117,7 @@ export function renderWholeDocument(
         ? children
         : [children],
     mounts,
+    blockMounts,
   );
 }
 
@@ -106,7 +127,11 @@ export function renderPieces(
   renderConfig: MarkdownPieceRenderConfig = config,
 ): RenderedMarkdownDocument {
   const result = resolveMarkdownPieces(cache, renderConfig, body);
-  return describeMarkdownChildren(result.children, result.mounts);
+  return describeMarkdownChildren(
+    result.children,
+    result.mounts,
+    result.blockMounts,
+  );
 }
 
 export function expectPiecesMatchWholeDocument(

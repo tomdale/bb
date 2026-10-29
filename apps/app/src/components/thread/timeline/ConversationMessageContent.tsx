@@ -54,7 +54,11 @@ import {
 import {
   CodeFenceRendererHost,
   useCodeFenceRendererRegistry,
-} from "@/components/ui/markdown-code-fence-renderers.js";
+} from "@/components/ui/markdown-code-fence-renderers";
+import {
+  MessageBlockHost,
+  registryHasMessageBlocks,
+} from "@/components/ui/markdown-message-blocks.js";
 import {
   boundedMarkdownPreview,
   closeUnterminatedMarkdownCodeSpan,
@@ -576,7 +580,8 @@ function AssistantConversationMessage({
     () => ({ id, threadId, turnId, projectId: projectId ?? null }),
     [id, threadId, turnId, projectId],
   );
-  const markdown = (
+  const hasMessageBlocks = registryHasMessageBlocks(messageDirectiveRegistry);
+  const previews = (
     <>
       <MarkdownPreview
         allowHtml
@@ -606,6 +611,13 @@ function AssistantConversationMessage({
         />
       )}
     </>
+  );
+  const markdown = hasMessageBlocks ? (
+    <MessageBlockHost message={codeFenceMessage} streaming={streaming}>
+      {previews}
+    </MessageBlockHost>
+  ) : (
+    previews
   );
 
   return (
