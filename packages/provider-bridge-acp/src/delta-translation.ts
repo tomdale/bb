@@ -1097,7 +1097,7 @@ export function createAcpDeltaTranslator(
         if (!params.success) {
           return [];
         }
-        return drainOpenToolCalls(context, "interrupted");
+        return flushOpenTurnWork(context, "interrupted");
       }
 
       case ACP_TURN_COMPLETED_METHOD: {
