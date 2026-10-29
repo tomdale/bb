@@ -54,6 +54,10 @@ import {
   useMessageDirectives,
 } from "@/components/ui/message-markdown-slots.js";
 import {
+  MessageBlockHost,
+  registryHasMessageBlocks,
+} from "@/components/ui/markdown-message-blocks.js";
+import {
   boundedMarkdownPreview,
   closeUnterminatedMarkdownCodeSpan,
   USER_MESSAGE_CHAR_CAP,
@@ -543,7 +547,10 @@ function AssistantConversationMessage({
     slotMessage,
     openDirectiveWorkspaceFile,
   );
-  const markdown = (
+  const hasMessageBlocks = registryHasMessageBlocks(
+    messageDirectives?.registry ?? null,
+  );
+  const previews = (
     <>
       <MarkdownPreview
         allowHtml
@@ -573,6 +580,13 @@ function AssistantConversationMessage({
         />
       )}
     </>
+  );
+  const markdown = hasMessageBlocks ? (
+    <MessageBlockHost message={slotMessage} streaming={streaming}>
+      {previews}
+    </MessageBlockHost>
+  ) : (
+    previews
   );
 
   return (

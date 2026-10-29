@@ -317,6 +317,8 @@ Crash isolation stays local to the slot. Additive slots can show a crash chip
 or nothing. Replacement slots fall back to the native list or renderer.
 `messageDirective` falls back to the original source text.
 `experimental_codeFenceRenderer` falls back to BB's code block (`Original`).
+`experimental_messageBlock` falls back to the block's literal text (`Original`),
+noting a closed or unclosed block that a registered block plugin could not draw.
 
 Styling: Tailwind classes compile against the host theme's live CSS
 variables — use host token classes (`bg-card`, `text-foreground`,
