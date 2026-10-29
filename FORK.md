@@ -232,6 +232,25 @@ still wins over a leading heading in ordinary Markdown.
 - Upstream files: `plugins/push-notifications/notification-text.ts`.
 - Check: `pnpm exec turbo run typecheck lint test --filter=bb-plugin-push-notifications`.
 
+### plugin-sdk-version
+
+Sets `@get-bb/plugin-sdk` one patch above upstream's version, the next version
+not on npm, so plugins that use the fork's SDK additions (message-blocks) can
+require a host that has them; the reference plugin requires it. Kept as its
+own last change because every upstream SDK bump changes the same two lines.
+When a sync reports line drift here, rebase with upstream's version, run
+`node scripts/bump-plugin-sdk.mjs --patch` (check that the result is not on
+npm), and update `engines.bbPluginSdk` in this change and in Workstreams
+(toolbelt `bb-plugin-workstreams`).
+
+- Upstream status: fork-only.
+- Upstream files: `packages/domain/src/plugin-sdk-version.ts`,
+  `packages/plugin-sdk/package.json`; also
+  `plugins/message-block-demo/package.json`, owned by message-blocks.
+- Check: `node .github/workflows/check-plugin-sdk-version.mjs`,
+  `node packages/plugin-sdk/scripts/check-npm-version-guard.mjs`, and
+  `pnpm exec turbo run test --filter=@bb/domain --filter=@get-bb/plugin-sdk`.
+
 ## Syncing with upstream
 
 `scripts/fork/sync` runs the whole sync. It prints nothing when `personal`

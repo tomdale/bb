@@ -6,7 +6,7 @@
   "description": "Reference plugin for message blocks: draws :::demo-card blocks in assistant messages as a card with one section per heading.",
   "engines": {
     "bb": ">=0.0",
-    "bbPluginSdk": ">=0.6.99"
+    "bbPluginSdk": ">=0.6.100"
   },
   "bb": {
     "name": "Message block demo",
