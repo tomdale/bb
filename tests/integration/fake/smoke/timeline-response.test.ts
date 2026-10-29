@@ -19,6 +19,7 @@ const ASSISTANT_ROW = {
   text: "Done",
   attachments: null,
   turnRequest: null,
+  textComplete: true,
 } satisfies TimelineRow;
 
 const USER_ROW = {

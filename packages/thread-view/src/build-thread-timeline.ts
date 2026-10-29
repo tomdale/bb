@@ -559,6 +559,7 @@ function convertMessage(
           text: message.text,
           attachments: null,
           turnRequest: null,
+          textComplete: message.status === "completed",
         },
       ];
     case "command":

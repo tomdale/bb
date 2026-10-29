@@ -41,7 +41,13 @@ export function conversationRow(args: {
     text,
   };
   if (role === "assistant") {
-    return { ...common, role, attachments: null, turnRequest: null };
+    return {
+      ...common,
+      role,
+      attachments: null,
+      turnRequest: null,
+      textComplete: true,
+    };
   }
   return {
     ...common,
