@@ -21,6 +21,9 @@ import { PaneThreadActionCommandHandler } from "./PaneThreadActionCommandHandler
 const mocks = vi.hoisted(() => ({
   requestArchiveThreads: vi.fn<(threads: readonly Thread[]) => void>(),
   requestDeleteThreads: vi.fn(),
+  copyToClipboardWithToast: vi.fn<
+    typeof import("@/lib/clipboard").copyToClipboardWithToast
+  >(async () => true),
 }));
 const sdkThreads = vi.hoisted(() => ({
   pin: vi.fn(),
@@ -33,7 +36,11 @@ const sdkThreads = vi.hoisted(() => ({
 
 const testState = vi.hoisted(() => {
   const keybinding = (
-    command: "thread.archive" | "thread.markRead" | "thread.pin",
+    command:
+      | "thread.copyLink"
+      | "thread.archive"
+      | "thread.markRead"
+      | "thread.pin",
     key: string,
   ) => ({
     command,
@@ -44,20 +51,28 @@ const testState = vi.hoisted(() => {
       meta: false,
       control: false,
       alt: false,
-      shift: true,
+      shift: false,
     },
-    when: { all: ["mainSurface" as const], none: ["modalOpen" as const] },
+    when: {
+      all: ["mainSurface" as const],
+      none: ["modalOpen" as const, "browserFocus" as const],
+    },
   });
   return {
     keybindings: [
       keybinding("thread.archive", "a"),
       keybinding("thread.markRead", "m"),
       keybinding("thread.pin", "p"),
+      keybinding("thread.copyLink", "l"),
     ],
   };
 });
 
 vi.mock("@/lib/sdk", () => ({ sdk: { threads: sdkThreads } }));
+
+vi.mock("@/lib/clipboard", () => ({
+  copyToClipboardWithToast: mocks.copyToClipboardWithToast,
+}));
 
 vi.mock("@/components/thread/ThreadActionsProvider", () => ({
   useThreadActions: () => mocks,
@@ -155,18 +170,25 @@ function SplitHandlers({
   );
 }
 
-function pressShortcut(letter: "A" | "M" | "P") {
+function pressShortcut(letter: "A" | "L" | "M" | "P") {
   fireEvent.keyDown(window, {
     key: letter,
     code: `Key${letter}`,
     ctrlKey: true,
-    shiftKey: true,
   });
 }
 
 const PANE_COMMANDS = [
   {
+    command: "thread.copyLink",
+    letter: "L",
+    targetPrefix: `${window.location.origin}/projects/proj_test/threads/`,
+    targets: () =>
+      mocks.copyToClipboardWithToast.mock.calls.map(([url]) => url),
+  },
+  {
     command: "thread.archive",
+    targetPrefix: "",
     letter: "A",
     targets: () =>
       mocks.requestArchiveThreads.mock.calls.flatMap(([threads]) =>
@@ -175,11 +197,13 @@ const PANE_COMMANDS = [
   },
   {
     command: "thread.pin",
+    targetPrefix: "",
     letter: "P",
     targets: () => sdkThreads.pin.mock.calls.map(([args]) => args.threadId),
   },
   {
     command: "thread.markRead",
+    targetPrefix: "",
     letter: "M",
     targets: () =>
       sdkThreads.markRead.mock.calls.map(([args]) => args.threadId),
@@ -206,16 +230,21 @@ afterEach(() => {
 describe("pane thread action command handler", () => {
   it.each(PANE_COMMANDS)(
     "runs $command for the focused pane's thread as focus changes",
-    async ({ letter, targets }) => {
+    async ({ letter, targets, targetPrefix }) => {
       const view = render(<SplitHandlers focusedThreadId={firstThread.id} />);
 
       pressShortcut(letter);
-      await waitFor(() => expect(targets()).toEqual([firstThread.id]));
+      await waitFor(() =>
+        expect(targets()).toEqual([`${targetPrefix}${firstThread.id}`]),
+      );
 
       view.rerender(<SplitHandlers focusedThreadId={secondThread.id} />);
       pressShortcut(letter);
       await waitFor(() =>
-        expect(targets()).toEqual([firstThread.id, secondThread.id]),
+        expect(targets()).toEqual([
+          `${targetPrefix}${firstThread.id}`,
+          `${targetPrefix}${secondThread.id}`,
+        ]),
       );
     },
   );
@@ -231,6 +260,28 @@ describe("pane thread action command handler", () => {
       expect(targets()).toEqual([]);
     },
   );
+
+  it("copies a link when the focused thread is archived", async () => {
+    const archivedThread = { ...firstThread, archivedAt: 2 };
+    render(
+      <SplitHandlers
+        firstPaneThread={archivedThread}
+        focusedThreadId={archivedThread.id}
+      />,
+    );
+
+    pressShortcut("L");
+
+    await waitFor(() =>
+      expect(mocks.copyToClipboardWithToast).toHaveBeenCalledWith(
+        `${window.location.origin}/projects/proj_test/threads/thr_first`,
+        {
+          successMessage: "Thread link copied",
+          errorMessage: "Failed to copy thread link",
+        },
+      ),
+    );
+  });
 
   it("does nothing when the focused thread is archived", async () => {
     const archivedThread = { ...firstThread, archivedAt: 2 };
