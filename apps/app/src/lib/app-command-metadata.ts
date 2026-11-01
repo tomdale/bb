@@ -49,6 +49,11 @@ export const APP_COMMAND_GROUPS: readonly AppCommandGroup[] = [
       ),
       command("thread.rename", "Rename thread", "Rename the focused thread."),
       command(
+        "thread.copyLink",
+        "Copy link to thread",
+        "Copy a link to the focused thread.",
+      ),
+      command(
         "thread.archive",
         "Archive thread",
         "Archive the focused thread.",
