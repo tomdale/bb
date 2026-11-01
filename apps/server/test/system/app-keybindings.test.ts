@@ -263,6 +263,23 @@ describe("app keybindings", () => {
       );
       expect(config.keybindingOverrides).toEqual([]);
       expect(assignedDefaultKeybindings).toEqual(config.keybindings);
+      expect(
+        config.keybindings.find(
+          (binding) => binding.command === "thread.copyLink",
+        ),
+      ).toEqual({
+        command: "thread.copyLink",
+        desktopOnly: false,
+        shortcut: {
+          key: "l",
+          mod: true,
+          meta: false,
+          control: false,
+          alt: false,
+          shift: true,
+        },
+        when: { all: ["mainSurface"], none: ["modalOpen"] },
+      });
       for (const command of [
         "thread.rename",
         "thread.archive",

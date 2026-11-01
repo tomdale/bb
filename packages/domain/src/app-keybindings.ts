@@ -47,6 +47,7 @@ export const APP_COMMAND_IDS = [
   "thread.new",
   "thread.search",
   "thread.rename",
+  "thread.copyLink",
   "thread.archive",
   "thread.markRead",
   "thread.pin",

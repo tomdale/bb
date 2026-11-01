@@ -173,6 +173,7 @@ export const DEFAULT_APP_KEYBINDINGS: AppDefaultKeybindings = [
   ),
   binding("thread.search", "k", { mod: true }, mainWithoutModal),
   unassignedBinding("thread.rename", mainWithoutModal),
+  binding("thread.copyLink", "l", { mod: true, shift: true }, mainWithoutModal),
   unassignedBinding("thread.archive", mainWithoutModal),
   unassignedBinding("thread.markRead", mainWithoutModal),
   unassignedBinding("thread.pin", mainWithoutModal),
