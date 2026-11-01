@@ -54,6 +54,7 @@ export const APP_COMMAND_IDS = [
   "thread.new",
   "thread.search",
   "thread.rename",
+  "thread.copyLink",
   "thread.archive",
   "thread.markRead",
   "thread.pin",
@@ -313,6 +314,28 @@ export function isAppKeybindingAvailableForClient(
       return false;
   }
   return true;
+}
+
+export function bindingContextsOverlap(
+  left: {
+    when: {
+      all: readonly AppCommandContextKey[];
+      none: readonly AppCommandContextKey[];
+    };
+  },
+  right: {
+    when: {
+      all: readonly AppCommandContextKey[];
+      none: readonly AppCommandContextKey[];
+    };
+  },
+): boolean {
+  const leftAll = new Set(left.when.all);
+  const rightAll = new Set(right.when.all);
+  return (
+    !left.when.none.some((context) => rightAll.has(context)) &&
+    !right.when.none.some((context) => leftAll.has(context))
+  );
 }
 
 export const appKeybindingsSchema = z.array(appKeybindingSchema).max(1024);

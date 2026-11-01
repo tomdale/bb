@@ -7,12 +7,14 @@ import {
 import { usePaneContext } from "./PaneContext";
 
 const PANE_THREAD_ACTION_COMMANDS = [
+  "thread.copyLink",
   "thread.pin",
   "thread.markRead",
   "thread.archive",
 ] as const;
 
 const PANE_THREAD_ACTION_KEYS = [
+  `${CORE_THREAD_ACTION_OWNER}/copyLink`,
   `${CORE_THREAD_ACTION_OWNER}/pin`,
   `${CORE_THREAD_ACTION_OWNER}/read`,
   `${CORE_THREAD_ACTION_OWNER}/archive`,

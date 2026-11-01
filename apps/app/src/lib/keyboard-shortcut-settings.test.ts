@@ -10,6 +10,7 @@ import {
   appShortcutFromInput,
   canAssignAppShortcut,
   getCommandShortcut,
+  getShortcutConflicts,
   resetCommandShortcutOverride,
   setCommandShortcutOverride,
 } from "./keyboard-shortcut-settings";
@@ -312,3 +313,103 @@ it("edits the effective platform override without losing other scopes and resets
     overrides[3],
   ]);
 });
+
+describe("shortcut conflicts with context overlap", () => {
+  const scopedDefaults: AppKeybindings = [
+    {
+      command: "thread.copyLink",
+      desktopOnly: false,
+      shortcut: {
+        key: "l",
+        mod: true,
+        meta: false,
+        control: false,
+        alt: false,
+        shift: false,
+      },
+      when: { all: ["mainSurface"], none: ["modalOpen", "browserFocus"] },
+    },
+    {
+      command: "browser.focusLocation",
+      desktopOnly: true,
+      shortcut: {
+        key: "l",
+        mod: true,
+        meta: false,
+        control: false,
+        alt: false,
+        shift: false,
+      },
+      when: { all: ["mainSurface", "browserFocus"], none: ["modalOpen"] },
+    },
+    {
+      command: "thread.jump.1",
+      desktopOnly: false,
+      shortcut: {
+        key: "1",
+        mod: true,
+        meta: false,
+        control: false,
+        alt: false,
+        shift: false,
+      },
+      when: { all: ["mainSurface"], none: ["modalOpen"] },
+    },
+    {
+      command: "pane.focus.1",
+      desktopOnly: false,
+      shortcut: {
+        key: "1",
+        mod: true,
+        meta: false,
+        control: false,
+        alt: false,
+        shift: false,
+      },
+      when: { all: ["mainSurface", "splitActive"], none: ["modalOpen"] },
+    },
+  ];
+
+  it("does not report conflict when contexts do not overlap", () => {
+    expect(
+      getShortcutConflicts(
+        scopedDefaults,
+        [],
+        "thread.copyLink",
+        true,
+        "MacIntel",
+      ),
+    ).toEqual([]);
+    expect(
+      getShortcutConflicts(
+        scopedDefaults,
+        [],
+        "browser.focusLocation",
+        true,
+        "MacIntel",
+      ),
+    ).toEqual([]);
+  });
+
+  it("reports conflict when contexts overlap as a subset", () => {
+    expect(
+      getShortcutConflicts(
+        scopedDefaults,
+        [],
+        "pane.focus.1",
+        true,
+        "MacIntel",
+      ),
+    ).toEqual(["thread.jump.1"]);
+    expect(
+      getShortcutConflicts(
+        scopedDefaults,
+        [],
+        "thread.jump.1",
+        true,
+        "MacIntel",
+      ),
+    ).toEqual(["pane.focus.1"]);
+  });
+});
+

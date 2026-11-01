@@ -1,5 +1,6 @@
 import {
   applyAppKeybindingOverrides,
+  bindingContextsOverlap,
   isAppKeybindingAvailableForClient,
   isMacKeyboardPlatform,
   keyboardPlatform,
@@ -69,7 +70,8 @@ export function resolvePluginCommandDefaults(
         (!bundled ||
           !candidate.command.startsWith("plugin:") ||
           bundledCommands.has(candidate.command)) &&
-        shortcutsConflict(shortcut, candidate.shortcut, platform),
+        shortcutsConflict(shortcut, candidate.shortcut, platform) &&
+        bindingContextsOverlap(binding, candidate),
     );
     if (collisions.length === 0) return binding;
     conflicts.set(binding.command, [
