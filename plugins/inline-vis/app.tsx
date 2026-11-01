@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -22,6 +23,7 @@ import {
   FRAME_HEIGHT_BEFORE_FIRST_REPORT,
   FRAME_MAX_HEIGHT,
   FRAME_MIN_HEIGHT,
+  FRAME_PREVIEW_HEIGHT,
   frameDocument,
   frameHeight,
   frameResult,
@@ -353,12 +355,15 @@ function OpenPreviewAction({
 }
 
 const rememberedFrameHeights = new Map<string, number>();
+const expandedFrames = new Map<string, true>();
+const MAX_REMEMBERED_EXPANDED_FRAMES = 200;
 
 function HtmlFrame({
   title,
   content,
   baseHref,
   heightKey,
+  expansionKey,
   requested,
   action,
 }: {
@@ -366,11 +371,13 @@ function HtmlFrame({
   content: string;
   baseHref: string;
   heightKey: string;
+  expansionKey: string;
   requested: number | null;
   action: ReactNode;
 }) {
   const theme = useFrameTheme();
   const frameRef = useRef<HTMLIFrameElement>(null);
+  const frameId = useId();
   const latestTheme = useRef(theme);
   useLayoutEffect(() => {
     latestTheme.current = theme;
@@ -389,11 +396,34 @@ function HtmlFrame({
   }, [content, baseHref]);
   const [loaded, setLoaded] = useState(false);
   const [contentHeight, setContentHeight] = useState<number>();
+  const [expanded, setExpanded] = useState(() =>
+    expandedFrames.has(expansionKey),
+  );
+  const remembered = rememberedFrameHeights.get(heightKey);
+  const previewHeight = requested ?? FRAME_PREVIEW_HEIGHT;
+  const collapsible =
+    previewHeight < FRAME_MAX_HEIGHT &&
+    (contentHeight ?? remembered ?? 0) > previewHeight;
   const height = frameHeight({
     requested,
     contentHeight,
-    remembered: rememberedFrameHeights.get(heightKey),
+    remembered,
+    expanded,
   });
+  const toggleExpanded = () => {
+    const next = !expanded;
+    setExpanded(next);
+    if (next) {
+      rememberBounded(
+        expandedFrames,
+        expansionKey,
+        true,
+        MAX_REMEMBERED_EXPANDED_FRAMES,
+      );
+    } else {
+      expandedFrames.delete(expansionKey);
+    }
+  };
 
   const postTheme = () => {
     const message = frameThemeMessage(theme);
@@ -432,28 +462,52 @@ function HtmlFrame({
   }, [heightKey]);
 
   return (
-    <div
-      data-inline-vis-frame=""
-      className="group/inline-vis relative my-2"
-      style={{ height }}
-    >
-      {srcDoc === null ? null : (
-        <iframe
-          ref={frameRef}
-          title={title}
-          srcDoc={srcDoc}
-          sandbox="allow-scripts allow-forms"
-          onLoad={() => {
-            setLoaded(true);
-            postTheme();
-          }}
-          className="block size-full border-0"
-          style={{ colorScheme: loaded ? theme.appearance : "light" }}
-        />
-      )}
-      <div className="absolute right-2 top-2 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/inline-vis:opacity-100 pointer-coarse:opacity-100">
-        {action}
+    <div className="my-2">
+      <div
+        id={frameId}
+        data-inline-vis-frame=""
+        className="group/inline-vis relative"
+        style={{ height }}
+      >
+        {srcDoc === null ? null : (
+          <iframe
+            ref={frameRef}
+            title={title}
+            srcDoc={srcDoc}
+            sandbox="allow-scripts allow-forms"
+            onLoad={() => {
+              setLoaded(true);
+              postTheme();
+            }}
+            className="block size-full border-0"
+            style={{ colorScheme: loaded ? theme.appearance : "light" }}
+          />
+        )}
+        {!collapsible ? (
+          <div className="absolute right-2 top-2 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/inline-vis:opacity-100 pointer-coarse:opacity-100">
+            {action}
+          </div>
+        ) : null}
       </div>
+      {collapsible ? (
+        <div className="flex items-center justify-between gap-2 pt-2">
+          <button
+            type="button"
+            aria-expanded={expanded}
+            aria-controls={frameId}
+            className="inline-flex cursor-pointer items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-state-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            onClick={toggleExpanded}
+          >
+            {expanded ? "Show less" : "Show more"}
+            <Icon
+              name={expanded ? "ChevronUp" : "ChevronDown"}
+              aria-hidden
+              className="size-3.5"
+            />
+          </button>
+          {action}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -630,13 +684,14 @@ function InlineVisDirective({
         content={state.content}
         baseHref={new URL(state.url, window.location.href).href}
         heightKey={state.sha256}
+        expansionKey={cacheKey}
         requested={requestedHeight}
         action={
           <OpenPreviewAction
             file={state.file}
             pageUrl={state.url}
             onOpenPreview={openPreview}
-            icon="Maximize2"
+            icon="PanelRight"
             className={FRAME_OPEN_ACTION_CLASS}
           />
         }
@@ -700,6 +755,7 @@ function InlineVisFence({
         content={code}
         baseHref={new URL("/", window.location.href).href}
         heightKey={`fence:${message.id}:${index}`}
+        expansionKey={`fence:${message.id}:${index}`}
         requested={null}
         action={
           <button

@@ -100,16 +100,28 @@ it("keeps a theme value or a font rule from closing the style element", () => {
   expect(framed.match(/<script>/g)).toHaveLength(2);
 });
 
-it("fits the frame to the page, under the agent's cap", () => {
+it("fits the frame under the preview cap and expands up to the frame limit", () => {
   const none = {
     requested: null,
     contentHeight: undefined,
     remembered: undefined,
+    expanded: false,
   };
   expect(frameHeight(none)).toBe(FRAME_HEIGHT_BEFORE_FIRST_REPORT);
   expect(frameHeight({ ...none, requested: 480 })).toBe(480);
-  expect(frameHeight({ ...none, remembered: 600 })).toBe(600);
-  expect(frameHeight({ ...none, contentHeight: 912.4 })).toBe(912);
+  expect(frameHeight({ ...none, remembered: 600 })).toBe(480);
+  expect(frameHeight({ ...none, contentHeight: 912.4 })).toBe(480);
+  expect(frameHeight({ ...none, contentHeight: 912.4, expanded: true })).toBe(
+    912,
+  );
+  expect(
+    frameHeight({
+      ...none,
+      requested: 300,
+      contentHeight: 900,
+      expanded: true,
+    }),
+  ).toBe(900);
   expect(frameHeight({ ...none, contentHeight: 300, remembered: 600 })).toBe(
     300,
   );
@@ -120,7 +132,10 @@ it("fits the frame to the page, under the agent's cap", () => {
     480,
   );
   expect(frameHeight({ ...none, contentHeight: 12 })).toBe(FRAME_MIN_HEIGHT);
-  expect(frameHeight({ ...none, contentHeight: 9000 })).toBe(FRAME_MAX_HEIGHT);
+  expect(frameHeight({ ...none, contentHeight: 9000 })).toBe(480);
+  expect(frameHeight({ ...none, contentHeight: 9000, expanded: true })).toBe(
+    FRAME_MAX_HEIGHT,
+  );
 });
 
 it("reads a page's messages and ignores anything else", () => {

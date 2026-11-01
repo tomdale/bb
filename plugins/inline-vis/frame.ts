@@ -1,5 +1,6 @@
 export const FRAME_MIN_HEIGHT = 80;
 export const FRAME_MAX_HEIGHT = 2000;
+export const FRAME_PREVIEW_HEIGHT = 480;
 export const FRAME_HEIGHT_BEFORE_FIRST_REPORT = 224;
 
 export interface FrameTheme {
@@ -138,13 +139,17 @@ export function frameHeight(input: {
   requested: number | null;
   contentHeight: number | undefined;
   remembered: number | undefined;
+  expanded: boolean;
 }): number {
-  const { requested, contentHeight, remembered } = input;
+  const { requested, contentHeight, remembered, expanded } = input;
   const fitted = contentHeight ?? remembered;
   if (fitted === undefined) {
     return clampFrameHeight(requested ?? FRAME_HEIGHT_BEFORE_FIRST_REPORT);
   }
-  return clampFrameHeight(Math.min(fitted, requested ?? FRAME_MAX_HEIGHT));
+  const limit = expanded
+    ? FRAME_MAX_HEIGHT
+    : (requested ?? FRAME_PREVIEW_HEIGHT);
+  return clampFrameHeight(Math.min(fitted, limit));
 }
 
 const SCROLLS_WITHOUT_A_SCROLLBAR =

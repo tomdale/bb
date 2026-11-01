@@ -435,7 +435,7 @@ describe("InlineVisDirective", () => {
     expect(frameBox(iframe).style.height).toBe("224px");
 
     postMessageFrom(iframe.contentWindow, sizeChanged(640));
-    expect(frameBox(iframe).style.height).toBe("640px");
+    expect(frameBox(iframe).style.height).toBe("480px");
 
     postMessageFrom(iframe.contentWindow, sizeChanged(12));
     expect(frameBox(iframe).style.height).toBe("80px");
@@ -448,7 +448,7 @@ describe("InlineVisDirective", () => {
       directiveProps({ file: "fit.html" }),
       options,
     );
-    expect(frameBox(await findFrame(second)).style.height).toBe("640px");
+    expect(frameBox(await findFrame(second)).style.height).toBe("480px");
     second.unmount();
 
     const capped = renderSlot(
@@ -460,6 +460,108 @@ describe("InlineVisDirective", () => {
     expect(frameBox(cappedFrame).style.height).toBe("300px");
     postMessageFrom(cappedFrame.contentWindow, sizeChanged(120));
     expect(frameBox(cappedFrame).style.height).toBe("120px");
+  });
+
+  it("expands a tall preview without reloading the frame, remembers the choice per message, and opens the sidebar", async () => {
+    const props = directiveProps({
+      file: "expand.html",
+      source: "thread-storage",
+    });
+    const options = {
+      rpc: {
+        preparePreview: () => ({
+          ...htmlPreview("expand.html"),
+          source: "thread-storage" as const,
+          target: {
+            kind: "thread-storage" as const,
+            threadId: message.threadId,
+            path: "expand.html",
+          },
+        }),
+      },
+      openFilePreview: () => true,
+    };
+    const first = renderSlot(app.messageDirectives[0]!, props, options);
+    const iframe = await findFrame(first);
+    expect(first.queryByRole("button", { name: "Show more" })).toBeNull();
+    postMessageFrom(iframe.contentWindow, sizeChanged(1400));
+    expect(frameBox(iframe).style.height).toBe("480px");
+    const more = first.getByRole("button", { name: "Show more" });
+    expect(more.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(more);
+    expect(frameBox(iframe).style.height).toBe("1400px");
+    expect(first.container.querySelector("iframe")).toBe(iframe);
+    fireEvent.click(
+      first.getByRole("link", { name: "Open expand.html in sidebar" }),
+    );
+    expect(first.inspection.navigateCalls).toEqual([
+      {
+        method: "experimental_openFilePreview",
+        options: {
+          target: {
+            kind: "thread-storage",
+            threadId: message.threadId,
+            path: "expand.html",
+          },
+          location: null,
+        },
+      },
+    ]);
+    first.unmount();
+
+    const again = renderSlot(app.messageDirectives[0]!, props, options);
+    const remounted = await findFrame(again);
+    expect(frameBox(remounted).style.height).toBe("1400px");
+    fireEvent.click(again.getByRole("button", { name: "Show less" }));
+    expect(frameBox(remounted).style.height).toBe("480px");
+    again.unmount();
+
+    const collapsed = renderSlot(app.messageDirectives[0]!, props, options);
+    expect(frameBox(await findFrame(collapsed)).style.height).toBe("480px");
+    collapsed.unmount();
+    const sibling = renderSlot(
+      app.messageDirectives[0]!,
+      {
+        ...props,
+        message: { ...message, id: "msg_expand_sibling" },
+      },
+      options,
+    );
+    expect(frameBox(await findFrame(sibling)).style.height).toBe("480px");
+  });
+
+  it("uses an explicit height as the collapsed limit and allows inline expansion", async () => {
+    const slot = renderSlot(
+      app.messageDirectives[0]!,
+      directiveProps({ file: "expand-capped.html", height: "300" }),
+      {
+        rpc: { preparePreview: () => htmlPreview("expand-capped.html") },
+      },
+    );
+    const iframe = await findFrame(slot);
+    postMessageFrom(iframe.contentWindow, sizeChanged(800));
+    expect(frameBox(iframe).style.height).toBe("300px");
+    fireEvent.click(slot.getByRole("button", { name: "Show more" }));
+    expect(frameBox(iframe).style.height).toBe("800px");
+    fireEvent.click(slot.getByRole("button", { name: "Show less" }));
+    expect(frameBox(iframe).style.height).toBe("300px");
+    postMessageFrom(iframe.contentWindow, sizeChanged(200));
+    expect(frameBox(iframe).style.height).toBe("200px");
+    expect(slot.queryByRole("button", { name: "Show more" })).toBeNull();
+  });
+
+  it("does not offer expansion when the requested preview already reaches the frame limit", async () => {
+    const slot = renderSlot(
+      app.messageDirectives[0]!,
+      directiveProps({ file: "max-height.html", height: "2000" }),
+      {
+        rpc: { preparePreview: () => htmlPreview("max-height.html") },
+      },
+    );
+    const iframe = await findFrame(slot);
+    postMessageFrom(iframe.contentWindow, sizeChanged(4000));
+    expect(frameBox(iframe).style.height).toBe("2000px");
+    expect(slot.queryByRole("button", { name: "Show more" })).toBeNull();
   });
 
   it("opens a link the page requests only while the frame has focus", async () => {
@@ -878,7 +980,10 @@ describe("InlineVisFence", () => {
     fireEvent.click(show);
 
     const original = slot.getByTestId("original");
-    expect(frameBox(iframe).nextElementSibling).toBe(original);
+    expect(
+      iframe.compareDocumentPosition(original) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     expect(slot.container.querySelector("iframe")).toBe(iframe);
     const hide = slot.getByRole("button", { name: "Hide source" });
     expect(hide.getAttribute("aria-pressed")).toBe("true");
@@ -898,6 +1003,8 @@ describe("InlineVisFence", () => {
     expect(frameBox(iframe).style.height).toBe("224px");
 
     postMessageFrom(iframe.contentWindow, sizeChanged(512));
+    expect(frameBox(iframe).style.height).toBe("480px");
+    fireEvent.click(first.getByRole("button", { name: "Show more" }));
     expect(frameBox(iframe).style.height).toBe("512px");
     first.unmount();
 

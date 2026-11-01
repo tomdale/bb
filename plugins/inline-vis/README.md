@@ -48,8 +48,9 @@ Set an optional height in pixels with `height`, a whole number from 80 through
 ::inline-vis{file="demo.html" height="480"}
 ```
 
-For an HTML file, `height` caps the frame, and a taller page scrolls inside
-it. Without it the frame fits the page. For a Markdown file, `height` is the
+For an HTML file, `height` sets the collapsed preview limit, 480px by default.
+A taller page scrolls inside the preview; Show more expands it inline and Show
+less restores the limit. For a Markdown file, `height` is the
 height of the card's preview, 256px by default; a longer document expands in
 place.
 
@@ -67,9 +68,10 @@ bb replaces the directive with this plugin's React component, which:
    temporary read failures. A confirmed missing file clears its cached result
    and shows an error.
 4. Renders HTML files in the frame described below, with the served file's URL
-   as the base URL so relative sibling assets load. A button that appears on
-   hover opens the source file in bb's sidebar viewer, from the workspace or
-   the thread's storage directory. The button is a link to the rendered page:
+   as the base URL so relative sibling assets load. The Open in sidebar button
+   opens the source file in bb's sidebar viewer, from the workspace or the
+   thread's storage directory. It appears beside Show more for a tall preview
+   and on hover or keyboard focus for a short preview. The button is a link to the rendered page:
    Cmd-click, Ctrl-click, or middle-click opens it in a browser tab (the
    default browser in desktop bb).
 5. Renders Markdown files with bb's Markdown renderer inside a card. HTML is
@@ -105,10 +107,13 @@ in `app.tsx`):
   (`FRAME_THEME_TOKENS` in `frame.ts`), plus a six-colour chart series and the
   app's sans font. When the app's theme or light/dark mode changes, the host
   posts the new values and the bootstrap applies them without a reload.
-- The bootstrap reports the page's content height, and the frame follows it
-  from 80 to 2000 pixels. The last reported height is remembered per page
-  (by content hash for a file, by message and fence index for a fenced block)
-  so a remounted frame starts at the right size.
+- The bootstrap reports the page's content height. The frame fits short pages
+  from 80px and caps previews at 480px unless a directive sets `height`.
+  Show more expands a taller page up to 2000px; larger pages scroll inside
+  the frame. Show less restores the preview limit. Expansion is remembered
+  per message and file or fence for the session, without reloading the page.
+  The last reported height is remembered per page (by content hash for a file,
+  by message and fence index for a fenced block) so remounts retain sizing.
 - A page cannot open windows. When the reader clicks an `http` or `https`
   link, the bootstrap asks the host, and the host opens it in a new tab only
   if the frame has focus and the click is a user activation. Anchor links
