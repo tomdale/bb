@@ -40,9 +40,10 @@ block is the HTML page itself, either a fragment or a full document:
   JavaScript, and data, or load them from absolute `https://` URLs.
 - If the page itself contains three backticks, open and close the block with
   four backticks.
-- The frame fits short pages and caps the preview at 480px. The reader can
-  expand it inline up to 2000px with Show more; larger pages scroll inside
-  the frame. The block takes no attributes.
+- The frame fits short pages and caps the preview at 480px. A collapsed
+  preview is non-interactive so the reader can scroll through the chat.
+  Show more enables page interaction and expands it inline up to 2000px;
+  larger expanded pages scroll inside the frame. The block takes no attributes.
 - Keep it small. Every character of the page is part of your reply. For a
   large page, write a file and use the directive.
 - The reader can reveal the HTML source from a button that appears over the
@@ -76,8 +77,8 @@ Rules:
   put an absolute path in the directive.
 - `.html`, `.htm`, `.md`, and `.markdown` files are accepted.
 - `height` is optional, a whole number of pixels from 80 through 2000.
-  - HTML: the collapsed preview limit, 480px by default. A taller page scrolls
-    inside the preview; the reader can expand it inline with Show more.
+  - HTML: the collapsed preview limit, 480px by default. A taller page is
+    clipped; Show more expands it inline and enables interaction.
   - Markdown: the height of the card's preview; omit it for the 256px
     default. The reader expands a longer document in place.
 - Keep files small (under the 5 MiB document limit).
@@ -90,8 +91,8 @@ Rules:
 - Incomplete streaming syntax stays literal until the closing `}` arrives, so
   emit a complete directive in one piece when possible.
 
-An HTML file shows Open in sidebar beside Show more for a tall preview,
-or on hover for a short page. A Markdown
+An HTML file has floating Show more and pop-out controls over a tall preview.
+The pop-out control opens it in the sidebar and appears on hover for a short page. A Markdown
 file shows in a card with its file name, a copy button, and the same open
 action. A long document shows a preview with a "Show more" control.
 

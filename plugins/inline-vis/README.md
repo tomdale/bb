@@ -49,8 +49,9 @@ Set an optional height in pixels with `height`, a whole number from 80 through
 ```
 
 For an HTML file, `height` sets the collapsed preview limit, 480px by default.
-A taller page scrolls inside the preview; Show more expands it inline and Show
-less restores the limit. For a Markdown file, `height` is the
+A taller page is clipped to a rounded, non-interactive preview, so wheel and
+touch gestures scroll the chat. Show more expands it inline and enables page
+interaction; Show less restores the limit and returns the preview to the top. For a Markdown file, `height` is the
 height of the card's preview, 256px by default; a longer document expands in
 place.
 
@@ -70,8 +71,9 @@ bb replaces the directive with this plugin's React component, which:
 4. Renders HTML files in the frame described below, with the served file's URL
    as the base URL so relative sibling assets load. The Open in sidebar button
    opens the source file in bb's sidebar viewer, from the workspace or the
-   thread's storage directory. It appears beside Show more for a tall preview
-   and on hover or keyboard focus for a short preview. The button is a link to the rendered page:
+   thread's storage directory. Its pop-out icon floats over the bottom-right
+   corner beside Show more for a tall preview, and appears on hover or keyboard
+   focus at the top-right for a short preview. The button is a link to the rendered page:
    Cmd-click, Ctrl-click, or middle-click opens it in a browser tab (the
    default browser in desktop bb).
 5. Renders Markdown files with bb's Markdown renderer inside a card. HTML is
@@ -93,8 +95,8 @@ bb replaces the directive with this plugin's React component, which:
 Both forms render HTML the same way (`frame.ts`, `theme.ts`, and `HtmlFrame`
 in `app.tsx`):
 
-- The page is an iframe with no card, title bar, or border, on the thread's
-  own background.
+- The page is an iframe with rounded clipping at every corner and no card,
+  title bar, or border, on the thread's own background.
 - The iframe is fed by `srcdoc`. `frameDocument` adds a charset, a viewport,
   a `<base>` (unless the page has its own), the theme stylesheet, and a small
   bootstrap script at the start of the page's `<head>`.
@@ -109,12 +111,14 @@ in `app.tsx`):
   posts the new values and the bootstrap applies them without a reload.
 - The bootstrap reports the page's content height. The frame fits short pages
   from 80px and caps previews at 480px unless a directive sets `height`.
-  Show more expands a taller page up to 2000px; larger pages scroll inside
-  the frame. Show less restores the preview limit. Expansion is remembered
+  Collapsed previews are inert and ignore pointer input, so scrolling over
+  them scrolls the chat. Show more expands a taller page up to 2000px and
+  enables interaction; larger expanded pages scroll inside the frame.
+  Show less restores the preview limit and resets the page to the top. Expansion is remembered
   per message and file or fence for the session, without reloading the page.
   The last reported height is remembered per page (by content hash for a file,
   by message and fence index for a fenced block) so remounts retain sizing.
-- Wheel gestures inside the frame retain their native browser behavior. The
+- Wheel gestures inside an interactive frame retain their native browser behavior. The
   bootstrap also notifies the host's scroll listeners, so the chat can keep
   the reader's position when scrolling crosses the iframe boundary. The scroll
   keeper handles the notification even if the browser moved the chat first.

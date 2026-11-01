@@ -26,6 +26,7 @@ import {
   FRAME_PREVIEW_HEIGHT,
   frameDocument,
   frameHeight,
+  framePreviewMessage,
   frameResult,
   frameThemeMessage,
   isFrameScrollIntent,
@@ -313,7 +314,7 @@ function OpenPreviewAction({
   file: string;
   pageUrl: string | null;
   onOpenPreview: () => void;
-  icon: "PanelRight" | "Maximize2";
+  icon: "PanelRight" | "ExternalLink";
   className: string;
 }) {
   const glyph = (
@@ -402,9 +403,8 @@ function HtmlFrame({
   );
   const remembered = rememberedFrameHeights.get(heightKey);
   const previewHeight = requested ?? FRAME_PREVIEW_HEIGHT;
-  const collapsible =
-    previewHeight < FRAME_MAX_HEIGHT &&
-    (contentHeight ?? remembered ?? 0) > previewHeight;
+  const collapsible = (contentHeight ?? remembered ?? 0) > previewHeight;
+  const collapsed = collapsible && !expanded;
   const height = frameHeight({
     requested,
     contentHeight,
@@ -431,6 +431,13 @@ function HtmlFrame({
     frameRef.current?.contentWindow?.postMessage(message, "*");
   };
   useEffect(postTheme, [theme]);
+  const postPreview = () => {
+    frameRef.current?.contentWindow?.postMessage(
+      framePreviewMessage(collapsed),
+      "*",
+    );
+  };
+  useEffect(postPreview, [collapsed]);
 
   useLayoutEffect(() => {
     const onMessage = (event: MessageEvent) => {
@@ -471,7 +478,7 @@ function HtmlFrame({
       <div
         id={frameId}
         data-inline-vis-frame=""
-        className="group/inline-vis relative"
+        className="group/inline-vis relative overflow-hidden rounded-lg"
         style={{ height }}
       >
         {srcDoc === null ? null : (
@@ -483,36 +490,46 @@ function HtmlFrame({
             onLoad={() => {
               setLoaded(true);
               postTheme();
+              postPreview();
             }}
-            className="block size-full border-0"
+            inert={collapsed}
+            tabIndex={collapsed ? -1 : 0}
+            className={cn(
+              "block size-full border-0",
+              collapsed && "pointer-events-none",
+            )}
             style={{ colorScheme: loaded ? theme.appearance : "light" }}
           />
         )}
-        {!collapsible ? (
-          <div className="absolute right-2 top-2 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/inline-vis:opacity-100 pointer-coarse:opacity-100">
-            {action}
-          </div>
-        ) : null}
-      </div>
-      {collapsible ? (
-        <div className="flex items-center justify-between gap-2 pt-2">
-          <button
-            type="button"
-            aria-expanded={expanded}
-            aria-controls={frameId}
-            className="inline-flex cursor-pointer items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-state-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-            onClick={toggleExpanded}
-          >
-            {expanded ? "Show less" : "Show more"}
-            <Icon
-              name={expanded ? "ChevronUp" : "ChevronDown"}
-              aria-hidden
-              className="size-3.5"
-            />
-          </button>
+        <div
+          className={
+            collapsible
+              ? "absolute bottom-2 right-2 flex items-center gap-2"
+              : "absolute right-2 top-2 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/inline-vis:opacity-100 pointer-coarse:opacity-100"
+          }
+        >
+          {collapsible ? (
+            <button
+              type="button"
+              aria-expanded={expanded}
+              aria-controls={frameId}
+              className={cn(
+                FRAME_OPEN_ACTION_CLASS,
+                "w-auto gap-1 px-2 text-xs",
+              )}
+              onClick={toggleExpanded}
+            >
+              {expanded ? "Show less" : "Show more"}
+              <Icon
+                name={expanded ? "ChevronUp" : "ChevronDown"}
+                aria-hidden
+                className="size-3.5"
+              />
+            </button>
+          ) : null}
           {action}
         </div>
-      ) : null}
+      </div>
     </div>
   );
 }
@@ -696,7 +713,7 @@ function InlineVisDirective({
             file={state.file}
             pageUrl={state.url}
             onOpenPreview={openPreview}
-            icon="PanelRight"
+            icon="ExternalLink"
             className={FRAME_OPEN_ACTION_CLASS}
           />
         }

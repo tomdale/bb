@@ -7,6 +7,7 @@ import {
   FRAME_THEME_TOKENS,
   frameDocument,
   frameHeight,
+  framePreviewMessage,
   frameResult,
   frameTheme,
   frameThemeMessage,
@@ -171,6 +172,41 @@ it("reads a page's messages and ignores anything else", () => {
     method: "ui/notifications/host-context-changed",
     params: { theme: "dark", styles: { variables: theme.variables } },
   });
+});
+
+it("clips a collapsed preview at the top and restores scrolling only for valid host messages", () => {
+  const framed = frameDocument("<p>Preview</p>", options);
+  const script = /<script>([\s\S]*?)<\/script>/.exec(framed)?.[1] ?? "";
+  const page = new DOMParser().parseFromString(framed, "text/html");
+  const scrolls: number[][] = [];
+  const host = {};
+  const pageWindow = Object.assign(new EventTarget(), {
+    parent: host,
+    scrollTo: (...args: number[]) => scrolls.push(args),
+  });
+  new Function("window", "document", script)(pageWindow, page);
+  const send = (data: unknown, source: unknown = host) =>
+    pageWindow.dispatchEvent(
+      Object.assign(new Event("message"), { data, source }),
+    );
+  const collapsed = () =>
+    page.documentElement.hasAttribute("data-bb-preview-collapsed");
+  send(framePreviewMessage(true), pageWindow);
+  send({ ...framePreviewMessage(true), jsonrpc: "1.0" });
+  send({ ...framePreviewMessage(true), params: { collapsed: "true" } });
+  expect(collapsed()).toBe(false);
+  expect(scrolls).toEqual([]);
+  send(framePreviewMessage(true));
+  expect(collapsed()).toBe(true);
+  expect(scrolls).toEqual([[0, 0]]);
+  expect(page.getElementById("bb-theme")?.textContent).toContain(
+    "overflow:clip!important",
+  );
+  send(framePreviewMessage(false), pageWindow);
+  expect(collapsed()).toBe(true);
+  send(framePreviewMessage(false));
+  expect(collapsed()).toBe(false);
+  expect(scrolls).toEqual([[0, 0]]);
 });
 
 it("reports trusted wheel input without cancelling page controls or scrolling", () => {

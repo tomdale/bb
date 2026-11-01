@@ -514,7 +514,40 @@ describe("InlineVisDirective", () => {
     expect(frameBox(iframe).style.height).toBe("480px");
     const more = first.getByRole("button", { name: "Show more" });
     expect(more.getAttribute("aria-expanded")).toBe("false");
+    expect(frameBox(iframe).contains(more)).toBe(true);
+    expect(more.parentElement?.className).toContain(
+      "absolute bottom-2 right-2",
+    );
+    expect(frameBox(iframe).className).toContain("overflow-hidden rounded-lg");
+    expect(iframe.hasAttribute("inert")).toBe(true);
+    expect(iframe.tabIndex).toBe(-1);
+    expect(iframe.classList.contains("pointer-events-none")).toBe(true);
+    const popout = first.getByRole("link", {
+      name: "Open expand.html in sidebar",
+    });
+    expect(popout.parentElement).toBe(more.parentElement);
+    const post = vi.spyOn(iframe.contentWindow!, "postMessage");
+    fireEvent.load(iframe);
+    expect(post).toHaveBeenCalledWith(
+      {
+        jsonrpc: "2.0",
+        method: "ui/notifications/preview-changed",
+        params: { collapsed: true },
+      },
+      "*",
+    );
     fireEvent.click(more);
+    expect(iframe.hasAttribute("inert")).toBe(false);
+    expect(iframe.tabIndex).toBe(0);
+    expect(iframe.classList.contains("pointer-events-none")).toBe(false);
+    expect(post).toHaveBeenLastCalledWith(
+      {
+        jsonrpc: "2.0",
+        method: "ui/notifications/preview-changed",
+        params: { collapsed: false },
+      },
+      "*",
+    );
     expect(frameBox(iframe).style.height).toBe("1400px");
     expect(first.container.querySelector("iframe")).toBe(iframe);
     fireEvent.click(
@@ -540,6 +573,7 @@ describe("InlineVisDirective", () => {
     expect(frameBox(remounted).style.height).toBe("1400px");
     fireEvent.click(again.getByRole("button", { name: "Show less" }));
     expect(frameBox(remounted).style.height).toBe("480px");
+    expect(remounted.hasAttribute("inert")).toBe(true);
     again.unmount();
 
     const collapsed = renderSlot(app.messageDirectives[0]!, props, options);
@@ -576,7 +610,7 @@ describe("InlineVisDirective", () => {
     expect(slot.queryByRole("button", { name: "Show more" })).toBeNull();
   });
 
-  it("does not offer expansion when the requested preview already reaches the frame limit", async () => {
+  it("allows expansion at the frame limit to enable interaction with the page", async () => {
     const slot = renderSlot(
       app.messageDirectives[0]!,
       directiveProps({ file: "max-height.html", height: "2000" }),
@@ -587,7 +621,10 @@ describe("InlineVisDirective", () => {
     const iframe = await findFrame(slot);
     postMessageFrom(iframe.contentWindow, sizeChanged(4000));
     expect(frameBox(iframe).style.height).toBe("2000px");
-    expect(slot.queryByRole("button", { name: "Show more" })).toBeNull();
+    expect(iframe.hasAttribute("inert")).toBe(true);
+    fireEvent.click(slot.getByRole("button", { name: "Show more" }));
+    expect(frameBox(iframe).style.height).toBe("2000px");
+    expect(iframe.hasAttribute("inert")).toBe(false);
   });
 
   it("opens a link the page requests only while the frame has focus", async () => {
