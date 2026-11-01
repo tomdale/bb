@@ -649,7 +649,11 @@ Control-arrow editing. `pane.focus.previous` / `pane.focus.next` and
 
 `thread.rename`, `thread.archive`, `thread.markRead`, and `thread.pin` start
 unassigned and act on the focused pane's open thread; Mark read and Pin toggle
-like the matching thread menu item.
+like the matching thread menu item. `thread.copyLink` (Copy link to thread)
+uses `Mod+L` to copy the focused thread's URL, including archived threads.
+It reuses the thread menu's Copy link action and clipboard feedback. Rebind or
+disable it in Settings → Keyboard, with `bb settings keyboard set thread.copyLink
+Mod+L`, or through SDK `system.updateKeyboardSettings`.
 
 | Area      | Command                                      | Default                     | Availability             |
 | --------- | -------------------------------------------- | --------------------------- | ------------------------ |
@@ -657,6 +661,7 @@ like the matching thread menu item.
 | Window    | Back to app (from Settings, Plugins, Skills) | `Escape`                    | All clients              |
 | Threads   | New thread                                   | `Mod+N` / `Mod+Shift+O`     | Desktop / web            |
 | Threads   | Search threads                               | `Mod+K`                     | All clients              |
+| Threads   | Copy link to focused thread                   | `Mod+L`                     | Thread view              |
 | Threads   | Rename focused thread                        | Unassigned                  | Thread view              |
 | Threads   | Archive focused thread                       | Unassigned                  | Thread view              |
 | Threads   | Mark focused thread read or unread           | Unassigned                  | Thread view              |

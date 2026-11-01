@@ -636,7 +636,7 @@ export function KeyboardSettingsSection() {
     (
       command: KeyboardCommandId,
       shortcut: AppShortcut | null,
-      replace: boolean,
+      resolution?: "replace" | "keep",
     ) => {
       const current = latestSettingsRef.current;
       let next = setCommandShortcutOverride(
@@ -652,11 +652,15 @@ export function KeyboardSettingsSection() {
         current.isDesktop,
         current.platform,
       );
-      if (shortcut !== null && conflicts.length > 0 && !replace) {
+      if (
+        shortcut !== null &&
+        conflicts.length > 0 &&
+        resolution === undefined
+      ) {
         setPendingAssignment({ command, shortcut, conflicts });
         return;
       }
-      if (replace) {
+      if (resolution === "replace") {
         for (const conflict of conflicts) {
           next = setCommandShortcutOverride(
             next,
@@ -678,7 +682,7 @@ export function KeyboardSettingsSection() {
   );
   const updateCommand = useCallback(
     (command: KeyboardCommandId, shortcut: AppShortcut | null) =>
-      assignCommand(command, shortcut, false),
+      assignCommand(command, shortcut),
     [assignCommand],
   );
 
@@ -767,10 +771,7 @@ export function KeyboardSettingsSection() {
               {pendingAssignment.conflicts
                 .map((id) => labels.get(id) ?? id)
                 .join(", ")}
-              . Replace it with{" "}
-              {labels.get(pendingAssignment.command) ??
-                pendingAssignment.command}
-              ?
+              . Replace it, or keep both? Context determines which command runs.
             </p>
             <div className="flex gap-2">
               <Button
@@ -779,12 +780,26 @@ export function KeyboardSettingsSection() {
                   assignCommand(
                     pendingAssignment.command,
                     pendingAssignment.shortcut,
-                    true,
+                    "replace",
                   )
                 }
                 size="sm"
               >
                 Replace binding
+              </Button>
+              <Button
+                disabled={disabled}
+                onClick={() =>
+                  assignCommand(
+                    pendingAssignment.command,
+                    pendingAssignment.shortcut,
+                    "keep",
+                  )
+                }
+                size="sm"
+                variant="secondary"
+              >
+                Keep both
               </Button>
               <Button
                 onClick={() => setPendingAssignment(null)}
