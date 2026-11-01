@@ -28,6 +28,7 @@ import {
   frameHeight,
   frameResult,
   frameThemeMessage,
+  isFrameScrollIntent,
   readFrameContentHeight,
   readFrameLinkRequest,
 } from "./frame";
@@ -435,6 +436,10 @@ function HtmlFrame({
     const onMessage = (event: MessageEvent) => {
       const frame = frameRef.current;
       if (frame === null || event.source !== frame.contentWindow) return;
+      if (isFrameScrollIntent(event.data)) {
+        frame.dispatchEvent(new WheelEvent("wheel", { bubbles: true }));
+        return;
+      }
       const reported = readFrameContentHeight(event.data);
       if (reported !== undefined) {
         rememberBounded(

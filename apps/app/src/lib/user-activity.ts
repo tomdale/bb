@@ -46,6 +46,11 @@ function recordFocusedInput(): void {
   if (document.hasFocus()) recordInput();
 }
 
+function recordWheel(event: WheelEvent): void {
+  if (!event.isTrusted && event.target instanceof HTMLIFrameElement) return;
+  recordFocusedInput();
+}
+
 function recordPointerMove(event: PointerEvent): void {
   if (event.movementX === 0 && event.movementY === 0) return;
   recordFocusedInput();
@@ -66,7 +71,7 @@ if (typeof document !== "undefined" && typeof window !== "undefined") {
   window.addEventListener("keydown", recordInput, options);
   window.addEventListener("pointerdown", recordInput, options);
   window.addEventListener("touchstart", recordInput, options);
-  window.addEventListener("wheel", recordFocusedInput, options);
+  window.addEventListener("wheel", recordWheel, options);
   window.addEventListener("pointermove", recordPointerMove, options);
   window.addEventListener("blur", handleBlur);
   document.addEventListener("visibilitychange", handleVisibilityChange);

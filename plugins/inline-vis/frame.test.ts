@@ -173,6 +173,34 @@ it("reads a page's messages and ignores anything else", () => {
   });
 });
 
+it("reports trusted wheel input without cancelling page controls or scrolling", () => {
+  const framed = frameDocument("<p>Scroll here</p>", options);
+  const script = /<script>([\s\S]*?)<\/script>/.exec(framed)?.[1] ?? "";
+  const page = new DOMParser().parseFromString(framed, "text/html");
+  const posted: unknown[] = [];
+  const listeners = new Map<string, (event: { isTrusted: boolean }) => void>();
+  const pageWindow = {
+    parent: { postMessage: (data: unknown) => posted.push(data) },
+    addEventListener: () => {},
+  };
+  const pageDocument = {
+    getElementById: (id: string) => page.getElementById(id),
+    documentElement: page.documentElement,
+    body: page.body,
+    addEventListener: (
+      type: string,
+      listener: (event: { isTrusted: boolean }) => void,
+    ) => listeners.set(type, listener),
+  };
+  new Function("window", "document", script)(pageWindow, pageDocument);
+  listeners.get("wheel")?.({ isTrusted: false });
+  expect(posted).toHaveLength(0);
+  listeners.get("wheel")?.({ isTrusted: true });
+  expect(posted).toEqual([
+    { jsonrpc: "2.0", method: "ui/notifications/scroll-intent" },
+  ]);
+});
+
 it("ships a bootstrap that reports the page size and applies a theme sent by the host only", () => {
   const framed = frameDocument("<p>hi</p>", options);
   const script = /<script>([\s\S]*?)<\/script>/.exec(framed)?.[1] ?? "";

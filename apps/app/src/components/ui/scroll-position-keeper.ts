@@ -133,6 +133,7 @@ export class ScrollPositionKeeper {
   private position: ReadingPosition;
   private pendingRestore: PendingRestore | null = null;
   private ownScrollTop: number | null = null;
+  private pendingFrameScroll: { top: number; at: number } | null = null;
   private maxScrollTop = 0;
   private viewportHeight = 0;
   private reconciledWidth = 0;
@@ -215,6 +216,7 @@ export class ScrollPositionKeeper {
       touchTargets.clear();
     };
     const onTouchStart = (event: TouchEvent) => {
+      this.pendingFrameScroll = null;
       if (!this.touching) {
         this.gestureScrolled = false;
         this.touchStartScrollTop = scrollElement.scrollTop;
@@ -252,6 +254,7 @@ export class ScrollPositionKeeper {
       endTouch();
     };
     const onPointerDown = (event: PointerEvent) => {
+      this.pendingFrameScroll = null;
       if (event.pointerType === "touch") {
         activeTouchPointers.add(event.pointerId);
         return;
@@ -270,10 +273,30 @@ export class ScrollPositionKeeper {
       this.pointerDown = false;
       if (this.gestureScrolled) this.extendInput(SESSION_EXTENSION_MS);
     };
-    const onWheel = () => {
+    const onWheel = (event: WheelEvent) => {
+      const pending = this.pendingFrameScroll;
+      this.pendingFrameScroll = null;
       this.extendInput(WHEEL_SESSION_MS);
+      if (
+        !event.isTrusted &&
+        event.deltaY === 0 &&
+        event.target instanceof HTMLIFrameElement
+      ) {
+        if (
+          pending !== null &&
+          this.position.kind === "bottom" &&
+          this.ownScrollTop !== null &&
+          Math.abs(scrollElement.scrollTop - this.ownScrollTop) <
+            MIN_WRITE_PX &&
+          this.matchesReconciledLayout(scrollElement) &&
+          window.performance.now() - pending.at <= WHEEL_SESSION_MS
+        )
+          scrollElement.scrollTop = pending.top;
+        this.handleScroll();
+      }
     };
     const onKeyDown = (event: KeyboardEvent) => {
+      this.pendingFrameScroll = null;
       if (event.key === "Tab") {
         this.extendInput(KEY_SESSION_MS);
         return;
@@ -357,6 +380,7 @@ export class ScrollPositionKeeper {
       this.windowFindOpen = false;
       this.touching = false;
       this.pointerDown = false;
+      this.pendingFrameScroll = null;
       if (this.settleTimeout !== null) window.clearTimeout(this.settleTimeout);
       if (this.clampFrame !== null)
         window.cancelAnimationFrame(this.clampFrame);
@@ -370,18 +394,22 @@ export class ScrollPositionKeeper {
   }
 
   scrollToBottom(): void {
+    this.pendingFrameScroll = null;
     this.pendingRestore = null;
     this.inputUntil = Number.NEGATIVE_INFINITY;
     this.gestureScrolled = false;
+    const scrollElement = this.options.getScrollElement();
+    this.ownScrollTop = scrollElement?.scrollTop ?? null;
     this.setPosition({ kind: "bottom" });
     this.reconcile();
-    const scrollElement = this.options.getScrollElement();
+    this.pendingFrameScroll = null;
     if (scrollElement !== null) {
       this.touchStartScrollTop = scrollElement.scrollTop;
     }
   }
 
   revealElement(element: HTMLElement, options: ScrollIntoViewOptions): void {
+    this.pendingFrameScroll = null;
     const scrollElement = this.options.getScrollElement();
     this.pendingRestore = null;
     this.flushDeferred();
@@ -395,6 +423,7 @@ export class ScrollPositionKeeper {
   }
 
   scrollTo(top: number, behavior: ScrollBehavior): void {
+    this.pendingFrameScroll = null;
     const scrollElement = this.options.getScrollElement();
     if (scrollElement === null) return;
     this.pendingRestore = null;
@@ -431,6 +460,7 @@ export class ScrollPositionKeeper {
   }
 
   restore(saved: SavedReadingPosition): void {
+    this.pendingFrameScroll = null;
     if (saved.atBottom) {
       this.scrollToBottom();
       return;
@@ -494,15 +524,13 @@ export class ScrollPositionKeeper {
     if (previous !== null && Math.abs(scrollTop - previous) < MIN_WRITE_PX) {
       return;
     }
+    this.captureFrameScroll(scrollElement, scrollTop);
     if (!this.isInputSession()) {
       const cachedMax = this.maxScrollTop;
       const extentChanged =
         Math.abs(this.refreshExtent(scrollElement) - cachedMax) >= 1;
-      if (
-        extentChanged ||
-        this.isFloorStale() ||
-        !this.followsUnexplainedScroll()
-      ) {
+      const floorStale = this.isFloorStale();
+      if (extentChanged || floorStale || !this.followsUnexplainedScroll()) {
         this.syncFloor();
         this.ownScrollTop = scrollTop;
         this.apply(scrollElement, true);
@@ -559,6 +587,7 @@ export class ScrollPositionKeeper {
     urgent = true,
   ): void {
     const scrollTop = scrollElement.scrollTop;
+    this.captureFrameScroll(scrollElement, scrollTop);
     const max = this.refreshExtent(scrollElement);
     const width = scrollElement.clientWidth;
     const widthChanged =
@@ -576,8 +605,8 @@ export class ScrollPositionKeeper {
       Math.abs(scrollTop - max) < 1;
     const navigated =
       movement !== 0 &&
-      !this.isInputSession() &&
-      this.followsUnexplainedScroll() &&
+      ((this.isInputSession() && this.position.kind === "bottom") ||
+        (!this.isInputSession() && this.followsUnexplainedScroll())) &&
       !clampedToEnd;
     if (navigated) {
       this.userScrolled = true;
@@ -829,6 +858,39 @@ export class ScrollPositionKeeper {
     return null;
   }
 
+  private matchesReconciledLayout(scrollElement: HTMLElement): boolean {
+    return (
+      scrollElement.scrollHeight === this.reconciledScrollHeight &&
+      scrollElement.clientWidth === this.reconciledWidth &&
+      scrollElement.clientHeight === this.viewportHeight &&
+      !this.isFloorStale()
+    );
+  }
+
+  private captureFrameScroll(
+    scrollElement: HTMLElement,
+    scrollTop: number,
+  ): void {
+    if (
+      !this.matchesReconciledLayout(scrollElement) ||
+      this.pendingRestore !== null ||
+      this.isInputSession() ||
+      this.followsUnexplainedScroll()
+    ) {
+      this.pendingFrameScroll = null;
+      return;
+    }
+    const previous = this.ownScrollTop;
+    if (previous !== null && scrollTop < previous - MIN_WRITE_PX) {
+      this.pendingFrameScroll = {
+        top: scrollTop,
+        at: window.performance.now(),
+      };
+    } else if (previous !== null && scrollTop > previous + MIN_WRITE_PX) {
+      this.pendingFrameScroll = null;
+    }
+  }
+
   private extendInput(durationMs: number): void {
     this.inputUntil = Math.max(
       this.inputUntil,
@@ -1000,6 +1062,8 @@ export class ScrollPositionKeeper {
     const floor = this.options.getFloorElement();
     const height = this.naturalFloorHeight();
     if (floor === null || height === null) return;
+    if (Math.abs(height - this.floorHeight) >= 1)
+      this.pendingFrameScroll = null;
     this.floorHeight = height;
     floor.style.height = `${height}px`;
     floor.style.marginBottom = `${-height}px`;

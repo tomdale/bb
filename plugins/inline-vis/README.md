@@ -114,6 +114,10 @@ in `app.tsx`):
   per message and file or fence for the session, without reloading the page.
   The last reported height is remembered per page (by content hash for a file,
   by message and fence index for a fenced block) so remounts retain sizing.
+- Wheel gestures inside the frame retain their native browser behavior. The
+  bootstrap also notifies the host's scroll listeners, so the chat can keep
+  the reader's position when scrolling crosses the iframe boundary. The scroll
+  keeper handles the notification even if the browser moved the chat first.
 - A page cannot open windows. When the reader clicks an `http` or `https`
   link, the bootstrap asks the host, and the host opens it in a new tab only
   if the frame has focus and the click is a user activation. Anchor links

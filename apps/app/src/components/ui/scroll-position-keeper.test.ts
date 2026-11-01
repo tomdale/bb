@@ -333,6 +333,101 @@ describe("ScrollPositionKeeper", () => {
     expect(timeline.keeper.hasUserScrolled()).toBe(false);
   });
 
+  it.each([
+    "input move scroll layout",
+    "input move layout scroll",
+    "move input scroll layout",
+    "move input layout scroll",
+    "move scroll input layout",
+    "move scroll layout input",
+    "move layout input scroll",
+    "move layout scroll input",
+  ])("keeps iframe scrolling with event order: %s", (order) => {
+    const timeline = createTimeline(rowsOf(10), { attached: true });
+    const frame = document.createElement("iframe");
+    timeline.element("row-9").append(frame);
+    const original = timeline.layout.scrollTop;
+    for (const event of order.split(" ")) {
+      if (event === "input")
+        frame.dispatchEvent(new WheelEvent("wheel", { bubbles: true }));
+      else if (event === "move") timeline.layout.bounceTo(original - 300);
+      else if (event === "scroll")
+        timeline.scrollElement.dispatchEvent(new Event("scroll"));
+      else timeline.keeper.reconcile();
+    }
+    expect(timeline.layout.scrollTop).toBe(original - 300);
+    expect(timeline.keeper.isAttached()).toBe(false);
+    timeline.resize("row-9", 300);
+    timeline.keeper.reconcile();
+    expect(timeline.layout.scrollTop).toBe(original - 300);
+  });
+
+  it("keeps newer native movement instead of replaying an older iframe candidate", () => {
+    const timeline = createTimeline(rowsOf(10), { attached: true });
+    const frame = document.createElement("iframe");
+    timeline.element("row-9").append(frame);
+    const original = timeline.layout.scrollTop;
+    timeline.layout.layoutScrollTo(original - 300);
+    timeline.layout.bounceTo(original - 400);
+    frame.dispatchEvent(new WheelEvent("wheel", { bubbles: true }));
+    timeline.keeper.reconcile();
+    expect(timeline.layout.scrollTop).toBe(original - 400);
+    expect(timeline.keeper.isAttached()).toBe(false);
+  });
+
+  it.each([
+    ["expired iframe input", "iframe", 200, "none", true],
+    ["ordinary wheel input", "div", 0, "none", true],
+    ["explicit jump to latest", "iframe", 0, "latest", true],
+    ["explicit row reveal", "iframe", 0, "reveal", true],
+    ["explicit offset navigation", "iframe", 0, "offset", true],
+    ["latest before the scroll event", "iframe", 0, "latest", false],
+  ] as const)(
+    "does not replay iframe movement for %s",
+    (_name, tag, delay, navigation, deliverScroll) => {
+      vi.useFakeTimers({
+        toFake: ["setTimeout", "clearTimeout", "performance"],
+      });
+      const timeline = createTimeline(rowsOf(10), { attached: true });
+      const target = document.createElement(tag);
+      timeline.element("row-9").append(target);
+      const original = timeline.layout.scrollTop;
+      if (deliverScroll) timeline.layout.layoutScrollTo(original - 300);
+      else timeline.layout.bounceTo(original - 300);
+      if (delay) vi.advanceTimersByTime(delay);
+      if (navigation === "latest") timeline.keeper.scrollToBottom();
+      else if (navigation === "reveal") {
+        const row = timeline.element("row-9");
+        row.scrollIntoView = () => undefined;
+        timeline.keeper.revealElement(row, { block: "nearest" });
+      } else if (navigation === "offset")
+        timeline.keeper.scrollTo(original, "instant");
+      target.dispatchEvent(new WheelEvent("wheel", { bubbles: true }));
+      expect(timeline.layout.scrollTop).toBe(original);
+      expect(timeline.keeper.isAttached()).toBe(true);
+    },
+  );
+
+  it.each([true, false])(
+    "discards delayed iframe input after layout changes (reconciled: %s)",
+    (reconciled) => {
+      const timeline = createTimeline(rowsOf(10), { attached: true });
+      const frame = document.createElement("iframe");
+      timeline.element("row-9").append(frame);
+      const original = timeline.layout.scrollTop;
+      timeline.layout.layoutScrollTo(original - 300);
+      timeline.resize("row-9", 300);
+      if (reconciled) timeline.keeper.reconcile();
+      const before = timeline.layout.scrollTop;
+      frame.dispatchEvent(new WheelEvent("wheel", { bubbles: true }));
+      expect(timeline.layout.scrollTop).toBe(before);
+      expect(timeline.keeper.isAttached()).toBe(true);
+      expect(timeline.keeper.hasUserScrolled()).toBe(false);
+      timeline.keeper.reconcile();
+      expect(timeline.layout.scrollTop).toBe(timeline.layout.maxScrollTop());
+    },
+  );
+
   it("keeps a pending restore when the view scrolls without input before the row mounts", () => {
     const rows = rowsOf(10);
     const timeline = createTimeline(rows.slice(5), { attached: true });
@@ -881,7 +976,9 @@ describe("ScrollPositionKeeper", () => {
     vi.advanceTimersByTime(500);
     const before = timeline.topOf("row-3");
 
-    loadingStatus.dispatchEvent(new TouchEvent("touchstart", { bubbles: true }));
+    loadingStatus.dispatchEvent(
+      new TouchEvent("touchstart", { bubbles: true }),
+    );
     loadingStatus.remove();
     timeline.setRows([...rowsOf(4, 100, "older"), ...rows]);
     timeline.keeper.reconcile();
@@ -967,23 +1064,29 @@ describe("ScrollPositionKeeper", () => {
     expect(timeline.layout.scrollTop).toBe(timeline.layout.maxScrollTop());
   });
 
-  it("jumps to the end and stays attached as content grows while the reader's finger is still down", () => {
-    const timeline = createTimeline(rowsOf(10));
-    timeline.userScrollTo(400);
-    expect(timeline.keeper.isAttached()).toBe(false);
-    timeline.scrollElement.dispatchEvent(new TouchEvent("touchstart"));
+  it.each([false, true])(
+    "jumps to the end while a touch is active (undelivered movement: %s)",
+    (undelivered) => {
+      const timeline = createTimeline(rowsOf(10), { attached: true });
+      if (!undelivered) {
+        timeline.userScrollTo(400);
+        expect(timeline.keeper.isAttached()).toBe(false);
+      }
+      timeline.scrollElement.dispatchEvent(new TouchEvent("touchstart"));
+      if (undelivered) timeline.layout.bounceTo(400);
 
-    timeline.keeper.scrollToBottom();
-    expect(timeline.layout.scrollTop).toBe(timeline.layout.maxScrollTop());
-    expect(timeline.keeper.isAttached()).toBe(true);
+      timeline.keeper.scrollToBottom();
+      expect(timeline.layout.scrollTop).toBe(timeline.layout.maxScrollTop());
+      expect(timeline.keeper.isAttached()).toBe(true);
 
-    timeline.setRows(rowsOf(11));
-    timeline.scrollElement.dispatchEvent(new Event("scroll"));
-    timeline.layout.flushResizeObservers();
+      timeline.setRows(rowsOf(11));
+      timeline.scrollElement.dispatchEvent(new Event("scroll"));
+      timeline.layout.flushResizeObservers();
 
-    expect(timeline.layout.scrollTop).toBe(timeline.layout.maxScrollTop());
-    expect(timeline.keeper.isAttached()).toBe(true);
-  });
+      expect(timeline.layout.scrollTop).toBe(timeline.layout.maxScrollTop());
+      expect(timeline.keeper.isAttached()).toBe(true);
+    },
+  );
 
   it("does not count a send button's jump to the end as the reader's gesture when the button handles pointerup itself", () => {
     const timeline = createTimeline(rowsOf(10));

@@ -417,6 +417,32 @@ describe("InlineVisDirective", () => {
     ]);
   });
 
+  it("bubbles frame input notifications only from its own iframe and removes the bridge on unmount", async () => {
+    const slot = renderSlot(
+      app.messageDirectives[0]!,
+      directiveProps({ file: "scroll.html" }),
+      {
+        rpc: { preparePreview: () => htmlPreview("scroll.html") },
+      },
+    );
+    const iframe = await findFrame(slot);
+    const events: WheelEvent[] = [];
+    slot.container.addEventListener("wheel", (event) => events.push(event));
+    const intent = { jsonrpc: "2.0", method: "ui/notifications/scroll-intent" };
+    postMessageFrom(window, intent);
+    postMessageFrom(iframe.contentWindow, { ...intent, jsonrpc: "1.0" });
+    postMessageFrom(iframe.contentWindow, { ...intent, method: "unknown" });
+    expect(events).toHaveLength(0);
+    postMessageFrom(iframe.contentWindow, intent);
+    expect(events).toHaveLength(1);
+    expect(events[0]?.target).toBe(iframe);
+    expect(events[0]?.deltaY).toBe(0);
+    const source = iframe.contentWindow;
+    slot.lifecycle.unmount();
+    postMessageFrom(source, intent);
+    expect(events).toHaveLength(1);
+  });
+
   it("fits the frame to the height its own page reports, remembers it, and honours a height cap", async () => {
     const options = {
       rpc: {
