@@ -5,6 +5,7 @@ import {
   THREAD_JUMP_APP_COMMAND_IDS,
   applyAppKeybindingOverrides,
   appKeybindingOverridesSchema,
+  bindingContextsOverlap,
   isAppKeybindingAvailableForClient,
   matchesAppShortcut,
 } from "@bb/domain";
@@ -32,18 +33,6 @@ function shortcutIdentity(
     alt: shortcut.alt,
     shift: shortcut.shift,
   });
-}
-
-function bindingContextsOverlap(
-  left: ReturnType<typeof applyAppKeybindingOverrides>[number],
-  right: ReturnType<typeof applyAppKeybindingOverrides>[number],
-): boolean {
-  const leftAll = new Set(left.when.all);
-  const rightAll = new Set(right.when.all);
-  return (
-    !left.when.none.some((context) => rightAll.has(context)) &&
-    !right.when.none.some((context) => leftAll.has(context))
-  );
 }
 
 function commandPair(left: string, right: string): string {
@@ -325,6 +314,23 @@ describe("app keybindings", () => {
       expect(config.keybindings).toEqual(
         applyAppKeybindingOverrides(config.defaultKeybindings, []),
       );
+      expect(
+        config.keybindings.find(
+          (binding) => binding.command === "thread.copyLink",
+        ),
+      ).toEqual({
+        command: "thread.copyLink",
+        desktopOnly: false,
+        shortcut: {
+          key: "l",
+          mod: true,
+          meta: false,
+          control: false,
+          alt: false,
+          shift: false,
+        },
+        when: { all: ["mainSurface"], none: ["modalOpen", "browserFocus"] },
+      });
     });
   });
 
