@@ -276,9 +276,9 @@ describe("app keybindings", () => {
           meta: false,
           control: false,
           alt: false,
-          shift: true,
+          shift: false,
         },
-        when: { all: ["mainSurface"], none: ["modalOpen"] },
+        when: { all: ["mainSurface"], none: ["modalOpen", "browserFocus"] },
       });
       for (const command of [
         "thread.rename",

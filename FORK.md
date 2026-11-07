@@ -290,10 +290,12 @@ rendering, preventing recursive interpretation of source previews.
 
 ### copy-thread-link-shortcut
 
-Adds `thread.copyLink` (Copy link to thread) with `Mod+Shift+L` on desktop and
+Adds `thread.copyLink` (Copy link to thread) with `Mod+L` on desktop and
 web. It runs the existing Copy link action for the focused thread, including
-archived threads, and appears in the command palette and Keyboard settings.
-The existing CLI and SDK keyboard settings APIs can rebind or disable it.
+archived threads, when the thread has focus (while `Mod+L` continues to focus
+the location bar when the embedded browser has focus), and appears in the
+command palette and Keyboard settings. The existing CLI and SDK keyboard
+settings APIs can rebind or disable it.
 
 - Upstream status: candidate.
 - Upstream files: `packages/domain/src/app-keybindings.ts`,

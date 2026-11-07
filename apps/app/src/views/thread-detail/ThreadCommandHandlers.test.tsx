@@ -51,9 +51,12 @@ const testState = vi.hoisted(() => {
       meta: false,
       control: false,
       alt: false,
-      shift: true,
+      shift: false,
     },
-    when: { all: ["mainSurface" as const], none: ["modalOpen" as const] },
+    when: {
+      all: ["mainSurface" as const],
+      none: ["modalOpen" as const, "browserFocus" as const],
+    },
   });
   return {
     keybindings: [
@@ -172,7 +175,6 @@ function pressShortcut(letter: "A" | "L" | "M" | "P") {
     key: letter,
     code: `Key${letter}`,
     ctrlKey: true,
-    shiftKey: true,
   });
 }
 

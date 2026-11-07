@@ -256,9 +256,9 @@ on desktop and `Control+Shift+[` / `Control+Shift+]` on the web.
 `thread.rename`, `thread.archive`, `thread.markRead`, and `thread.pin` start
 unbound and act on the focused pane's open thread; Mark read and Pin toggle
 like the matching thread menu item. `thread.copyLink` (Copy link to thread)
-defaults to `Mod+Shift+L` and copies the focused thread's URL with the same
+defaults to `Mod+L` and copies the focused thread's URL with the same
 clipboard feedback as the thread menu, including for archived threads. Rebind
-it with `bb settings keyboard set thread.copyLink Mod+Shift+L`, or disable it
+it with `bb settings keyboard set thread.copyLink Mod+L`, or disable it
 with `bb settings keyboard set thread.copyLink disabled`.
 
 An override can be scoped with `--platform`; without it, it applies on all
