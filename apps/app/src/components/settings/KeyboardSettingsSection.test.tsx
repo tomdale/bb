@@ -136,6 +136,32 @@ const testState = vi.hoisted(() => {
         none: ["modalOpen", "editableFocus"],
       },
     },
+    {
+      command: "thread.copyLink",
+      desktopOnly: false,
+      shortcut: {
+        key: "l",
+        mod: true,
+        meta: false,
+        control: false,
+        alt: false,
+        shift: false,
+      },
+      when: { all: ["mainSurface"], none: ["modalOpen", "browserFocus"] },
+    },
+    {
+      command: "browser.focusLocation",
+      desktopOnly: false,
+      shortcut: {
+        key: "l",
+        mod: true,
+        meta: false,
+        control: false,
+        alt: false,
+        shift: false,
+      },
+      when: { all: ["mainSurface", "browserFocus"], none: ["modalOpen"] },
+    },
   ] as AppDefaultKeybindings;
   return {
     defaultKeybindings,
@@ -816,6 +842,67 @@ describe("KeyboardSettingsSection", () => {
         },
       ]),
     );
+  });
+
+  it("allows keeping both bindings when assigning an overlapping shortcut", () => {
+    render(<KeyboardSettingsSection />);
+    const newThreadRecorder = screen.getByRole("button", {
+      name: "Record shortcut for New thread, current shortcut Ctrl + Shift + O",
+    });
+    fireEvent.click(newThreadRecorder);
+    fireEvent.keyDown(newThreadRecorder, {
+      key: "U",
+      ctrlKey: true,
+      shiftKey: true,
+    });
+
+    const jumpRecorder = screen.getByRole("button", {
+      name: "Record shortcut for Open thread 1, current shortcut Ctrl + Shift + 1",
+    });
+    fireEvent.click(jumpRecorder);
+    testState.recorderButtonCalls.clear();
+    fireEvent.keyDown(jumpRecorder, {
+      key: "U",
+      ctrlKey: true,
+      shiftKey: true,
+    });
+
+    expect(screen.getByRole("alert").textContent).toContain("New thread");
+    fireEvent.click(screen.getByRole("button", { name: "Keep both" }));
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(testState.mutate.mock.lastCall?.[0]).toEqual([
+      {
+        command: "thread.new",
+        platform: "linux",
+        shortcut: expect.objectContaining({ key: "u" }),
+      },
+      {
+        command: "thread.jump.1",
+        platform: "linux",
+        shortcut: expect.objectContaining({ key: "u" }),
+      },
+    ]);
+  });
+
+  it("assigns immediately without conflict alert when scopes do not overlap", () => {
+    render(<KeyboardSettingsSection />);
+    const copyLinkRecorder = screen.getByRole("button", {
+      name: "Record shortcut for Copy link to thread, current shortcut Ctrl + L",
+    });
+    fireEvent.click(copyLinkRecorder);
+    testState.recorderButtonCalls.clear();
+    fireEvent.keyDown(copyLinkRecorder, {
+      key: "L",
+      ctrlKey: true,
+    });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(testState.mutate.mock.lastCall?.[0]).toEqual([
+      {
+        command: "thread.copyLink",
+        platform: "linux",
+        shortcut: expect.objectContaining({ key: "l", mod: true }),
+      },
+    ]);
   });
 
   it("rolls reset-all draft state back when the mutation fails", () => {

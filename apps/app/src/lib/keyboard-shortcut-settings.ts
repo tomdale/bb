@@ -1,6 +1,8 @@
 import { shortcutsConflict } from "./plugin-command-keybindings";
 import {
   QUESTION_SELECT_APP_COMMAND_IDS,
+  applyAppKeybindingOverrides,
+  bindingContextsOverlap,
   isAppKeybindingAvailableForClient,
   keyboardPlatform,
   keyboardPlatformSchema,
@@ -170,6 +172,7 @@ export function getShortcutConflicts(
   isDesktop: boolean,
   platform: string,
 ): KeyboardCommandId[] {
+  const client = { isDesktop, platform };
   const shortcut = getCommandShortcut(
     defaults,
     overrides,
@@ -178,6 +181,14 @@ export function getShortcutConflicts(
     platform,
   );
   if (shortcut === null) return [];
+
+  const effective = applyAppKeybindingOverrides(defaults, overrides).filter(
+    (binding) => isAppKeybindingAvailableForClient(binding, client),
+  );
+  const commandBindings = effective.filter(
+    (binding) => binding.command === command,
+  );
+
   return [...new Set(defaults.map((binding) => binding.command))].filter(
     (candidate) => {
       if (candidate === command) return false;
@@ -188,9 +199,20 @@ export function getShortcutConflicts(
         isDesktop,
         platform,
       );
-      return (
-        candidateShortcut !== null &&
-        shortcutsConflict(shortcut, candidateShortcut, platform)
+      if (
+        candidateShortcut === null ||
+        !shortcutsConflict(shortcut, candidateShortcut, platform)
+      ) {
+        return false;
+      }
+      const candidateBindings = effective.filter(
+        (binding) => binding.command === candidate,
+      );
+      if (commandBindings.length === 0 || candidateBindings.length === 0) {
+        return true;
+      }
+      return commandBindings.some((left) =>
+        candidateBindings.some((right) => bindingContextsOverlap(left, right)),
       );
     },
   );

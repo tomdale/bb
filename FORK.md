@@ -294,18 +294,23 @@ Adds `thread.copyLink` (Copy link to thread) with `Mod+L` on desktop and
 web. It runs the existing Copy link action for the focused thread, including
 archived threads, when the thread has focus (while `Mod+L` continues to focus
 the location bar when the embedded browser has focus), and appears in the
-command palette and Keyboard settings. The existing CLI and SDK keyboard
-settings APIs can rebind or disable it.
+command palette and Keyboard settings. Keyboard shortcut settings evaluates
+context overlap so disjoint scopes do not produce false conflicts, and
+offers a "Keep both" option when assigning shortcuts that layer across scopes.
+The existing CLI and SDK keyboard settings APIs can rebind or disable it.
 
 - Upstream status: candidate.
 - Upstream files: `packages/domain/src/app-keybindings.ts`,
   `apps/server/src/services/system/app-keybindings.ts` and its system test;
   `apps/app/src/lib/app-command-metadata.ts`,
+  `apps/app/src/lib/keyboard-shortcut-settings.ts`,
+  `apps/app/src/lib/plugin-command-keybindings.ts`,
+  `apps/app/src/components/settings/KeyboardSettingsSection.tsx` and its test,
   `apps/app/src/views/thread-detail/PaneThreadActionCommandHandler.tsx` and
   `ThreadCommandHandlers.test.tsx`; `docs/configuration.md`;
   `packages/templates/src/templates/bb-guide-customization.md`.
 - Check: `pnpm exec turbo run lint typecheck --filter=@bb/app --filter=@bb/server --filter=@bb/domain`,
-  `pnpm exec turbo run test --filter=@bb/app -- src/views/thread-detail/ThreadCommandHandlers.test.tsx src/components/thread/ThreadActionsMenu.test.tsx src/lib/keyboard-shortcut-settings.test.ts src/lib/command-palette/palette-app-commands.test.ts`,
+  `pnpm exec turbo run test --filter=@bb/app -- src/views/thread-detail/ThreadCommandHandlers.test.tsx src/components/thread/ThreadActionsMenu.test.tsx src/lib/keyboard-shortcut-settings.test.ts src/components/settings/KeyboardSettingsSection.test.tsx src/lib/command-palette/palette-app-commands.test.ts src/lib/plugin-command-keybindings.test.ts`,
   and `pnpm exec turbo run test --filter=@bb/server -- test/system/app-keybindings.test.ts`.
 
 ## Syncing with upstream
