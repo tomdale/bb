@@ -8,6 +8,7 @@ import {
   screen,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { useLayoutEffect } from "react";
 import { ScrollPositionKeeper } from "@/components/ui/scroll-position-keeper";
 import { installFakeFlowLayout } from "@/test/fake-flow-layout";
 import { TimelineWindowedItems } from "./TimelineWindowedItems.js";
@@ -134,6 +135,43 @@ function setup({
 }
 
 describe("TimelineWindowedItems", () => {
+  it("measures attached rows together after sibling layout effects finish", () => {
+    const harness = setup({ attached: true });
+    function ResizeEarlierRow() {
+      useLayoutEffect(() => {
+        harness.list
+          .querySelector('[data-timeline-row-id="first"]')
+          ?.setAttribute("data-fake-height", "200");
+      }, []);
+      return null;
+    }
+
+    render(
+      <TimelineWindowedItems
+        estimateItemHeight={() => 60}
+        gap={8}
+        itemKeys={["first", "second"]}
+        measurements={harness.measurements}
+        positionKeeper={harness.keeper}
+        pinnedToEnd
+        renderItem={(index, { itemRef }) => (
+          <div
+            key={index}
+            ref={itemRef}
+            data-timeline-row-id={index === 0 ? "first" : "second"}
+            data-timeline-window-key={index === 0 ? "first" : "second"}
+            data-fake-height="40"
+          >
+            {index === 1 ? <ResizeEarlierRow /> : null}
+          </div>
+        )}
+      />,
+      { container: harness.list },
+    );
+
+    expect(harness.measurements.get("first")).toBe(200);
+    expect(harness.measurements.get("second")).toBe(40);
+  });
   it("keeps the reader's rows mounted and in place when an older page turns windowing on", () => {
     const harness = setup({ attached: false });
     const latest = keys(15);

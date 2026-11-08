@@ -1,4 +1,5 @@
 import {
+  useContext,
   useLayoutEffect,
   useState,
   type MouseEvent,
@@ -6,6 +7,7 @@ import {
 } from "react";
 import { cn } from "@bb/shared-ui/lib/utils";
 import { useBottomAnchoredScroll } from "@/components/ui/bottom-anchored-scroll-body";
+import { TimelineMeasurementBatchContext } from "./timeline-measurement-batch.js";
 
 interface UseOverflowMeasurementArgs {
   elementRef: RefObject<HTMLElement | null>;
@@ -107,6 +109,7 @@ export function useOverflowMeasurement({
 }: UseOverflowMeasurementArgs): OverflowMeasurement {
   const [measurement, setMeasurement] =
     useState<OverflowMeasurement>("unmeasured");
+  const scheduleMeasurement = useContext(TimelineMeasurementBatchContext);
 
   useLayoutEffect(() => {
     if (!enabled) {
@@ -124,11 +127,21 @@ export function useOverflowMeasurement({
       if (!element.isConnected) return;
       setMeasurement(nextMeasurement[axis] ? "overflowing" : "fits");
     };
-    applyMeasurement(readOverflowMeasurement(element));
-    if (typeof ResizeObserver === "undefined") return;
-
-    return observeOverflow(element, applyMeasurement);
-  }, [elementRef, enabled, axis, measurementKey]);
+    const measure = () => {
+      const next = readOverflowMeasurement(element);
+      return () => applyMeasurement(next);
+    };
+    const cancelMeasurement = scheduleMeasurement?.(measure);
+    if (!scheduleMeasurement) measure()();
+    const unobserve =
+      typeof ResizeObserver === "undefined"
+        ? undefined
+        : observeOverflow(element, applyMeasurement);
+    return () => {
+      cancelMeasurement?.();
+      unobserve?.();
+    };
+  }, [elementRef, enabled, axis, measurementKey, scheduleMeasurement]);
 
   return measurement;
 }

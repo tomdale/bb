@@ -8,7 +8,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { Profiler, startTransition, type ReactNode } from "react";
+import { Profiler, startTransition, useState, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppCommandProvider } from "@/components/commands/AppCommandProvider";
 import {
@@ -35,13 +35,15 @@ const mocks = vi.hoisted(() => {
   return Object.assign(values, {});
 });
 let resizeObserverCallback: ResizeObserverCallback | null = null;
+const resizeCallbacksByElement = new Map<Element, ResizeObserverCallback>();
+let positionKeeper: ReturnType<typeof createInertScrollPositionKeeper>;
 
 vi.mock("@/components/ui/bottom-anchored-scroll-body.js", () => ({
   useBottomAnchoredScroll: () => ({
     isAtBottom: false,
     scrollToBottom: mocks.scrollToBottom,
     scrollElementIntoView: vi.fn(),
-    positionKeeper: createInertScrollPositionKeeper(),
+    positionKeeper,
     holdContentPosition: vi.fn(),
   }),
 }));
@@ -332,6 +334,7 @@ afterEach(() => {
   cleanup();
   resetPluginSlotStoreForTest();
   vi.clearAllMocks();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -340,20 +343,145 @@ beforeEach(() => {
   mocks.isPointerCoarse = false;
   mocks.voiceState = "idle";
   resizeObserverCallback = null;
+  resizeCallbacksByElement.clear();
+  positionKeeper = createInertScrollPositionKeeper();
   vi.stubGlobal(
     "ResizeObserver",
     class {
-      constructor(callback: ResizeObserverCallback) {
+      private readonly targets = new Set<Element>();
+      constructor(private readonly callback: ResizeObserverCallback) {
         resizeObserverCallback = callback;
       }
-      observe() {}
-      disconnect() {}
-      unobserve() {}
+      observe(target: Element) {
+        this.targets.add(target);
+        resizeCallbacksByElement.set(target, this.callback);
+      }
+      disconnect() {
+        for (const target of this.targets) this.unobserve(target);
+      }
+      unobserve(target: Element) {
+        this.targets.delete(target);
+        if (resizeCallbacksByElement.get(target) === this.callback) {
+          resizeCallbacksByElement.delete(target);
+        }
+      }
     },
   );
 });
 
 describe("FollowUpPromptBox", () => {
+  it("does not reread unchanged stack DOM when stack identity changes", () => {
+    const offsetHeight = vi
+      .spyOn(HTMLElement.prototype, "offsetHeight", "get")
+      .mockReturnValue(24);
+    const props = createFollowUpPromptBoxProps({ kind: "ready" });
+    const { rerender } = render(
+      <FollowUpPromptBox {...props} stack={<div>First stack</div>} />,
+    );
+    const stackElement = screen.getByText("First stack").parentElement;
+    if (!stackElement) throw new Error("Expected composer stack");
+    act(() => {
+      resizeObserverCallback?.(
+        [
+          {
+            target: stackElement,
+            borderBoxSize: [{ blockSize: 24 }],
+            contentRect: { height: 999 },
+          } as unknown as ResizeObserverEntry,
+        ],
+        {} as ResizeObserver,
+      );
+    });
+    rerender(<FollowUpPromptBox {...props} stack={<div>First stack</div>} />);
+
+    expect(offsetHeight).toHaveBeenCalledOnce();
+    expect(screen.getByTestId("prompt-box").dataset.minHeight).toBe("79");
+  });
+
+  it("measures committed stack DOM changes before observer delivery", () => {
+    const offsetHeight = vi
+      .spyOn(HTMLElement.prototype, "offsetHeight", "get")
+      .mockReturnValue(24);
+    const props = createFollowUpPromptBoxProps({ kind: "ready" });
+    const { rerender } = render(
+      <FollowUpPromptBox {...props} stack={<div>First stack</div>} />,
+    );
+    expect(screen.getByTestId("prompt-box").dataset.minHeight).toBe("79");
+    offsetHeight.mockReturnValue(35);
+
+    rerender(<FollowUpPromptBox {...props} stack={<div>Second stack</div>} />);
+
+    expect(screen.getByTestId("prompt-box").dataset.minHeight).toBe("68");
+  });
+
+  it("compensates child-only stack resizing before remeasuring the scroll body", () => {
+    function ExpandingBanner() {
+      const [expanded, setExpanded] = useState(false);
+      return (
+        <button type="button" onClick={() => setExpanded(true)}>
+          {expanded ? "Expanded banner" : "Expand banner"}
+        </button>
+      );
+    }
+    const minimumHeights: string[] = [];
+    vi.spyOn(positionKeeper, "remeasure").mockImplementation(() => {
+      minimumHeights.push(
+        screen.getByTestId("prompt-box").dataset.minHeight ?? "",
+      );
+    });
+    render(
+      <FollowUpPromptBox
+        {...createFollowUpPromptBoxProps({ kind: "ready" })}
+        stack={<ExpandingBanner />}
+      />,
+    );
+    const element = screen.getByRole("button", {
+      name: "Expand banner",
+    }).parentElement;
+    if (!element) throw new Error("Expected composer stack");
+    const resize = (height: number) => {
+      const callback = resizeCallbacksByElement.get(element);
+      if (!callback) throw new Error("Stack is not observed");
+      act(() => {
+        callback(
+          [
+            {
+              target: element,
+              borderBoxSize: [{ blockSize: height }],
+              contentRect: { height },
+            } as unknown as ResizeObserverEntry,
+          ],
+          {} as ResizeObserver,
+        );
+      });
+    };
+
+    resize(24);
+    fireEvent.click(screen.getByRole("button", { name: "Expand banner" }));
+    expect(
+      screen.getByRole("button", { name: "Expanded banner" }),
+    ).toBeTruthy();
+    resize(35);
+    resize(35);
+
+    expect(screen.getByTestId("prompt-box").dataset.minHeight).toBe("68");
+    expect(minimumHeights).toEqual(["79", "68"]);
+  });
+
+  it("measures the initial stack synchronously when ResizeObserver is unavailable", () => {
+    vi.stubGlobal("ResizeObserver", undefined);
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(24);
+
+    render(
+      <FollowUpPromptBox
+        {...createFollowUpPromptBoxProps({ kind: "ready" })}
+        stack={<div>Stack</div>}
+      />,
+    );
+
+    expect(screen.getByTestId("prompt-box").dataset.minHeight).toBe("79");
+  });
+
   it.each([
     { height: 24, expectedMinHeight: 79 },
     { height: 35, expectedMinHeight: 68 },

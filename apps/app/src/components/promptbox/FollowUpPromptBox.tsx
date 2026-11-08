@@ -14,7 +14,7 @@ import {
   type FocusEvent as ReactFocusEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
-  type RefObject,
+  type Ref,
 } from "react";
 import type {
   PromptTextMention,
@@ -661,6 +661,10 @@ function FollowUpPromptBoxWithComposer({
   );
   const positionKeeper = useBottomAnchoredScroll()?.positionKeeper ?? null;
   const stackRef = useRef<HTMLDivElement>(null);
+  const stackObservationRef = useRef<{
+    mutations: MutationObserver;
+    measured: boolean;
+  } | null>(null);
   const lastStackHeightRef = useRef(0);
   const [stackHeight, setStackHeight] = useState(0);
   const applyStackHeight = useCallback((measured: number) => {
@@ -671,28 +675,52 @@ function FollowUpPromptBoxWithComposer({
 
   useLayoutEffect(() => {
     const element = stackRef.current;
-    if (element) {
-      applyStackHeight(element.offsetHeight);
-    }
+    if (!element) return;
+    const observation = stackObservationRef.current;
+    const mutations = observation?.mutations.takeRecords().length ?? 1;
+    if (observation?.measured && mutations === 0) return;
+    if (observation) observation.measured = true;
+    applyStackHeight(element.offsetHeight);
   }, [applyStackHeight, stack]);
 
-  useEffect(() => {
-    const element = stackRef.current;
-    if (!element || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver((entries) => {
-      const entry = entries.find((candidate) => candidate.target === element);
-      if (!entry) return;
-      const borderBoxSize = Array.isArray(entry.borderBoxSize)
-        ? entry.borderBoxSize[0]
-        : entry.borderBoxSize;
-      const measured = borderBoxSize?.blockSize ?? entry.contentRect.height;
-      if (lastStackHeightRef.current === measured) return;
-      flushSync(() => applyStackHeight(measured));
-      positionKeeper?.remeasure();
-    });
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [applyStackHeight, positionKeeper]);
+  const observeStack = useCallback(
+    (element: HTMLDivElement | null) => {
+      stackRef.current = element;
+      if (!element || typeof ResizeObserver === "undefined") return;
+      const observation = {
+        mutations: new MutationObserver(() => {}),
+        measured: false,
+      };
+      observation.mutations.observe(element, {
+        attributes: true,
+        characterData: true,
+        childList: true,
+        subtree: true,
+      });
+      stackObservationRef.current = observation;
+      const observer = new ResizeObserver((entries) => {
+        const entry = entries.find((candidate) => candidate.target === element);
+        if (!entry || !element.isConnected) return;
+        const borderBoxSize = Array.isArray(entry.borderBoxSize)
+          ? entry.borderBoxSize[0]
+          : entry.borderBoxSize;
+        const measured = borderBoxSize?.blockSize ?? entry.contentRect.height;
+        if (lastStackHeightRef.current === measured) return;
+        flushSync(() => applyStackHeight(measured));
+        positionKeeper?.remeasure();
+      });
+      observer.observe(element, { box: "border-box" });
+      return () => {
+        observer.disconnect();
+        observation.mutations.disconnect();
+        if (stackObservationRef.current === observation) {
+          stackObservationRef.current = null;
+        }
+        if (stackRef.current === element) stackRef.current = null;
+      };
+    },
+    [applyStackHeight, positionKeeper],
+  );
   const elasticTextareaMinHeight =
     stack === null
       ? FOLLOW_UP_PROMPT_BOX_DEFAULT_MIN_HEIGHT
@@ -847,7 +875,7 @@ function FollowUpPromptBoxWithComposer({
           pendingInteraction={pendingInteraction}
           showScrollToBottomButton={showScrollToBottomButton}
           stack={stack}
-          stackRef={stackRef}
+          stackRef={observeStack}
         />
       }
     />
@@ -862,7 +890,7 @@ interface DefaultFollowUpComposerProps {
   pendingInteraction?: ReactNode;
   showScrollToBottomButton: boolean;
   stack: ReactNode | null;
-  stackRef: RefObject<HTMLDivElement | null>;
+  stackRef: Ref<HTMLDivElement>;
 }
 
 function DefaultFollowUpComposer({

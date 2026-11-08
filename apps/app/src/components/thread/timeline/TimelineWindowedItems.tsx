@@ -1,6 +1,7 @@
 import {
   createContext,
   useCallback,
+  useInsertionEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -11,6 +12,10 @@ import {
 import { flushSync } from "react-dom";
 import { isIOSWebKit } from "@/lib/ios-webkit";
 import type { ScrollPositionKeeper } from "@/components/ui/scroll-position-keeper";
+import {
+  TimelineMeasurementBatchContext,
+  type TimelineMeasurement,
+} from "./timeline-measurement-batch.js";
 
 export const DEFAULT_WINDOWING_MIN_ITEM_COUNT = 20;
 const MAX_MEASUREMENTS = 2_000;
@@ -373,6 +378,26 @@ export function TimelineWindowedItems({
     [measurements],
   );
 
+  const pendingMeasurementsRef = useRef(new Set<HTMLDivElement>());
+  const pendingContentMeasurementsRef = useRef(new Set<TimelineMeasurement>());
+  const listCommitPendingRef = useRef(false);
+  useInsertionEffect(() => {
+    listCommitPendingRef.current = true;
+    return () => {
+      listCommitPendingRef.current = false;
+    };
+  });
+  const [, setMeasurementBatch] = useState(0);
+  const scheduleMeasurement = useCallback((measure: TimelineMeasurement) => {
+    const pending = pendingContentMeasurementsRef.current;
+    if (pending.size === 0 && !listCommitPendingRef.current) {
+      setMeasurementBatch((batch) => batch + 1);
+    }
+    pending.add(measure);
+    return () => {
+      pending.delete(measure);
+    };
+  }, []);
   const observerRef = useRef<ResizeObserver | null>(null);
   const getObserver = useCallback((): ResizeObserver | null => {
     if (observerRef.current !== null) return observerRef.current;
@@ -403,15 +428,15 @@ export function TimelineWindowedItems({
   const itemRef = useCallback(
     (node: HTMLDivElement | null) => {
       if (node === null) return undefined;
-      const key = node.getAttribute(WINDOW_KEY_ATTRIBUTE);
-      if (key !== null) record(key, node.getBoundingClientRect().height);
+      pendingMeasurementsRef.current.add(node);
       const observer = getObserver();
       observer?.observe(node);
       return () => {
+        pendingMeasurementsRef.current.delete(node);
         observer?.unobserve(node);
       };
     },
-    [getObserver, record],
+    [getObserver],
   );
 
   const frameUpdatesRef = useRef({ count: 0, frame: null as number | null });
@@ -548,9 +573,24 @@ export function TimelineWindowedItems({
   }, [positionKeeper]);
 
   useLayoutEffect(() => {
+    const pending = [...pendingMeasurementsRef.current];
+    pendingMeasurementsRef.current.clear();
+    const sizes = pending.flatMap((node) => {
+      const key = node.getAttribute(WINDOW_KEY_ATTRIBUTE);
+      return key === null || !node.isConnected
+        ? []
+        : [{ key, height: node.getBoundingClientRect().height }];
+    });
+    const contentMeasurements = [...pendingContentMeasurementsRef.current];
+    pendingContentMeasurementsRef.current.clear();
+    listCommitPendingRef.current = false;
+    const publishContentMeasurements = contentMeasurements.map((measure) =>
+      measure(),
+    );
+    for (const { key, height } of sizes) record(key, height);
+    for (const publish of publishContentMeasurements) publish();
     if (positionKeeper === null || mountHeldKey()) return;
     positionKeeper.reconcile(false);
-    syncWindow(false);
   });
 
   const retainInteractedItem = useCallback(
@@ -608,7 +648,9 @@ export function TimelineWindowedItems({
       onClickCapture={retainInteractedItem}
       onFocusCapture={retainInteractedItem}
     >
-      {children}
+      <TimelineMeasurementBatchContext.Provider value={scheduleMeasurement}>
+        {children}
+      </TimelineMeasurementBatchContext.Provider>
     </div>
   );
 }
