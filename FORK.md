@@ -314,6 +314,23 @@ The existing CLI and SDK keyboard settings APIs can rebind or disable it.
   `pnpm exec turbo run test --filter=@bb/app -- src/views/thread-detail/ThreadCommandHandlers.test.tsx src/components/thread/ThreadActionsMenu.test.tsx src/lib/keyboard-shortcut-settings.test.ts src/components/settings/KeyboardSettingsSection.test.tsx src/lib/command-palette/palette-app-commands.test.ts src/lib/plugin-command-keybindings.test.ts`,
   and `pnpm exec turbo run test --filter=@bb/server -- test/system/app-keybindings.test.ts`.
 
+### thread-measurement-batching
+
+Timeline row refs collect their nodes, then the list reads row heights and queued
+overflow dimensions before publishing measurements and reconciling its window.
+Child-only overflow changes request a list commit, so they also finish before
+paint. The follow-up composer checks pending stack DOM mutations before reading
+its initial height, skips unchanged stack props, and uses ResizeObserver entries
+for size changes. Scroll capture and restore semantics stay unchanged.
+
+- Upstream status: candidate.
+- Owned files: `apps/app/src/components/thread/timeline/timeline-measurement-batch.ts`.
+- Upstream files: `apps/app/src/components/thread/timeline/TimelineWindowedItems.tsx`,
+  `conversation-message-overflow.tsx`,
+  `apps/app/src/components/promptbox/FollowUpPromptBox.tsx`, and their tests.
+- Check: `pnpm exec turbo run lint typecheck build --filter=@bb/app` and
+  `pnpm exec turbo run test --filter=@bb/app -- src/components/thread/timeline src/components/promptbox/FollowUpPromptBox.test.tsx src/components/ui/scroll-position-keeper src/components/ui/bottom-anchored-scroll-body`.
+
 ## Syncing with upstream
 
 `scripts/fork/sync` runs the whole sync. It prints nothing when
