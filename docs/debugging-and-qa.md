@@ -365,6 +365,10 @@ sandbox allow-scripts`, including SVG and XHTML, so directly opened documents
 cannot acquire the app's origin privileges. HTML also carries the no-store
 policy, at any size; the app renders an HTML iframe only for files up
 to 5 MiB and shows larger HTML as source or, past 25 MB, as a Download.
+A sandboxed HTML preview can report its current hash with
+`parent.postMessage({ type: "bb:html-preview-hash", hash: location.hash }, location.origin)`.
+Open in external browser then appends that hash to the same file URL. BB accepts
+messages only from the preview iframe and does not expose its storage to it.
 
 The server uses `host.read_file_chunk` for a metadata-only probe (`length: 0`),
 then reads at most 1 MiB per RPC as the HTTP consumer pulls data. HEAD, `304`,

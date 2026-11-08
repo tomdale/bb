@@ -287,6 +287,18 @@ rendering, preventing recursive interpretation of source previews.
 - Check: `pnpm exec turbo run typecheck build --filter=@bb/app` and
   `pnpm exec turbo run test --filter=@bb/app -- src/components/ui src/components/thread/timeline src/components/plugin`.
 
+### html-preview-hash
+
+A sandboxed HTML preview can report its current URL hash to BB. Open in
+external browser adds the reported hash to the preview's own URL; the preview
+cannot change the destination or access BB's storage.
+
+- Upstream status: candidate.
+- Upstream files: `apps/app/src/components/secondary-panel/FilePreview.tsx`,
+  `FilePreview.test.tsx`, and `docs/debugging-and-qa.md`.
+- Check: `pnpm exec turbo run typecheck --filter=@bb/app`, then
+  `pnpm exec turbo run test --filter=@bb/app -- src/components/secondary-panel/FilePreview.test.tsx`.
+
 ### copy-thread-link-shortcut
 
 Adds `thread.copyLink` (Copy link to thread) with `Mod+L` on desktop and

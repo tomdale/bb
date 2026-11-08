@@ -2,6 +2,7 @@ import { SourceLoadingSkeleton } from "@/components/code/code-loading-skeletons"
 import {
   type CSSProperties,
   type ReactNode,
+  type RefObject,
   useContext,
   useEffect,
   useLayoutEffect,
@@ -154,6 +155,7 @@ interface FilePreviewHeaderProps {
   copyPath: string | null;
   rawContents: string | null;
   externalUrl: string | null;
+  resolveExternalUrl: (url: string) => string;
   onOpenInEditor?: (path: string) => void;
   onRefresh?: () => void;
   isRefreshing: boolean;
@@ -465,6 +467,8 @@ export function FilePreview({
   statusLabel = null,
 }: FilePreviewProps) {
   const iframeTarget = state.kind === "html" ? state.iframe : null;
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const previewHash = useRef<{ key: string; hash: string } | null>(null);
   const iframeKey = JSON.stringify([
     state.kind,
     iframeTarget?.url,
@@ -482,11 +486,29 @@ export function FilePreview({
   }
   const iframeLoadState =
     iframeLoad.key === iframeKey ? iframeLoad.status : "loading";
+  useLayoutEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      if (
+        event.source !== iframeRef.current?.contentWindow ||
+        event.origin !== "null" ||
+        event.data?.type !== "bb:html-preview-hash" ||
+        typeof event.data.hash !== "string" ||
+        event.data.hash.length > 8192 ||
+        (event.data.hash !== "" && !event.data.hash.startsWith("#")) ||
+        /[\u0000-\u001f\u007f]/u.test(event.data.hash)
+      )
+        return;
+      previewHash.current = { key: iframeKey, hash: event.data.hash };
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [iframeKey]);
   const iframePreview =
     iframeTarget === null ? null : (
       <IframeFilePreview
         key={iframeKey}
         {...iframeTarget}
+        iframeRef={iframeRef}
         loadState={iframeLoadState}
         onLoadStateChange={(status) =>
           setIframeLoad((current) =>
@@ -499,6 +521,12 @@ export function FilePreview({
   const filePreviewLineRange = getFilePreviewLineRange(state);
   const rawContents = getRawFilePreviewContents(state);
   const externalUrl = getFilePreviewExternalUrl(state);
+  const resolveExternalUrl = (source: string) => {
+    const url = new URL(source, window.location.href);
+    if (previewHash.current?.key === iframeKey)
+      url.hash = previewHash.current.hash;
+    return url.toString();
+  };
   const [viewMode, setViewMode] = useState<FilePreviewViewMode>(
     getInitialFilePreviewViewMode({
       lineRange: filePreviewLineRange,
@@ -582,6 +610,7 @@ export function FilePreview({
           copyPath={copyPath}
           rawContents={rawContents}
           externalUrl={externalUrl}
+          resolveExternalUrl={resolveExternalUrl}
           onOpenInEditor={onOpenInEditor}
           onRefresh={onRefresh}
           isRefreshing={isRefreshing}
@@ -694,6 +723,7 @@ function FilePreviewHeader({
   copyPath,
   rawContents,
   externalUrl,
+  resolveExternalUrl,
   onOpenInEditor,
   onRefresh,
   isRefreshing,
@@ -803,9 +833,7 @@ function FilePreviewHeader({
                         "shrink-0 text-muted-foreground hover:bg-state-hover hover:text-foreground",
                       )}
                       onClick={() => {
-                        openUrlInExternalBrowser(
-                          toAbsolutePreviewUrl(externalUrl),
-                        );
+                        openUrlInExternalBrowser(resolveExternalUrl(externalUrl));
                       }}
                       aria-label="Open in external browser"
                     >
@@ -1299,9 +1327,11 @@ function IframeFilePreview({
   sandbox,
   title,
   url,
+  iframeRef,
   loadState,
   onLoadStateChange,
 }: IframeFilePreviewTarget & {
+  iframeRef: RefObject<HTMLIFrameElement | null>;
   loadState: IframeLoadState;
   onLoadStateChange: (state: IframeLoadState) => void;
 }) {
@@ -1319,6 +1349,7 @@ function IframeFilePreview({
   return (
     <div className="min-h-0 flex-1 overflow-hidden">
       <iframe
+        ref={iframeRef}
         title={title}
         src={url}
         sandbox={sandbox}

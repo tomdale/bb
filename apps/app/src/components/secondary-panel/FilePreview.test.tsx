@@ -599,6 +599,79 @@ describe("FilePreview", () => {
     openSpy.mockRestore();
   });
 
+  it("opens the current hash reported by its sandboxed HTML preview", () => {
+    const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
+    const view = render(
+      <FilePreview
+        path="docs/demo.html"
+        state={{
+          kind: "html",
+          file: { name: "demo.html", contents: "<p>demo</p>" },
+          iframe: {
+            sandbox: "allow-scripts",
+            title: "demo",
+            url: "/preview/demo.html",
+          },
+          lineRange: null,
+        }}
+      />,
+    );
+    const frame = view.container.querySelector("iframe")!;
+    act(() =>
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          source: frame.contentWindow,
+          origin: "null",
+          data: { type: "bb:html-preview-hash", hash: "#v=drum&cap=44" },
+        }),
+      ),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open in external browser" }),
+    );
+    expect(openSpy).toHaveBeenLastCalledWith(
+      `${window.location.origin}/preview/demo.html#v=drum&cap=44`,
+      "_blank",
+      "noopener,noreferrer",
+    );
+    for (const message of [
+      { source: window, origin: "null", hash: "#foreign" },
+      {
+        source: frame.contentWindow,
+        origin: window.location.origin,
+        hash: "#wrong-origin",
+      },
+      {
+        source: frame.contentWindow,
+        origin: "null",
+        hash: `#${"x".repeat(8192)}`,
+      },
+      {
+        source: frame.contentWindow,
+        origin: "null",
+        hash: "https://example.test/",
+      },
+    ]) {
+      act(() =>
+        window.dispatchEvent(
+          new MessageEvent("message", {
+            source: message.source,
+            origin: message.origin,
+            data: { type: "bb:html-preview-hash", hash: message.hash },
+          }),
+        ),
+      );
+    }
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open in external browser" }),
+    );
+    expect(openSpy).toHaveBeenLastCalledWith(
+      `${window.location.origin}/preview/demo.html#v=drum&cap=44`,
+      "_blank",
+      "noopener,noreferrer",
+    );
+  });
+
   it("keeps compact file actions available without crowding the preview controls", async () => {
     const onRefresh = vi.fn();
     const onOpenInEditor = vi.fn();
