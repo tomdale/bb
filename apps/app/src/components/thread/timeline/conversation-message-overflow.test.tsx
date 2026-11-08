@@ -8,7 +8,7 @@ import {
   screen,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { useRef } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import {
   BottomAnchorContext,
   type BottomAnchorContextValue,
@@ -18,6 +18,7 @@ import {
   useOverflowMeasurement,
 } from "./conversation-message-overflow";
 import { createInertScrollPositionKeeper } from "@/test/scroll-position-keeper";
+import { TimelineWindowedItems } from "./TimelineWindowedItems";
 
 afterEach(() => {
   cleanup();
@@ -36,8 +37,22 @@ function OverflowProbe({ name }: { name: string }) {
   return <div ref={ref} data-testid={name} data-measurement={measurement} />;
 }
 
+function MeasurementList({ children }: { children: ReactNode }) {
+  return (
+    <TimelineWindowedItems
+      estimateItemHeight={() => 60}
+      gap={0}
+      itemKeys={["content"]}
+      measurements={new Map()}
+      positionKeeper={null}
+      pinnedToEnd={false}
+      renderItem={() => children}
+    />
+  );
+}
+
 describe("useOverflowMeasurement", () => {
-  it("measures every row before its first paint and shares one observer for later changes", () => {
+  it("collects initial geometry before publishing results and shares one resize observer", () => {
     let observerCallback: ResizeObserverCallback | null = null;
     const observe = vi.fn();
     const unobserve = vi.fn();
@@ -55,10 +70,14 @@ describe("useOverflowMeasurement", () => {
         disconnect = disconnect;
       },
     );
+    const publishedWhileReading: string[] = [];
     const scrollHeight = vi
       .spyOn(HTMLElement.prototype, "scrollHeight", "get")
       .mockImplementation(function (this: HTMLElement) {
-        return this.dataset.testid === "first" ? 80 : 20;
+        publishedWhileReading.push(
+          screen.getByTestId("first").dataset.measurement ?? "",
+        );
+        return this.dataset.expanded === "true" ? 80 : 20;
       });
     const clientHeight = vi
       .spyOn(HTMLElement.prototype, "clientHeight", "get")
@@ -70,29 +89,33 @@ describe("useOverflowMeasurement", () => {
       .spyOn(HTMLElement.prototype, "clientWidth", "get")
       .mockReturnValue(20);
 
+    function GrowFirstContent() {
+      useLayoutEffect(() => {
+        screen.getByTestId("first").dataset.expanded = "true";
+      }, []);
+      return null;
+    }
     render(
-      <>
+      <MeasurementList>
         <OverflowProbe name="first" />
         <OverflowProbe name="second" />
-      </>,
+        <GrowFirstContent />
+      </MeasurementList>,
     );
 
     const first = screen.getByTestId("first");
     const second = screen.getByTestId("second");
     expect(first.dataset.measurement).toBe("overflowing");
     expect(second.dataset.measurement).toBe("fits");
+    expect(publishedWhileReading).toEqual(["unmeasured", "unmeasured"]);
     expect(constructorSpy).toHaveBeenCalledOnce();
     expect(observe).toHaveBeenCalledTimes(2);
-
+    const entries = [first, second].map(
+      (target) => ({ target }) as unknown as ResizeObserverEntry,
+    );
     scrollHeight.mockReturnValue(20);
     act(() => {
-      observerCallback?.(
-        [
-          { target: first } as unknown as ResizeObserverEntry,
-          { target: second } as unknown as ResizeObserverEntry,
-        ],
-        {} as ResizeObserver,
-      );
+      observerCallback?.(entries, {} as ResizeObserver);
     });
 
     expect(first.dataset.measurement).toBe("fits");
@@ -101,6 +124,91 @@ describe("useOverflowMeasurement", () => {
     expect(scrollWidth).toHaveBeenCalled();
     expect(clientWidth).toHaveBeenCalled();
   });
+});
+
+function setResizeObservationAvailable(available: boolean) {
+  vi.stubGlobal(
+    "ResizeObserver",
+    available
+      ? class {
+          observe() {}
+          unobserve() {}
+          disconnect() {}
+        }
+      : undefined,
+  );
+}
+
+describe("overflow invalidation", () => {
+  it.each([true, false])(
+    "remeasures child-only content changes without observer delivery (available: %s)",
+    (available) => {
+      setResizeObservationAvailable(available);
+      vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(
+        function (this: HTMLElement) {
+          return this.dataset.expanded === "true" ? 80 : 20;
+        },
+      );
+      vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(
+        20,
+      );
+      function ExpandingContent() {
+        const [expanded, setExpanded] = useState(false);
+        const ref = useRef<HTMLDivElement>(null);
+        const measurement = useOverflowMeasurement({
+          axis: "vertical",
+          elementRef: ref,
+          enabled: true,
+          measurementKey: String(expanded),
+        });
+        return (
+          <div
+            ref={ref}
+            data-testid="changing"
+            data-expanded={expanded}
+            data-measurement={measurement}
+          >
+            <button type="button" onClick={() => setExpanded(true)}>
+              Expand
+            </button>
+          </div>
+        );
+      }
+      render(
+        <MeasurementList>
+          <ExpandingContent />
+        </MeasurementList>,
+      );
+      expect(screen.getByTestId("changing").dataset.measurement).toBe("fits");
+
+      fireEvent.click(screen.getByRole("button", { name: "Expand" }));
+
+      expect(screen.getByTestId("changing").dataset.measurement).toBe(
+        "overflowing",
+      );
+    },
+  );
+});
+
+describe("standalone overflow", () => {
+  it.each([true, false])(
+    "measures synchronously without a list batch (observer available: %s)",
+    (available) => {
+      setResizeObservationAvailable(available);
+      vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(
+        80,
+      );
+      vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(
+        20,
+      );
+
+      render(<OverflowProbe name="fallback" />);
+
+      expect(screen.getByTestId("fallback").dataset.measurement).toBe(
+        "overflowing",
+      );
+    },
+  );
 });
 
 describe("ConversationMessageOverflowToggle", () => {
