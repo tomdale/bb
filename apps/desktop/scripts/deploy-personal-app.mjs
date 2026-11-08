@@ -331,7 +331,7 @@ async function deployMain(options) {
         options.replace && "stage+replace",
         options.force
           ? "restart now"
-          : `restart when idle (forced after ${options.waitTimeoutMinutes} min)`,
+          : `restart when idle (${options.abortOnTimeout ? "abort" : "forced"} after ${options.waitTimeoutMinutes} min)`,
         options.reportThreadId && `report to ${options.reportThreadId}`,
       ]
         .filter(Boolean)
@@ -381,6 +381,7 @@ async function deployMain(options) {
     ...paths,
     replace: options.replace,
     force: options.force,
+    abortOnTimeout: options.abortOnTimeout,
     waitTimeoutMs: options.waitTimeoutMinutes * 60_000,
     pollMs: 5_000,
     settleChecks: 2,
@@ -412,7 +413,7 @@ async function deployMain(options) {
       `Restart handed off to pid ${child.pid}; log: ${logPath}`,
       options.force
         ? "It restarts bb Personal now, interrupting running threads."
-        : `It restarts bb Personal once no thread is busy (now ${busy.length}${ownThread && busy.some((thread) => thread.id === ownThread) ? `, including this thread ${ownThread} until its turn ends` : ""}; restarts anyway after ${options.waitTimeoutMinutes} min, interrupting any threads still busy).`,
+        : `It restarts bb Personal once no thread is busy (now ${busy.length}${ownThread && busy.some((thread) => thread.id === ownThread) ? `, including this thread ${ownThread} until its turn ends` : ""}; ${options.abortOnTimeout ? `aborts after ${options.waitTimeoutMinutes} min if threads are still busy` : `restarts anyway after ${options.waitTimeoutMinutes} min, interrupting any threads still busy`}).`,
       `Result: ${paths.lastResultPath}`,
     ].join("\n"),
   );

@@ -147,8 +147,9 @@ runtime/server/host identity and CLI targets and accepts only documented
 
 `pnpm --filter @bb/desktop run deploy:personal` rebuilds and smokes Personal,
 then restarts the installed app into the new build once no thread is busy
-(or after 20 minutes regardless),
-rolling back if it does not come up; see `docs/configuration.md`.
+(or after 20 minutes regardless), rolling back if it does not come up. Use
+`--abort-on-timeout` to leave the app running if threads are still busy when
+the wait ends; see `docs/configuration.md`.
 
 The `smoke:packaged:personal` and `smoke:packaged:lab` tasks exercise the
 packaged Electron attach/preload path against a synthetic compatible HTTP

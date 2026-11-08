@@ -284,8 +284,10 @@ minutes, it restores the previous bundle and relaunches that. Options:
 `--restart-only` restarts the installed app without replacing it, `--force`
 restarts without waiting for threads, `--wait-timeout <minutes>` (default 20)
 bounds the wait, after which the restart goes ahead and interrupts any threads
-still busy, and `--report-thread <id>` sends the outcome to a thread once the app is
-back, which resumes an agent that started the deploy. `--dry-run` prints the
+still busy. `--abort-on-timeout` stops the deployment without restarting when
+the wait ends with busy threads or an unreadable thread list; it cannot be
+combined with `--force`. `--report-thread <id>` sends the outcome to a thread
+once the app is back, which resumes an agent that started the deploy. `--dry-run` prints the
 plan. State, logs, the staged build, and the previous bundle live under
 `${XDG_STATE_HOME:-~/.local/state}/bb-personal-deploy/`; `last-deploy.json`
 records the latest outcome.
@@ -642,7 +644,7 @@ Mod+L`, or through SDK `system.updateKeyboardSettings`.
 | Window    | Back to app (from Settings, Plugins, Skills) | `Escape`                    | All clients              |
 | Threads   | New thread                                   | `Mod+N` / `Mod+Shift+O`     | Desktop / web            |
 | Threads   | Search threads                               | `Mod+K`                     | All clients              |
-| Threads   | Copy link to focused thread                   | `Mod+L`                     | Thread view              |
+| Threads   | Copy link to focused thread                  | `Mod+L`                     | Thread view              |
 | Threads   | Rename focused thread                        | Unassigned                  | Thread view              |
 | Threads   | Archive focused thread                       | Unassigned                  | Thread view              |
 | Threads   | Mark focused thread read or unread           | Unassigned                  | Thread view              |
@@ -1128,6 +1130,7 @@ either way.
   plugin releases can go out ahead of a retry scheduled for later (for example
   a provider-retry row waiting hours for a subscription window) and overtake
   it; with it, those rows wait for the retry.
+
 - `threadContextCard` moves a running thread's
   details into the thread context card at the upper-right of its pane: bb's parent
   thread and child threads, the Git plugin's changes, which open the Diff tab,

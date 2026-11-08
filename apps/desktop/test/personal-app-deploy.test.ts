@@ -121,6 +121,7 @@ describe("deploy arguments", () => {
       smoke: true,
       replace: true,
       force: false,
+      abortOnTimeout: false,
       waitTimeoutMinutes: 20,
       reportThreadId: null,
     });
@@ -145,6 +146,12 @@ describe("deploy arguments", () => {
       /needs a value/,
     );
     expect(() => parseDeployArguments(["--now"])).toThrow(/Unknown option/);
+    expect(parseDeployArguments(["--abort-on-timeout"]).abortOnTimeout).toBe(
+      true,
+    );
+    expect(() =>
+      parseDeployArguments(["--force", "--abort-on-timeout"]),
+    ).toThrow(/cannot be combined/);
   });
 
   it("keeps deploy state under XDG_STATE_HOME", () => {
@@ -382,6 +389,32 @@ describe("restart orchestration", () => {
     expect(result.message).toMatch(
       /forced after 1 min with busy threads thr_long/u,
     );
+  });
+
+  it("leaves the app untouched when abort-on-timeout reaches busy threads", async () => {
+    const { calls, effects: fx } = effects({
+      listThreads: listings(busy("thr_long")),
+    });
+    const result = await runRestart({
+      config: { ...config, abortOnTimeout: true },
+      effects: fx,
+    });
+    expect(calls).toEqual([]);
+    expect(result.status).toBe("failed");
+    expect(result.message).toContain("thr_long");
+  });
+
+  it("leaves the app untouched when abort-on-timeout cannot read the thread list", async () => {
+    const { calls, effects: fx } = effects({
+      listThreads: listings({ ok: false, error: "unavailable" }),
+    });
+    const result = await runRestart({
+      config: { ...config, abortOnTimeout: true },
+      effects: fx,
+    });
+    expect(calls).toEqual([]);
+    expect(result.status).toBe("failed");
+    expect(result.message).toContain("thread list unavailable");
   });
 
   it("does not restart before the wait timeout while threads are busy", async () => {

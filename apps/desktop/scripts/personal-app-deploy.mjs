@@ -63,6 +63,7 @@ Options:
   --skip-smoke            Skip smoke:packaged:personal after building
   --restart-only          Restart the installed app without replacing it
   --force                 Restart without waiting for threads to finish
+  --abort-on-timeout      Leave the app running if threads are still busy
   --wait-timeout <min>    Minutes to wait for idle threads before restarting
                           anyway (default ${DEFAULT_WAIT_TIMEOUT_MINUTES})
   --report-thread <id>    Send the outcome to this bb thread after relaunch
@@ -79,6 +80,7 @@ export function parseDeployArguments(argv) {
     smoke: true,
     replace: true,
     force: false,
+    abortOnTimeout: false,
     waitTimeoutMinutes: DEFAULT_WAIT_TIMEOUT_MINUTES,
     reportThreadId: null,
     dryRun: false,
@@ -109,6 +111,9 @@ export function parseDeployArguments(argv) {
         break;
       case "--force":
         options.force = true;
+        break;
+      case "--abort-on-timeout":
+        options.abortOnTimeout = true;
         break;
       case "--wait-timeout": {
         const minutes = Number(value());
@@ -142,6 +147,8 @@ export function parseDeployArguments(argv) {
         throw new Error(`Unknown option ${argument}\n\n${USAGE}`);
     }
   }
+  if (options.force && options.abortOnTimeout)
+    throw new Error("--force cannot be combined with --abort-on-timeout");
   return options;
 }
 
@@ -360,6 +367,11 @@ export async function runRestart({ config, effects }) {
     });
     if (!waited.idle) {
       const busyIds = waited.busy.map((thread) => thread.id).join(", ");
+      if (config.abortOnTimeout)
+        return finish(
+          "failed",
+          `App not restarted: ${busyIds ? `busy threads ${busyIds}` : "thread list unavailable"}`,
+        );
       const reason = `forced after ${Math.round(config.waitTimeoutMs / 60_000)} min with ${busyIds ? `busy threads ${busyIds}` : "an unreadable thread list"}`;
       forcedNote = `; ${reason}`;
       log(`threads did not settle; restarting anyway (${reason})`);

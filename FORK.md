@@ -61,6 +61,17 @@ back to the previous bundle. Depends on desktop-profiles.
 - Check: `pnpm exec turbo run test --filter=@bb/desktop`, then
   `pnpm --filter @bb/desktop run deploy:personal --dry-run`.
 
+### personal-deploy-safe-timeout
+
+Adds an opt-in `--abort-on-timeout` mode to the Personal deploy command. If the
+thread list is unavailable or threads stay busy until the deadline, the app and
+its running threads are left alone.
+
+- Upstream status: fork-only; depends on personal-deploy.
+- Upstream files: `apps/desktop/scripts/{deploy-personal-app.mjs,personal-app-deploy.mjs,personal-app-deploy.d.mts}`, `apps/desktop/test/personal-app-deploy.test.ts`, `apps/desktop/README.md`, and `docs/configuration.md`.
+- Check: `pnpm exec turbo run lint typecheck test --filter=@bb/desktop`, then
+  `pnpm --filter @bb/desktop run deploy:personal --dry-run --abort-on-timeout`.
+
 ### local-test-fixes
 
 Makes the workspace test suite pass on macOS when Git commit signing is enabled

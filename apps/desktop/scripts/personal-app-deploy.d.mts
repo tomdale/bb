@@ -3,6 +3,7 @@ export interface DeployOptions {
   smoke: boolean;
   replace: boolean;
   force: boolean;
+  abortOnTimeout: boolean;
   waitTimeoutMinutes: number;
   reportThreadId: string | null;
   dryRun: boolean;
@@ -42,6 +43,7 @@ export interface RestartConfig {
   stagedPath: string;
   replace: boolean;
   force: boolean;
+  abortOnTimeout?: boolean;
   waitTimeoutMs: number;
   pollMs: number;
   settleChecks: number;
