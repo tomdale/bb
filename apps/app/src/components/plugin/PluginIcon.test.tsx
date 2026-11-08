@@ -118,20 +118,16 @@ it("uses a plugin-owned compact SVG before named icon hints", () => {
   expect(view.container.querySelector("[data-icon]")).toBeNull();
 });
 
-it("resolves every named branding.icon the shipped plugins declare", async () => {
+async function namedPluginIcons(
+  pluginsDir: string,
+): Promise<Array<[string, string]>> {
   const { readdir, readFile } = await import("node:fs/promises");
-  const { dirname, join, resolve } = await import("node:path");
-  const { fileURLToPath } = await import("node:url");
-  const { isBuiltinIconName } = await import("@bb/shared-ui/icon");
-
-  const pluginsDir = resolve(
-    dirname(fileURLToPath(import.meta.url)),
-    "../../../../../plugins",
-  );
+  const { join } = await import("node:path");
   const entries = await readdir(pluginsDir, { withFileTypes: true });
   const declared: Array<[string, string]> = [];
   for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
+    if (!entry.isDirectory() || entry.name.startsWith(".bundled-stage-"))
+      continue;
     const manifest: { bb?: { branding?: { icon?: string } } } = JSON.parse(
       await readFile(join(pluginsDir, entry.name, "package.json"), "utf8"),
     );
@@ -139,9 +135,38 @@ it("resolves every named branding.icon the shipped plugins declare", async () =>
     if (icon === undefined || icon.startsWith("./")) continue;
     declared.push([entry.name, icon]);
   }
+  return declared;
+}
 
+it("resolves every named branding.icon the shipped plugins declare", async () => {
+  const { dirname, resolve } = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const { isBuiltinIconName } = await import("@bb/shared-ui/icon");
+  const pluginsDir = resolve(
+    dirname(fileURLToPath(import.meta.url)),
+    "../../../../../plugins",
+  );
+  const declared = await namedPluginIcons(pluginsDir);
   expect(declared.length).toBeGreaterThan(0);
   expect(declared.filter(([, icon]) => !isBuiltinIconName(icon))).toEqual([]);
+});
+
+it("ignores incomplete bundled-plugin staging directories", async () => {
+  const { mkdtemp, mkdir, rm, writeFile } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const root = await mkdtemp(join(tmpdir(), "plugin-icon-test-"));
+  try {
+    await mkdir(join(root, ".bundled-stage-example"));
+    await mkdir(join(root, "example"));
+    await writeFile(
+      join(root, "example", "package.json"),
+      JSON.stringify({ bb: { branding: { icon: "File" } } }),
+    );
+    expect(await namedPluginIcons(root)).toEqual([["example", "File"]]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 it.each(["sidebar", "header"])(

@@ -287,6 +287,15 @@ rendering, preventing recursive interpretation of source previews.
 - Check: `pnpm exec turbo run typecheck build --filter=@bb/app` and
   `pnpm exec turbo run test --filter=@bb/app -- src/components/ui src/components/thread/timeline src/components/plugin`.
 
+### plugin-icon-staging
+
+The shipped-plugin icon test skips temporary `.bundled-stage-*` directories,
+which are not plugin packages and may be incomplete.
+
+- Upstream status: candidate.
+- Upstream files: `apps/app/src/components/plugin/PluginIcon.test.tsx`.
+- Check: `pnpm exec turbo run test --filter=@bb/app -- src/components/plugin/PluginIcon.test.tsx`.
+
 ### html-preview-hash
 
 A sandboxed HTML preview can report its current URL hash to BB. Open in
