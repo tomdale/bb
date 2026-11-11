@@ -170,6 +170,8 @@ describe("third-party marketplaces", () => {
       cwd: repo,
     });
     await run("git", ["config", "user.name", "Test"], { cwd: repo });
+    await run("git", ["config", "commit.gpgSign", "false"], { cwd: repo });
+    await run("git", ["config", "tag.gpgSign", "false"], { cwd: repo });
     const catalogDir =
       args.subdirectory === undefined
         ? repo
@@ -1126,6 +1128,8 @@ describe("third-party marketplaces", () => {
         cwd: repo,
       });
       await run("git", ["config", "user.name", "Test"], { cwd: repo });
+      await run("git", ["config", "commit.gpgSign", "false"], { cwd: repo });
+      await run("git", ["config", "tag.gpgSign", "false"], { cwd: repo });
       await writeFile(join(repo, "file.txt"), "one");
       await run("git", ["add", "."], { cwd: repo });
       await run("git", ["commit", "-qm", "one"], { cwd: repo });
