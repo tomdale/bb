@@ -64,16 +64,13 @@ back to the previous bundle. Depends on desktop-profiles.
 ### local-test-fixes
 
 Makes the workspace test suite pass on macOS when Git commit signing is enabled
-globally. It disables signing in the temporary repositories tests create, waits
-for complete SSH fixture log records, and anchors profiler CPU captures to the
-stall collector's clock.
+globally. It disables signing in the temporary repositories tests create.
 
 - Upstream status: candidate. Nothing here depends on the fork; send it upstream
   and drop it once it lands.
-- Upstream files: `packages/process-utils/src/profile-worker.ts` and test
-  files in `apps/host-daemon`, `apps/server`, and
+- Upstream files: test files in `apps/server` and
   `plugins/environment-git-worktree`.
-- Check: `pnpm exec turbo run test --filter=@bb/process-utils --filter=@bb/host-daemon --filter=@bb/server --filter=bb-plugin-environment-git-worktree`.
+- Check: `pnpm exec turbo run test --filter=@bb/server --filter=bb-plugin-environment-git-worktree`.
 
 ## Syncing with upstream
 
