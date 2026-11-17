@@ -320,6 +320,21 @@ The existing CLI and SDK keyboard settings APIs can rebind or disable it.
   `pnpm exec turbo run test --filter=@bb/app -- src/views/thread-detail/ThreadCommandHandlers.test.tsx src/components/thread/ThreadActionsMenu.test.tsx src/lib/keyboard-shortcut-settings.test.ts src/components/settings/KeyboardSettingsSection.test.tsx src/lib/command-palette/palette-app-commands.test.ts src/lib/plugin-command-keybindings.test.ts`,
   and `pnpm exec turbo run test --filter=@bb/server -- test/system/app-keybindings.test.ts`.
 
+### thread-measurement-batching
+
+The follow-up composer rereads its stack's height when a new `stack` prop
+commits only if the stack's DOM changed since the last read, so a new prop
+that renders the same DOM forces no layout. Later size changes arrive through
+the shared resize observer as border-box entries. Timeline rows and message
+overflow need no fork change: upstream measures them in the shared resize
+observer's batch before paint.
+
+- Upstream status: candidate.
+- Upstream files: `apps/app/src/components/promptbox/FollowUpPromptBox.tsx`
+  and its test.
+- Check: `pnpm exec turbo run lint typecheck build --filter=@bb/app` and
+  `pnpm exec turbo run test --filter=@bb/app -- src/components/promptbox/FollowUpPromptBox.test.tsx`.
+
 ## Syncing with upstream
 
 `scripts/fork/sync` runs the whole sync. It prints nothing when
